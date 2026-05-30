@@ -7,7 +7,6 @@ export default async function handler(req, res) {
 
   try {
     if (market === "jp") {
-      // debugモード: 1銘柄だけ取得してレスポンス全体を返す
       if (debug === "1") {
         const apiKey = process.env.JQUANTS_API_KEY;
         const dateStr = getLatestTradingDay(new Date());
@@ -23,7 +22,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ market: "us", stocks: data });
     }
   } catch (error) {
-    return res.status(500).json({ error: error.message, stack: error.stack });
+    return res.status(500).json({ error: error.message });
   }
 }
 
@@ -53,7 +52,7 @@ async function getUSRanking() {
   });
 }
 
-// ── 日本株 ────────────────────────────────────────────────────────────────────
+// ── 日本株：全銘柄を一括並列取得 ─────────────────────────────────────────────
 const JP_CODES = [
   "7203","6758","8306","9984","6861","7974","8035","9432","4063","6367",
   "9433","7267","6501","4519","3382","8411","6098","4661","8316","6594",
@@ -77,55 +76,45 @@ async function getJPRanking() {
   if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
 
   const dateStr = getLatestTradingDay(new Date());
-  const results = [];
-  const BATCH = 5;
 
-  for (let i = 0; i < JP_CODES.length; i += BATCH) {
-    const batch = JP_CODES.slice(i, i + BATCH);
-    const batchResults = await Promise.all(batch.map(async (code) => {
-      try {
-        const url = `https://api.jquants.com/v2/equities/bars/daily?code=${code}&date=${dateStr}`;
-        const r = await fetch(url, {
-          headers: { "x-api-key": apiKey },
-          signal: AbortSignal.timeout(8000),
-        });
-        if (!r.ok) return null;
-        const json = await r.json();
+  // 全30銘柄を一括並列取得（Vercelの10秒制限内に収める）
+  const allResults = await Promise.all(JP_CODES.map(async (code) => {
+    try {
+      const url = `https://api.jquants.com/v2/equities/bars/daily?code=${code}&date=${dateStr}`;
+      const r = await fetch(url, {
+        headers: { "x-api-key": apiKey },
+        signal: AbortSignal.timeout(7000),
+      });
+      if (!r.ok) return null;
+      const json = await r.json();
+      const bars = json?.data || json?.daily_bars || json?.bars || [];
+      if (!bars.length) return null;
+      const bar = bars[0];
+      const close = bar.C ?? 0;
+      const open  = bar.O ?? 0;
+      const vol   = bar.Vo ?? 0;
+      const change = open > 0 ? ((close - open) / open * 100) : 0;
+      return {
+        ticker: code + ".T",
+        name: JP_NAMES[code] || code,
+        market: "JP",
+        tvSymbol: "TSE:" + code,
+        volume: vol,
+        price: close,
+        change: parseFloat(change.toFixed(2)),
+      };
+    } catch(e) {
+      return null;
+    }
+  }));
 
-        // V2レスポンスのキーを全パターン試す
-        const bars = json?.daily_bars || json?.bars || json?.data
-          || json?.daily_quotes || json?.prices || [];
-
-        if (!bars.length) return null;
-        const bar = bars[0];
-
-        // カラム名をV2/V1両方対応
-        const close  = bar.C  ?? bar.Close  ?? bar.close  ?? 0;
-        const open   = bar.O  ?? bar.Open   ?? bar.open   ?? 0;
-        const vol    = bar.Vo ?? bar.Volume ?? bar.volume ?? 0;
-        const change = open > 0 ? ((close - open) / open * 100) : 0;
-
-        return {
-          ticker: code + ".T",
-          name: JP_NAMES[code] || code,
-          market: "JP",
-          tvSymbol: "TSE:" + code,
-          volume: vol,
-          price: close,
-          change: parseFloat(change.toFixed(2)),
-        };
-      } catch(e) {
-        return null;
-      }
-    }));
-    results.push(...batchResults.filter(Boolean));
-  }
-
-  return results.sort((a, b) => b.volume - a.volume);
+  return allResults
+    .filter(Boolean)
+    .sort((a, b) => b.volume - a.volume);
 }
 
+// 直近営業日（J-Quants Freeプラン上限: 2026-03-07）
 function getLatestTradingDay(date) {
-  // J-Quants Freeプランのデータ上限: 2026-03-07
   const FREE_PLAN_END = new Date("2026-03-07");
   let d = new Date(date);
   if (d > FREE_PLAN_END) d = new Date(FREE_PLAN_END);
