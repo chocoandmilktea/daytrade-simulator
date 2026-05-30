@@ -3,18 +3,10 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const { market, debug } = req.query;
+  const { market } = req.query;
 
   try {
     if (market === "jp") {
-      if (debug === "1") {
-        const apiKey = process.env.JQUANTS_API_KEY;
-        const dateStr = getLatestTradingDay(new Date());
-        const url = `https://api.jquants.com/v2/equities/bars/daily?code=7203&date=${dateStr}`;
-        const r = await fetch(url, { headers: { "x-api-key": apiKey } });
-        const json = await r.json();
-        return res.status(200).json({ debug: true, date: dateStr, status: r.status, response: json });
-      }
       const data = await getJPRanking();
       return res.status(200).json({ market: "jp", stocks: data });
     } else {
@@ -52,13 +44,7 @@ async function getUSRanking() {
   });
 }
 
-// ── 日本株：全銘柄を一括並列取得 ─────────────────────────────────────────────
-const JP_CODES = [
-  "7203","6758","8306","9984","6861","7974","8035","9432","4063","6367",
-  "9433","7267","6501","4519","3382","8411","6098","4661","8316","6594",
-  "4568","7751","6702","8058","8031","7011","5108","4452","6857","9101"
-];
-
+// ── 日本株：日付指定で全銘柄一括取得（1リクエスト） ─────────────────────────
 const JP_NAMES = {
   "7203":"トヨタ自動車","6758":"ソニーグループ","8306":"三菱UFJ",
   "9984":"ソフトバンクG","6861":"キーエンス","7974":"任天堂",
@@ -75,24 +61,42 @@ async function getJPRanking() {
   const apiKey = process.env.JQUANTS_API_KEY;
   if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
 
-  const dateStr = getLatestTradingDay(new Date());
+  // J-Quants Freeプラン上限日
+  const dateStr = "2026-03-06";
 
-  // 全30銘柄を一括並列取得（Vercelの10秒制限内に収める）
-  const allResults = await Promise.all(JP_CODES.map(async (code) => {
-    try {
-      const url = `https://api.jquants.com/v2/equities/bars/daily?code=${code}&date=${dateStr}`;
-      const r = await fetch(url, {
-        headers: { "x-api-key": apiKey },
-        signal: AbortSignal.timeout(7000),
-      });
-      if (!r.ok) return null;
-      const json = await r.json();
-      const bars = json?.data || json?.daily_bars || json?.bars || [];
-      if (!bars.length) return null;
-      const bar = bars[0];
-      const close = bar.C ?? 0;
-      const open  = bar.O ?? 0;
-      const vol   = bar.Vo ?? 0;
+  // 日付だけ指定 → 全銘柄を1リクエストで取得
+  const url = `https://api.jquants.com/v2/equities/bars/daily?date=${dateStr}`;
+  const res = await fetch(url, {
+    headers: { "x-api-key": apiKey },
+    signal: AbortSignal.timeout(9000),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error("J-Quants error: " + res.status + " " + errText);
+  }
+
+  const json = await res.json();
+  const bars = json?.data || json?.daily_bars || json?.bars || [];
+
+  if (!bars.length) {
+    throw new Error("No data. Keys: " + Object.keys(json).join(","));
+  }
+
+  // 出来高上位50を返す
+  return bars
+    .filter(function(bar) {
+      return (bar.Vo || 0) > 0 && (bar.C || 0) > 0;
+    })
+    .sort(function(a, b) {
+      return (b.Vo || 0) - (a.Vo || 0);
+    })
+    .slice(0, 50)
+    .map(function(bar) {
+      const code = String(bar.Code || "").replace(/0$/, "");
+      const close  = bar.C || 0;
+      const open   = bar.O || 0;
+      const vol    = bar.Vo || 0;
       const change = open > 0 ? ((close - open) / open * 100) : 0;
       return {
         ticker: code + ".T",
@@ -103,24 +107,5 @@ async function getJPRanking() {
         price: close,
         change: parseFloat(change.toFixed(2)),
       };
-    } catch(e) {
-      return null;
-    }
-  }));
-
-  return allResults
-    .filter(Boolean)
-    .sort((a, b) => b.volume - a.volume);
-}
-
-// 直近営業日（J-Quants Freeプラン上限: 2026-03-07）
-function getLatestTradingDay(date) {
-  const FREE_PLAN_END = new Date("2026-03-07");
-  let d = new Date(date);
-  if (d > FREE_PLAN_END) d = new Date(FREE_PLAN_END);
-  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+    });
 }
