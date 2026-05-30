@@ -125,9 +125,10 @@ async function getJPRanking() {
 }
 
 function getLatestTradingDay(date) {
-  const d = new Date(date);
-  const jstHour = (d.getUTCHours() + 9) % 24;
-  if (jstHour < 16) d.setDate(d.getDate() - 1);
+  // J-Quants Freeプランのデータ上限: 2026-03-07
+  const FREE_PLAN_END = new Date("2026-03-07");
+  let d = new Date(date);
+  if (d > FREE_PLAN_END) d = new Date(FREE_PLAN_END);
   while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
