@@ -1,0 +1,21 @@
+cat > /mnt/user-data/outputs/index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#040c18" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="株スキャナー" />
+    <meta name="description" content="出来高上位銘柄のテクニカル分析・ポートフォリオ管理" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>デイトレード シミュレーター</title>
+  </head>
+  <body>
+    <noscript>JavaScriptを有効にしてください。</noscript>
+    <div id="root"></div>
+  </body>
+</html>
+EOF
+echo "done"
