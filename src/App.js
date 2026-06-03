@@ -10,58 +10,6 @@ function useColumns(){
   return width<768?2:3;
 }
 
-var STOCK_UNIVERSE = [
-  { ticker:"AAPL",  tvSymbol:"NASDAQ:AAPL",  name:"Apple",          market:"US" },
-  { ticker:"MSFT",  tvSymbol:"NASDAQ:MSFT",  name:"Microsoft",      market:"US" },
-  { ticker:"NVDA",  tvSymbol:"NASDAQ:NVDA",  name:"NVIDIA",         market:"US" },
-  { ticker:"AMZN",  tvSymbol:"NASDAQ:AMZN",  name:"Amazon",         market:"US" },
-  { ticker:"GOOGL", tvSymbol:"NASDAQ:GOOGL", name:"Alphabet A",     market:"US" },
-  { ticker:"META",  tvSymbol:"NASDAQ:META",  name:"Meta",           market:"US" },
-  { ticker:"TSLA",  tvSymbol:"NASDAQ:TSLA",  name:"Tesla",          market:"US" },
-  { ticker:"BRK-B", tvSymbol:"NYSE:BRK.B",   name:"Berkshire B",    market:"US" },
-  { ticker:"JPM",   tvSymbol:"NYSE:JPM",     name:"JPMorgan",       market:"US" },
-  { ticker:"V",     tvSymbol:"NYSE:V",       name:"Visa",           market:"US" },
-  { ticker:"UNH",   tvSymbol:"NYSE:UNH",     name:"UnitedHealth",   market:"US" },
-  { ticker:"XOM",   tvSymbol:"NYSE:XOM",     name:"ExxonMobil",     market:"US" },
-  { ticker:"MA",    tvSymbol:"NYSE:MA",      name:"Mastercard",     market:"US" },
-  { ticker:"LLY",   tvSymbol:"NYSE:LLY",     name:"Eli Lilly",      market:"US" },
-  { ticker:"AVGO",  tvSymbol:"NASDAQ:AVGO",  name:"Broadcom",       market:"US" },
-  { ticker:"PG",    tvSymbol:"NYSE:PG",      name:"P&G",            market:"US" },
-  { ticker:"JNJ",   tvSymbol:"NYSE:JNJ",     name:"J&J",            market:"US" },
-  { ticker:"HD",    tvSymbol:"NYSE:HD",      name:"Home Depot",     market:"US" },
-  { ticker:"COST",  tvSymbol:"NASDAQ:COST",  name:"Costco",         market:"US" },
-  { ticker:"ABBV",  tvSymbol:"NYSE:ABBV",    name:"AbbVie",         market:"US" },
-  { ticker:"NFLX",  tvSymbol:"NASDAQ:NFLX",  name:"Netflix",        market:"US" },
-  { ticker:"AMD",   tvSymbol:"NASDAQ:AMD",   name:"AMD",            market:"US" },
-  { ticker:"CRM",   tvSymbol:"NYSE:CRM",     name:"Salesforce",     market:"US" },
-  { ticker:"ADBE",  tvSymbol:"NASDAQ:ADBE",  name:"Adobe",          market:"US" },
-  { ticker:"WMT",   tvSymbol:"NYSE:WMT",     name:"Walmart",        market:"US" },
-  { ticker:"BAC",   tvSymbol:"NYSE:BAC",     name:"Bank of America",market:"US" },
-  { ticker:"KO",    tvSymbol:"NYSE:KO",      name:"Coca-Cola",      market:"US" },
-  { ticker:"PEP",   tvSymbol:"NASDAQ:PEP",   name:"PepsiCo",        market:"US" },
-  { ticker:"TMO",   tvSymbol:"NYSE:TMO",     name:"Thermo Fisher",  market:"US" },
-  { ticker:"ACN",   tvSymbol:"NYSE:ACN",     name:"Accenture",      market:"US" },
-  { ticker:"INTC",  tvSymbol:"NASDAQ:INTC",  name:"Intel",          market:"US" },
-  { ticker:"DIS",   tvSymbol:"NYSE:DIS",     name:"Disney",         market:"US" },
-  { ticker:"PYPL",  tvSymbol:"NASDAQ:PYPL",  name:"PayPal",         market:"US" },
-  { ticker:"UBER",  tvSymbol:"NYSE:UBER",    name:"Uber",           market:"US" },
-  { ticker:"ABNB",  tvSymbol:"NASDAQ:ABNB",  name:"Airbnb",         market:"US" },
-  { ticker:"7203.T",tvSymbol:"TSE:7203", name:"トヨタ自動車",       market:"JP" },
-  { ticker:"6758.T",tvSymbol:"TSE:6758", name:"ソニーグループ",     market:"JP" },
-  { ticker:"8306.T",tvSymbol:"TSE:8306", name:"三菱UFJ",            market:"JP" },
-  { ticker:"9984.T",tvSymbol:"TSE:9984", name:"ソフトバンクG",      market:"JP" },
-  { ticker:"6861.T",tvSymbol:"TSE:6861", name:"キーエンス",         market:"JP" },
-  { ticker:"7974.T",tvSymbol:"TSE:7974", name:"任天堂",             market:"JP" },
-  { ticker:"8035.T",tvSymbol:"TSE:8035", name:"東京エレクトロン",   market:"JP" },
-  { ticker:"9432.T",tvSymbol:"TSE:9432", name:"NTT",                market:"JP" },
-  { ticker:"4063.T",tvSymbol:"TSE:4063", name:"信越化学",           market:"JP" },
-  { ticker:"6367.T",tvSymbol:"TSE:6367", name:"ダイキン工業",       market:"JP" },
-  { ticker:"PLTR",  tvSymbol:"NASDAQ:PLTR",  name:"Palantir",       market:"US" },
-  { ticker:"F",     tvSymbol:"NYSE:F",       name:"Ford",           market:"US" },
-  { ticker:"SOFI",  tvSymbol:"NASDAQ:SOFI",  name:"SoFi",           market:"US" },
-  { ticker:"NIO",   tvSymbol:"NYSE:NIO",     name:"NIO",            market:"US" },
-  { ticker:"RIVN",  tvSymbol:"NASDAQ:RIVN",  name:"Rivian",         market:"US" },
-];
 
 var BADGE = {
   BUY:   { bg:"#052e16", border:"#22d3a0", text:"#22d3a0", label:"買い"   },
@@ -92,8 +40,8 @@ async function fetchRanking(market){
 
 async function buildStockUniverse(){
   var results=await Promise.all([fetchRanking("us"),fetchRanking("jp")]);
-  var us=results[0]||STOCK_UNIVERSE.filter(function(s){return s.market==="US";});
-  var jp=results[1]||STOCK_UNIVERSE.filter(function(s){return s.market==="JP";});
+  var us=results[0]||[];
+  var jp=results[1]||[];
   var seen={},out=[];
   us.slice(0,50).concat(jp.slice(0,50)).forEach(function(s){if(!seen[s.ticker]){seen[s.ticker]=true;out.push(s);}});
   return out;
