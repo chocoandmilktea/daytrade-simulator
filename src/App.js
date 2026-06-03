@@ -256,15 +256,23 @@ function StockCard(p){
         </div>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:6,alignItems:"center"}}>
-        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,alignItems:"center"}}>
+          {/* 左上: 価格 */}
           <span style={{fontSize:11,color:"#d8eeff",fontWeight:700}}>{s.price}</span>
-          <div style={{display:"flex",gap:5,alignItems:"center"}}>
+          {/* 右上: クロスバッジ */}
+          <div style={{textAlign:"right"}}>
+            {cross&&cross.type!=="NONE"
+              ? <span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>
+              : <span style={{fontSize:9,color:"#1a3050"}}>─</span>}
+          </div>
+          {/* 左下: 勝率・前日比 */}
+          <div style={{display:"flex",gap:4,alignItems:"center"}}>
             <span style={{fontSize:9,color:"#22d3a0"}}>{s.winRate}%</span>
             <span style={{fontSize:9,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
           </div>
-          <div style={{display:"flex",gap:3,flexWrap:"wrap",marginTop:1}}>
+          {/* 右下: 買い/様子見バッジ */}
+          <div style={{textAlign:"right"}}>
             <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
-            {cross&&cross.type!=="NONE"&&<span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>}
           </div>
         </div>
         <div style={{display:"flex",flexDirection:"row",gap:4,alignItems:"stretch"}}>
