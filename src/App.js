@@ -559,13 +559,9 @@ export default function App(){
     // サーバー同期
     var port=(function(){try{return JSON.parse(localStorage.getItem("portfolio_v1")||"[]");}catch(e){return[];}})();
     fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({favs:next,portfolio:port})}).catch(function(){});
-    // Pushover通知
+    // Pushover通知（デバイスIDを送信）
     if(isAdding){
-      var found=stocks.find(function(s){return s.ticker===ticker;});
-      var msg=found
-        ? ticker.replace(".T","")+" "+found.name+"\n"+found.price+" "+(parseFloat(found.change)>=0?"▲":"▼")+Math.abs(found.change)+"%  "+found.timing
-        : ticker.replace(".T","")+" をお気に入り登録しました";
-      fetch(NOTIFY_API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:"⭐ お気に入り登録",message:msg})}).catch(function(){});
+      fetch(NOTIFY_API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:"DaySimulator 同期ID",message:userId})}).catch(function(){});
     }
     return next;
   });}
