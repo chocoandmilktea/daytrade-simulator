@@ -91,7 +91,7 @@ async function buildStockUniverse(){
 
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),opens:cached.opens.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real};}
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real};}
   var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
   if(!res.ok) throw new Error("HTTP "+res.status);
   var json=await res.json();
@@ -99,24 +99,17 @@ async function fetchYahoo(ticker){
   if(!result) throw new Error("empty");
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
-  var data={closes:fill(q.close),opens:fill(q.open),highs:fill(q.high),lows:fill(q.low),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true};
+  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),opens:data.opens.slice(),highs:data.highs.slice(),lows:data.lows.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real};
 }
 
 function genSim(ticker){
   var h=0;for(var i=0;i<ticker.length;i++)h=(Math.imul(31,h)+ticker.charCodeAt(i))|0;
   var s=Math.abs(h);function rng(){s=(s*1664525+1013904223)&0x7fffffff;return s/0x7fffffff;}
-  var price=rng()*400+60,closes=[],opens=[],highs=[],lows=[];
-  for(var d=0;d<40;d++){
-    var v=rng()*0.025;
-    var o=price;
-    price=Math.max(5,price*(1+rng()*0.006-0.003+(rng()-0.5)*v));
-    closes.push(price);opens.push(o);
-    highs.push(Math.max(o,price)*(1+rng()*0.006));
-    lows.push(Math.min(o,price)*(1-rng()*0.006));
-  }
-  return{closes:closes,opens:opens,highs:highs,lows:lows,currentPrice:price,previousClose:closes[closes.length-2],real:false};
+  var price=rng()*400+60,closes=[],highs=[],lows=[];
+  for(var d=0;d<63;d++){var v=rng()*0.025;price=Math.max(5,price*(1+rng()*0.006-0.003+(rng()-0.5)*v));closes.push(price);highs.push(price*(1+rng()*0.008));lows.push(price*(1-rng()*0.008));}
+  return{closes:closes,highs:highs,lows:lows,currentPrice:price,previousClose:closes[closes.length-2],real:false};
 }
 
 function calcSMA(arr,p){return arr.map(function(_,i){if(i<p-1)return null;var s=0;for(var j=i-p+1;j<=i;j++)s+=arr[j];return s/p;});}
@@ -136,7 +129,7 @@ function runBacktest(closes){
 }
 
 function analyzeStock(stock,pd){
-  var closes=pd.closes.slice(),highs=pd.highs.slice(),lows=pd.lows.slice(),opens=pd.opens?pd.opens.slice():pd.closes.slice();
+  var closes=pd.closes.slice(),highs=pd.highs.slice(),lows=pd.lows.slice();
   var n=closes.length-1;
   var s20=calcSMA(closes,20)[n],s50=calcSMA(closes,50)[n];
   var macdArr=calcMACD(closes),rsiVal=calcRSI(closes)[n];
@@ -154,52 +147,51 @@ function analyzeStock(stock,pd){
   var timing=sc>=68?"BUY":sc>=42?"WATCH":"SKIP";
   var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
   var dispPrice=stock.market==="JP"?"¥"+Math.round(price).toLocaleString():"$"+price.toFixed(2);
-  // ローソク足用に直近30本のOHLC配列を渡す
-  var L=closes.length;
-  var sparkCandles=[];
-  for(var ci=Math.max(0,L-30);ci<L;ci++){
-    sparkCandles.push({o:opens[ci],h:highs[ci],l:lows[ci],c:closes[ci]});
-  }
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
-    timing:timing,signals:signals,change:change,
-    sparkCandles:sparkCandles,spark:closes.slice(-30),
+    timing:timing,signals:signals,change:change,spark:closes.slice(-30),
     real:pd.real,closes:closes,yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
 }
 
-// ── ローソク足チャート ─────────────────────────────────────────────────────────
-function CandleChart(p){
-  var candles=p.candles;
-  if(!candles||candles.length<2) return null;
+// ── SparklineWithMA ───────────────────────────────────────────────────────────
+// 価格ライン: 細め・半透明でMAが前面に見えるよう
+// MA5(黄): 太め・鮮明
+// MA25(青紫): 太め・鮮明
+function SparklineWithMA(p){
+  var data=p.data, up=p.up;
+  if(!data||data.length<2) return null;
   var W=100,H=48;
-  var allH=candles.map(function(c){return c.h;}),allL=candles.map(function(c){return c.l;});
-  var mn=Math.min.apply(null,allL),mx=Math.max.apply(null,allH),rng=mx-mn||1;
-  function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
-  var n=candles.length;
-  var candleW=Math.max(1.5,W/n*0.6);
-  var gap=W/n;
+
+  // MA計算（全データで計算してから末尾30本分をスライス）
+  var sma5=[],sma25=[];
+  for(var i=0;i<data.length;i++){
+    if(i>=4){var s5=0;for(var j=i-4;j<=i;j++)s5+=data[j];sma5.push(s5/5);}else sma5.push(null);
+    if(i>=24){var s25=0;for(var j2=i-24;j2<=i;j2++)s25+=data[j2];sma25.push(s25/25);}else sma25.push(null);
+  }
+
+  // スケール：価格＋MA全部含めてmin/max決定
+  var allVals=data.slice();
+  sma5.forEach(function(v){if(v!==null)allVals.push(v);});
+  sma25.forEach(function(v){if(v!==null)allVals.push(v);});
+  var mn=Math.min.apply(null,allVals),mx=Math.max.apply(null,allVals),rng=mx-mn||1;
+
+  function toY(v){return H-((v-mn)/rng)*(H-5)-2.5;}
+  function toX(i){return(i/(data.length-1))*(W-1);}
+
+  var pricePts=data.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
+  var ma5Pts=sma5.reduce(function(acc,v,i){if(v!==null)acc.push(toX(i)+","+toY(v));return acc;},[]).join(" ");
+  var ma25Pts=sma25.reduce(function(acc,v,i){if(v!==null)acc.push(toX(i)+","+toY(v));return acc;},[]).join(" ");
+
+  var priceColor=up?"#22d3a0":"#f43f5e";
+
   return(
-    <svg width={W} height={H} style={{display:"block"}}>
-      {candles.map(function(c,i){
-        var x=i*gap+gap/2;
-        var isUp=c.c>=c.o;
-        var col=isUp?"#22d3a0":"#f43f5e";
-        var bodyTop=toY(Math.max(c.o,c.c));
-        var bodyBot=toY(Math.min(c.o,c.c));
-        var bodyH=Math.max(1,bodyBot-bodyTop);
-        return(
-          <g key={i}>
-            {/* 上ヒゲ */}
-            <line x1={x} y1={toY(c.h)} x2={x} y2={bodyTop} stroke={col} strokeWidth={0.8} opacity={0.8}/>
-            {/* 下ヒゲ */}
-            <line x1={x} y1={bodyBot} x2={x} y2={toY(c.l)} stroke={col} strokeWidth={0.8} opacity={0.8}/>
-            {/* ボディ */}
-            <rect x={x-candleW/2} y={bodyTop} width={candleW} height={bodyH}
-              fill={isUp?"#22d3a0":"#f43f5e"} opacity={isUp?0.85:0.9}
-              rx={0.5}/>
-          </g>
-        );
-      })}
+    <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
+      {/* MA25（青紫）: 一番下に描画、太め */}
+      {ma25Pts&&<polyline points={ma25Pts} fill="none" stroke="#818cf8" strokeWidth={1.8} strokeLinejoin="round" strokeLinecap="round"/>}
+      {/* MA5（黄）: 中間に描画、太め */}
+      {ma5Pts&&<polyline points={ma5Pts} fill="none" stroke="#fbbf24" strokeWidth={1.8} strokeLinejoin="round" strokeLinecap="round"/>}
+      {/* 価格ライン: 細め・半透明で上に描画 */}
+      <polyline points={pricePts} fill="none" stroke={priceColor} strokeWidth={1} strokeLinejoin="round" strokeLinecap="round" opacity={0.5}/>
     </svg>
   );
 }
@@ -239,39 +231,17 @@ function StockCard(p){
         <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:13,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060",flexShrink:0}}>{isFav(s.ticker)?"★":"☆"}</button>
       </div>
 
-      {/* 中段: ローソク足チャート（横幅いっぱい） */}
-      <div style={{background:"#030b14",borderRadius:6,padding:"4px 4px 2px",overflow:"hidden"}}>
-        <svg width="100%" height={48} viewBox="0 0 100 48" preserveAspectRatio="none" style={{display:"block"}}>
-          {(function(){
-            var candles=s.sparkCandles;
-            if(!candles||candles.length<2) return null;
-            var allH=candles.map(function(c){return c.h;}),allL=candles.map(function(c){return c.l;});
-            var mn=Math.min.apply(null,allL),mx=Math.max.apply(null,allH),rng=mx-mn||1;
-            var W=100,H=48;
-            function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
-            var n=candles.length;
-            var gap=W/n;
-            var candleW=Math.max(1.2,gap*0.55);
-            return candles.map(function(c,i){
-              var x=i*gap+gap/2;
-              var isUpC=c.c>=c.o;
-              var col=isUpC?"#22d3a0":"#f43f5e";
-              var bodyTop=toY(Math.max(c.o,c.c));
-              var bodyBot=toY(Math.min(c.o,c.c));
-              var bodyH=Math.max(1,bodyBot-bodyTop);
-              return(
-                <g key={i}>
-                  <line x1={x} y1={toY(c.h)} x2={x} y2={bodyTop} stroke={col} strokeWidth={0.7} opacity={0.8}/>
-                  <line x1={x} y1={bodyBot} x2={x} y2={toY(c.l)} stroke={col} strokeWidth={0.7} opacity={0.8}/>
-                  <rect x={x-candleW/2} y={bodyTop} width={candleW} height={bodyH} fill={col} opacity={isUpC?0.85:0.9} rx={0.3}/>
-                </g>
-              );
-            });
-          })()}
-        </svg>
+      {/* 中段: スパークライン+MA（横幅いっぱい） */}
+      <div style={{background:"#030b14",borderRadius:6,padding:"4px 4px 2px"}}>
+        <SparklineWithMA data={s.spark} up={isUp}/>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:2}}>
+          <span style={{fontSize:7,color:"#fbbf24",fontWeight:700}}>─ MA5</span>
+          <span style={{fontSize:7,color:"#818cf8",fontWeight:700}}>─ MA25</span>
+          <span style={{fontSize:7,color:isUp?"#22d3a060":"#f43f5e60"}}>─ 価格</span>
+        </div>
       </div>
 
-      {/* 下段: 価格・勝率・% ／ バッジ・クロス ／ ボタン */}
+      {/* 下段: 価格・勝率・% ／ バッジ ／ ボタン */}
       <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:6,alignItems:"center"}}>
         <div style={{display:"flex",flexDirection:"column",gap:3}}>
           <span style={{fontSize:11,color:"#d8eeff",fontWeight:700}}>{s.price}</span>
@@ -378,9 +348,7 @@ function FavPanel(p){var stocks=p.stocks,favs=p.favs,toggleFav=p.toggleFav;var f
 function CrossPanel(p){var stocks=p.stocks,loading=p.loading,onScan=p.onScan,toggleFav=p.toggleFav,favs=p.favs;var gcNow=[],dcNow=[],gcNear=[],dcNear=[],gcWatch=[];stocks.forEach(function(s){var c=classifyStockFn(s);if(!c||c.type==="NONE")return;if(c.type==="GC_NOW")gcNow.push({s:s,cross:c});else if(c.type==="DC_NOW")dcNow.push({s:s,cross:c});else if(c.type==="GC_NEAR")gcNear.push({s:s,cross:c});else if(c.type==="DC_NEAR")dcNear.push({s:s,cross:c});else if(c.type==="GC_WATCH")gcWatch.push({s:s,cross:c});});if(stocks.length===0)return(<div style={{textAlign:"center",padding:"80px 20px",color:"#2a6090"}}><div style={{fontSize:40,marginBottom:16}}>✨</div><button onClick={onScan} disabled={loading} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"12px 24px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>{loading?"取得中...":"スキャン開始"}</button></div>);function Section(sp){if(!sp.items||!sp.items.length)return null;return(<div style={{marginBottom:14}}><div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:6,borderBottom:"1px solid #0f2040",paddingBottom:3}}>{sp.title} ({sp.items.length})</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>{sp.items.map(function(item){return <StockCard key={item.s.ticker} s={item.s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={item.cross}/>;})}</div></div>);}return(<div><div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12}}><div style={{fontSize:11,fontWeight:700,color:"#e0f0ff"}}>クロス予測 <span style={{fontSize:9,color:"#4a7090",fontWeight:400}}>MACDヒストグラムから自動判定</span></div></div><Section title="GC接近中" items={gcNear} color="#fbbf24"/><Section title="GC発生中" items={gcNow} color="#22d3a0"/><Section title="GC監視中" items={gcWatch} color="#60a5fa"/><Section title="DC接近中" items={dcNear} color="#fb923c"/><Section title="DC発生中" items={dcNow} color="#f43f5e"/></div>);}
 
 function IpoPanel(){var today=new Date();function daysUntil(d){return Math.ceil((new Date(d)-today)/(1000*60*60*24));}function ipoScore(ipo){var s=0;if(ipo.market==="東証プライム")s+=30;else if(ipo.market==="東証スタンダード")s+=20;else s+=10;if(ipo.cap>=500)s+=30;else if(ipo.cap>=100)s+=20;else s+=10;if(["半導体","SaaS","IT","宇宙"].indexOf(ipo.sector)>=0)s+=25;else s+=10;return Math.min(100,s);}return(<div>{IPO_DATA.map(function(ipo){var sc=ipoScore(ipo),days=daysUntil(ipo.listDate),dLabel=days<0?"上場済み":days===0?"本日上場":"あと"+days+"日",dColor=days<0?"#4a7090":days<=3?"#f43f5e":days<=7?"#fbbf24":"#4a90c0",sColor=sc>=70?"#22d3a0":sc>=50?"#fbbf24":"#94a3b8";return(<div key={ipo.code} style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",gap:12}}><div style={{flex:1}}><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}><span style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>{ipo.name}</span><span style={{fontSize:10,color:"#4a7090"}}>{ipo.code}</span></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>{[["上場日",ipo.listDate],["公開価格","¥"+ipo.price.toLocaleString()],["時価総額",ipo.cap+"億円"],["セクター",ipo.sector]].map(function(row){return(<div key={row[0]} style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:9,color:"#2a6090"}}>{row[0]}</div><div style={{fontSize:11,fontWeight:700,color:"#b8cce0"}}>{row[1]}</div></div>);})}</div><div style={{display:"flex",gap:8,alignItems:"center"}}><span style={{fontSize:11,fontWeight:700,color:dColor}}>{dLabel}</span><a href={ipo.url} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #3b82f6",borderRadius:6,color:"#93c5fd",padding:"4px 10px",fontSize:10,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>Yahoo!</a></div></div><div style={{background:sc>=70?"#052e16":"#0a1428",border:"1px solid "+sColor+"50",borderRadius:8,padding:"8px 12px",textAlign:"center",minWidth:52}}><div style={{fontSize:9,color:"#4a7090"}}>スコア</div><div style={{fontSize:18,fontWeight:800,color:sColor}}>{sc}</div></div></div></div>);})}</div>);}
-
 function NewsPanel(){var NEWS=[{label:"株式ニュース",url:"https://finance.yahoo.co.jp/news",desc:"国内外の最新株式ニュース"},{label:"日本株ニュース",url:"https://finance.yahoo.co.jp/news/stocks",desc:"日本株関連ニュース"},{label:"米国株ニュース",url:"https://finance.yahoo.co.jp/news/world",desc:"米国株最新情報"},{label:"マーケット概況",url:"https://finance.yahoo.co.jp/stocks",desc:"日本株式市場の概況"}];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px"}}><div style={{fontSize:13,fontWeight:700,color:"#e0f0ff"}}>ニュース</div></div><div style={{padding:"8px"}}>{NEWS.map(function(item,i){return(<a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}><span style={{fontSize:13,fontWeight:700,color:"#93c5fd"}}>{item.label}</span><span style={{fontSize:10,color:"#4a7090"}}>{item.desc}</span></a>);})}</div></div>);}
-
 function TrendPanel(){var cs=useState(0);var openCat=cs[0],setOpenCat=cs[1];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}><div style={{fontSize:12,fontWeight:700,color:"#e0f0ff"}}>トレンド・ランキング</div></div>{TREND_LINKS.map(function(cat,ci){var isOpen=openCat===ci;return(<div key={ci}><div onClick={function(){setOpenCat(isOpen?-1:ci);}} style={{padding:"10px 14px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #0a1828",background:isOpen?"#071a2e":"transparent"}}><span style={{fontSize:12,fontWeight:700,color:"#b8cce0"}}>{cat.category}</span><span style={{fontSize:10,color:"#2a6090"}}>{isOpen?"▲":"▼"}</span></div>{isOpen&&<div style={{background:"#040c18",borderBottom:"1px solid #0a1828"}}>{cat.links.map(function(link,li){return(<a key={li} href={link.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",padding:"9px 20px",borderBottom:"1px solid #0a1828",textDecoration:"none",gap:8}}><span style={{fontSize:10,color:"#22d3a0"}}>→</span><span style={{fontSize:12,color:"#93c5fd"}}>{link.label}</span></a>);})}</div>}</div>);})}</div>);}
 
 export default function App(){
