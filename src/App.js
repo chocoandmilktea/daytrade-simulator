@@ -459,16 +459,98 @@ function IpoPanel(){var today=new Date();function daysUntil(d){return Math.ceil(
 function NewsPanel(){var NEWS=[{label:"株式ニュース",url:"https://finance.yahoo.co.jp/news",desc:"国内外の最新株式ニュース"},{label:"日本株ニュース",url:"https://finance.yahoo.co.jp/news/stocks",desc:"日本株関連ニュース"},{label:"米国株ニュース",url:"https://finance.yahoo.co.jp/news/world",desc:"米国株最新情報"},{label:"マーケット概況",url:"https://finance.yahoo.co.jp/stocks",desc:"日本株式市場の概況"}];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px"}}><div style={{fontSize:13,fontWeight:700,color:"#e0f0ff"}}>ニュース</div></div><div style={{padding:"8px"}}>{NEWS.map(function(item,i){return(<a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}><span style={{fontSize:13,fontWeight:700,color:"#93c5fd"}}>{item.label}</span><span style={{fontSize:10,color:"#4a7090"}}>{item.desc}</span></a>);})}</div></div>);}
 function TrendPanel(){var cs=useState(0);var openCat=cs[0],setOpenCat=cs[1];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}><div style={{fontSize:12,fontWeight:700,color:"#e0f0ff"}}>トレンド・ランキング</div></div>{TREND_LINKS.map(function(cat,ci){var isOpen=openCat===ci;return(<div key={ci}><div onClick={function(){setOpenCat(isOpen?-1:ci);}} style={{padding:"10px 14px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #0a1828",background:isOpen?"#071a2e":"transparent"}}><span style={{fontSize:12,fontWeight:700,color:"#b8cce0"}}>{cat.category}</span><span style={{fontSize:10,color:"#2a6090"}}>{isOpen?"▲":"▼"}</span></div>{isOpen&&<div style={{background:"#040c18",borderBottom:"1px solid #0a1828"}}>{cat.links.map(function(link,li){return(<a key={li} href={link.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",padding:"9px 20px",borderBottom:"1px solid #0a1828",textDecoration:"none",gap:8}}><span style={{fontSize:10,color:"#22d3a0"}}>→</span><span style={{fontSize:12,color:"#93c5fd"}}>{link.label}</span></a>);})}</div>}</div>);})}</div>);}
 
+
+// ── SyncPanel ─────────────────────────────────────────────────────────────────
+function SyncPanel(p){
+  var userId=p.userId,syncApi=p.syncApi,setFavs=p.setFavs,scan=p.scan;
+  var copyStatusS=useState(null);var copyStatus=copyStatusS[0],setCopyStatus=copyStatusS[1];
+  var inputS=useState("");var input=inputS[0],setInput=inputS[1];
+  var syncStatusS=useState(null);var syncStatus=syncStatusS[0],setSyncStatus=syncStatusS[1];
+
+  function copyId(){
+    if(navigator.clipboard){navigator.clipboard.writeText(userId).then(function(){setCopyStatus("ok");setTimeout(function(){setCopyStatus(null);},2000);});}
+    else{prompt("ユーザーID",userId);}
+  }
+
+  async function syncById(){
+    var id=input.trim();if(!id)return;
+    setSyncStatus("loading");
+    try{
+      var res=await fetch(syncApi+"?userId="+id);
+      var data=await res.json();
+      if(!data.favs)throw new Error("invalid");
+      setFavs(data.favs.slice());
+      try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}
+      try{localStorage.setItem("portfolio_v1",JSON.stringify(data.portfolio||[]));}catch(e){}
+      try{localStorage.setItem("daytrade_uid",id);}catch(e){}
+      setSyncStatus("ok");
+      setTimeout(function(){setSyncStatus(null);scan();},1500);
+    }catch(e){setSyncStatus("error");setTimeout(function(){setSyncStatus(null);},2500);}
+  }
+
+  var favCount=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]").length;}catch(e){return 0;}})();
+  var portCount=(function(){try{return JSON.parse(localStorage.getItem("portfolio_v1")||"[]").length;}catch(e){return 0;}})();
+
+  return(
+    <div>
+      {/* 現在のデータ */}
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#e0f0ff",marginBottom:10}}>🔗 デバイス間同期</div>
+        <div style={{display:"flex",gap:12,marginBottom:14}}>
+          <div style={{background:"#050e1c",borderRadius:8,padding:"10px 16px"}}><div style={{fontSize:9,color:"#2a6090"}}>お気に入り</div><div style={{fontSize:18,fontWeight:800,color:"#fbbf24"}}>{favCount}銘柄</div></div>
+          <div style={{background:"#050e1c",borderRadius:8,padding:"10px 16px"}}><div style={{fontSize:9,color:"#2a6090"}}>ポートフォリオ</div><div style={{fontSize:18,fontWeight:800,color:"#22d3a0"}}>{portCount}銘柄</div></div>
+        </div>
+        <div style={{fontSize:10,color:"#4a7090",marginBottom:8}}>あなたのデバイスID</div>
+        <div style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:8,padding:"10px 12px",fontFamily:"monospace",fontSize:13,color:"#b8cce0",wordBreak:"break-all",marginBottom:10}}>{userId}</div>
+        <button onClick={copyId} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
+          {copyStatus==="ok"?"✅ コピーしました！":"📋 IDをコピー"}
+        </button>
+      </div>
+
+      {/* 別デバイスから同期 */}
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>別デバイスのIDで同期</div>
+        <div style={{fontSize:10,color:"#4a7090",marginBottom:10}}>他のデバイスのIDを入力するとお気に入り・ポートフォリオが引き継がれます</div>
+        <input
+          style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box",marginBottom:10}}
+          value={input} placeholder="別デバイスのIDを貼り付け"
+          onChange={function(e){setInput(e.target.value);}}
+        />
+        <button onClick={syncById} disabled={!input.trim()||syncStatus==="loading"}
+          style={{width:"100%",background:input.trim()?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,cursor:input.trim()?"pointer":"not-allowed",fontFamily:"monospace"}}>
+          {syncStatus==="loading"?"同期中...":syncStatus==="ok"?"✅ 同期完了！":syncStatus==="error"?"❌ IDが見つかりません":"このIDで同期する"}
+        </button>
+      </div>
+
+      {/* 使い方 */}
+      <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px"}}>
+        <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:10}}>使い方</div>
+        {[["1","iPadで「IDをコピー」をタップ"],["2","iPhoneのDaySimulatorを開く"],["3","🔗タブ → IDを貼り付けて「同期」"],["4","お気に入り・ポートフォリオが反映される"]].map(function(row){
+          return(<div key={row[0]} style={{display:"flex",gap:10,marginBottom:8,alignItems:"flex-start"}}>
+            <span style={{background:"#0ea5e9",color:"#fff",borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,flexShrink:0}}>{row[0]}</span>
+            <span style={{fontSize:11,color:"#b8cce0"}}>{row[1]}</span>
+          </div>);
+        })}
+        <div style={{fontSize:9,color:"#2a6060",marginTop:8}}>※ お気に入り登録・変更時に自動でサーバーに保存されます</div>
+      </div>
+    </div>
+  );
+}
+
 export default function App(){
   var a=useState([]);var stocks=a[0],setStocks=a[1];
   var b=useState(false);var loading=b[0],setLoading=b[1];
   var c=useState({done:0,total:0,msg:null});var progress=c[0],setProgress=c[1];
   var g=useState(null);var ts=g[0],setTs=g[1];
   var k=useState("cross");var activeTab=k[0],setActiveTab=k[1];
+  // ユーザーID（初回自動生成）
+  var userId=(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}})();
+  var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
+
   var favInit=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
   var fvS=useState(favInit);var favs=fvS[0],setFavs=fvS[1];
 
-  function toggleFav(ticker){setFavs(function(prev){var next=prev.indexOf(ticker)>=0?prev.filter(function(t){return t!==ticker;}):prev.concat([ticker]);try{localStorage.setItem("fav_tickers",JSON.stringify(next));}catch(e){}return next;});}
+  function toggleFav(ticker){setFavs(function(prev){var next=prev.indexOf(ticker)>=0?prev.filter(function(t){return t!==ticker;}):prev.concat([ticker]);try{localStorage.setItem("fav_tickers",JSON.stringify(next));}catch(e){}var port=(function(){try{return JSON.parse(localStorage.getItem("portfolio_v1")||"[]");}catch(e){return[];}})();fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({favs:next,portfolio:port})}).catch(function(){});return next;});}
   function isFav(ticker){return favs.indexOf(ticker)>=0;}
 
   var scan=useCallback(async function(){
@@ -495,11 +577,25 @@ export default function App(){
     setLoading(false);
   },[]);
 
-  // 起動時に自動スキャン
-  useEffect(function(){scan();},[]);
+  // 起動時: サーバーからデータ取得 → スキャン
+  useEffect(function(){
+    fetch(SYNC_API+"?userId="+userId)
+      .then(function(r){return r.json();})
+      .then(function(data){
+        if(data.favs&&data.favs.length>0){
+          setFavs(data.favs.slice());
+          try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}
+        }
+        if(data.portfolio&&data.portfolio.length>0){
+          try{localStorage.setItem("portfolio_v1",JSON.stringify(data.portfolio));}catch(e){}
+        }
+      })
+      .catch(function(){})
+      .finally(function(){scan();});
+  },[]);
 
-  var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["ipo","🚀"],["news","📰"],["trend","🔥"]];
-  var TAB_LABELS={"cross":"クロス予測","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","ipo":"IPO","news":"ニュース","trend":"トレンド"};
+  var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["ipo","🚀"],["news","📰"],["trend","🔥"],["sync","🔗"]];
+  var TAB_LABELS={"cross":"クロス予測","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","ipo":"IPO","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
 
   return(
     <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex"}}>
@@ -520,6 +616,7 @@ export default function App(){
           {activeTab==="ipo"&&<IpoPanel/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="trend"&&<TrendPanel/>}
+          {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
         </div>
       </div>
     </div>
