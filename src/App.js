@@ -550,7 +550,25 @@ export default function App(){
   var favInit=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
   var fvS=useState(favInit);var favs=fvS[0],setFavs=fvS[1];
 
-  function toggleFav(ticker){setFavs(function(prev){var next=prev.indexOf(ticker)>=0?prev.filter(function(t){return t!==ticker;}):prev.concat([ticker]);try{localStorage.setItem("fav_tickers",JSON.stringify(next));}catch(e){}var port=(function(){try{return JSON.parse(localStorage.getItem("portfolio_v1")||"[]");}catch(e){return[];}})();fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({favs:next,portfolio:port})}).catch(function(){});return next;});}
+  var NOTIFY_API="https://daytrade-simulator.vercel.app/api/notify";
+
+  function toggleFav(ticker){setFavs(function(prev){
+    var isAdding=prev.indexOf(ticker)<0;
+    var next=isAdding?prev.concat([ticker]):prev.filter(function(t){return t!==ticker;});
+    try{localStorage.setItem("fav_tickers",JSON.stringify(next));}catch(e){}
+    // サーバー同期
+    var port=(function(){try{return JSON.parse(localStorage.getItem("portfolio_v1")||"[]");}catch(e){return[];}})();
+    fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({favs:next,portfolio:port})}).catch(function(){});
+    // Pushover通知
+    if(isAdding){
+      var found=stocks.find(function(s){return s.ticker===ticker;});
+      var msg=found
+        ? ticker.replace(".T","")+" "+found.name+"\n"+found.price+" "+(parseFloat(found.change)>=0?"▲":"▼")+Math.abs(found.change)+"%  "+found.timing
+        : ticker.replace(".T","")+" をお気に入り登録しました";
+      fetch(NOTIFY_API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:"⭐ お気に入り登録",message:msg})}).catch(function(){});
+    }
+    return next;
+  });}
   function isFav(ticker){return favs.indexOf(ticker)>=0;}
 
   var scan=useCallback(async function(){
