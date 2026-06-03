@@ -341,7 +341,7 @@ function MarketBar(){
   );
 
   return(
-    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px",marginBottom:12,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px",marginBottom:12,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8}}>
       {INDICES.map(function(idx){
         var d=data[idx.key];
         if(!d||d.error) return(
