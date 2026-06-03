@@ -1,5 +1,15 @@
 import { useState, useCallback, useEffect } from "react";
 
+function useColumns(){
+  var w=useState(window.innerWidth); var width=w[0],setWidth=w[1];
+  useEffect(function(){
+    function onResize(){setWidth(window.innerWidth);}
+    window.addEventListener("resize",onResize);
+    return function(){window.removeEventListener("resize",onResize);};
+  },[]);
+  return width<768?2:3;
+}
+
 var STOCK_UNIVERSE = [
   { ticker:"AAPL",  tvSymbol:"NASDAQ:AAPL",  name:"Apple",          market:"US" },
   { ticker:"MSFT",  tvSymbol:"NASDAQ:MSFT",  name:"Microsoft",      market:"US" },
@@ -301,7 +311,7 @@ function CrossPanel(p){
     return(
       <div style={{marginBottom:16}}>
         <div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:8,padding:"4px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
           {sp.items.map(function(item){return <StockCard key={item.s.ticker} s={item.s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={item.cross}/>;  })}
         </div>
       </div>
@@ -380,7 +390,7 @@ function FavPanel(p){
         </div>
         {statusMsg&&<div style={{fontSize:10,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
         {favStocks.map(function(s){var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross}/>;  })}
       </div>
       {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:11}}>ティッカーを入力して追加できます</div>}
