@@ -18,7 +18,6 @@ export default async function handler(req, res) {
   }
 }
 
-// ── 米国株 ────────────────────────────────────────────────────────────────────
 async function getUSRanking() {
   const url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
     + "?formatted=false&lang=en-US&region=US&scrIds=most_actives&count=50&start=0";
@@ -44,7 +43,6 @@ async function getUSRanking() {
   });
 }
 
-// ── 日本株：日付指定で全銘柄一括取得（1リクエスト） ─────────────────────────
 const JP_NAMES = {
   "7203":"トヨタ自動車","6758":"ソニーグループ","8306":"三菱UFJ",
   "9984":"ソフトバンクG","6861":"キーエンス","7974":"任天堂",
@@ -57,14 +55,33 @@ const JP_NAMES = {
   "6857":"アドバンテスト","9101":"日本郵船"
 };
 
+function getLatestBusinessDay() {
+  const now = new Date();
+  // 日本時間に変換
+  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  let d = new Date(jst);
+  // 市場が閉まっている時間帯（15:30以前）は前営業日を使う
+  const hour = d.getUTCHours();
+  const minute = d.getUTCMinutes();
+  if (hour < 6 || (hour === 6 && minute < 30)) {
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+  // 土日を除く
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) {
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 async function getJPRanking() {
   const apiKey = process.env.JQUANTS_API_KEY;
   if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
 
-  // J-Quants Freeプラン上限日
-  const dateStr = "2026-03-06";
+  const dateStr = getLatestBusinessDay();
 
-  // 日付だけ指定 → 全銘柄を1リクエストで取得
   const url = `https://api.jquants.com/v2/equities/bars/daily?date=${dateStr}`;
   const res = await fetch(url, {
     headers: { "x-api-key": apiKey },
@@ -83,7 +100,6 @@ async function getJPRanking() {
     throw new Error("No data. Keys: " + Object.keys(json).join(","));
   }
 
-  // 出来高上位50を返す
   return bars
     .filter(function(bar) {
       return (bar.Vo || 0) > 0 && (bar.C || 0) > 0;
@@ -94,9 +110,9 @@ async function getJPRanking() {
     .slice(0, 50)
     .map(function(bar) {
       const code = String(bar.Code || "").replace(/0$/, "");
-      const close  = bar.C || 0;
-      const open   = bar.O || 0;
-      const vol    = bar.Vo || 0;
+      const close = bar.C || 0;
+      const open = bar.O || 0;
+      const vol = bar.Vo || 0;
       const change = open > 0 ? ((close - open) / open * 100) : 0;
       return {
         ticker: code + ".T",
