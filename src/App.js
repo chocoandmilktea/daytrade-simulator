@@ -502,9 +502,12 @@ function SyncPanel(p){
         </div>
         <div style={{fontSize:10,color:"#4a7090",marginBottom:8}}>あなたのデバイスID</div>
         <div style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:8,padding:"10px 12px",fontFamily:"monospace",fontSize:13,color:"#b8cce0",wordBreak:"break-all",marginBottom:10}}>{userId}</div>
-        <button onClick={copyId} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
+        <button onClick={copyId} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace",marginBottom:8}}>
           {copyStatus==="ok"?"✅ コピーしました！":"📋 IDをコピー"}
         </button>
+        <a href="pushover://" style={{display:"block",width:"100%",background:"linear-gradient(135deg,#1a1a2e,#16213e)",border:"1px solid #4a4a8a",borderRadius:8,color:"#a0a0ff",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",boxSizing:"border-box"}}>
+          📱 Pushoverを開く
+        </a>
       </div>
 
       {/* 別デバイスから同期 */}
