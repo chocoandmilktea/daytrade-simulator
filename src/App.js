@@ -257,10 +257,12 @@ function StockCard(p){
             {cross&&cross.type!=="NONE"&&<span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>}
           </div>
         </div>
-        <div style={{display:"flex",flexDirection:"column",gap:4}}>
-          <button onClick={function(){setShowAdd(!showAdd);}} style={{background:showAdd?"#052e16":"#071428",border:"1px solid "+(showAdd?"#22d3a0":"#1e5030"),borderRadius:6,color:showAdd?"#22d3a0":"#3a8060",padding:"5px 8px",fontSize:9,fontWeight:700,fontFamily:"monospace",cursor:"pointer",textAlign:"center",whiteSpace:"nowrap"}}>💼 +</button>
-          <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #1e6090",borderRadius:6,color:"#4a90c0",padding:"5px 8px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block",whiteSpace:"nowrap"}}>📈 TV</a>
-          <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:6,color:"#a5b4fc",padding:"5px 8px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block",whiteSpace:"nowrap"}}>🔗 Y!</a>
+        <div style={{display:"flex",flexDirection:"row",gap:4,alignItems:"stretch"}}>
+          <button onClick={function(){setShowAdd(!showAdd);}} style={{background:showAdd?"#052e16":"#071428",border:"1px solid "+(showAdd?"#22d3a0":"#1e5030"),borderRadius:6,color:showAdd?"#22d3a0":"#3a8060",padding:"5px 8px",fontSize:10,fontWeight:700,fontFamily:"monospace",cursor:"pointer",textAlign:"center",whiteSpace:"nowrap",display:"flex",alignItems:"center",justifyContent:"center"}}>💼</button>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #1e6090",borderRadius:6,color:"#4a90c0",padding:"5px 8px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block",whiteSpace:"nowrap"}}>📈 TV</a>
+            <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:6,color:"#a5b4fc",padding:"5px 8px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block",whiteSpace:"nowrap"}}>🔗 Y!</a>
+          </div>
         </div>
       </div>
       {showAdd&&(
