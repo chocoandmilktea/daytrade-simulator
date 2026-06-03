@@ -163,16 +163,58 @@ function analyzeStock(stock, pd) {
   var dispPrice=stock.market==="JP"?"¥"+Math.round(price).toLocaleString():"$"+price.toFixed(2);
   return { ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
-    timing:timing,signals:signals,change:change,spark:closes.slice(-20),
+    timing:timing,signals:signals,change:change,spark:closes.slice(-30),
     real:pd.real,closes:closes,yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker };
 }
 
-function Sparkline(p){
-  var data=p.data,up=p.up;
+// ── Sparkline with MA lines ───────────────────────────────────────────────────
+function Sparkline(p) {
+  var data=p.data, up=p.up;
   if(!data||data.length<2) return null;
-  var W=62,H=38,mn=Math.min.apply(null,data),mx=Math.max.apply(null,data),rng=mx-mn||1;
-  var pts=data.map(function(v,i){return(i/(data.length-1))*W+","+(H-((v-mn)/rng)*(H-2)-1);}).join(" ");
-  return <svg width={W} height={H}><polyline points={pts} fill="none" stroke={up?"#22d3a0":"#f43f5e"} strokeWidth={1.5} strokeLinejoin="round"/></svg>;
+  var W=90, H=40;
+
+  // 全データ（価格＋MA）のmin/maxでスケール統一
+  var sma5=[], sma25=[];
+  for(var i=0;i<data.length;i++){
+    if(i>=4){ var s5=0; for(var j=i-4;j<=i;j++) s5+=data[j]; sma5.push(s5/5); } else sma5.push(null);
+    if(i>=24){ var s25=0; for(var j2=i-24;j2<=i;j2++) s25+=data[j2]; sma25.push(s25/25); } else sma25.push(null);
+  }
+
+  var allVals=data.slice();
+  sma5.forEach(function(v){ if(v!==null) allVals.push(v); });
+  sma25.forEach(function(v){ if(v!==null) allVals.push(v); });
+  var mn=Math.min.apply(null,allVals), mx=Math.max.apply(null,allVals), rng=mx-mn||1;
+
+  function toY(v){ return H-((v-mn)/rng)*(H-4)-2; }
+  function toX(i){ return (i/(data.length-1))*W; }
+
+  // 価格ライン
+  var pricePts=data.map(function(v,i){ return toX(i)+","+toY(v); }).join(" ");
+
+  // 短期MA(5) ライン
+  var ma5Pts=sma5.reduce(function(acc,v,i){
+    if(v===null) return acc;
+    acc.push(toX(i)+","+toY(v));
+    return acc;
+  },[]).join(" ");
+
+  // 長期MA(25) ライン
+  var ma25Pts=sma25.reduce(function(acc,v,i){
+    if(v===null) return acc;
+    acc.push(toX(i)+","+toY(v));
+    return acc;
+  },[]).join(" ");
+
+  return(
+    <svg width={W} height={H}>
+      {/* 価格ライン */}
+      <polyline points={pricePts} fill="none" stroke={up?"#22d3a0":"#f43f5e"} strokeWidth={1.5} strokeLinejoin="round" opacity={0.9}/>
+      {/* 短期MA(5): 黄色 */}
+      {ma5Pts&&<polyline points={ma5Pts} fill="none" stroke="#fbbf24" strokeWidth={1} strokeLinejoin="round" opacity={0.85}/>}
+      {/* 長期MA(25): 青紫 */}
+      {ma25Pts&&<polyline points={ma25Pts} fill="none" stroke="#818cf8" strokeWidth={1} strokeLinejoin="round" opacity={0.85}/>}
+    </svg>
+  );
 }
 
 function ScoreRing(p){
@@ -189,9 +231,6 @@ function ScoreRing(p){
 function TabBtn(p){ return(<button onClick={p.onClick} style={{background:p.active?p.color+"18":"transparent",border:"1px solid "+(p.active?p.color:"#1e3050"),borderRadius:6,color:p.active?p.color:"#4a6080",padding:"5px 12px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:p.active?700:400}}>{p.label}</button>); }
 
 // ── StockCard ─────────────────────────────────────────────────────────────────
-// 行1: [スコア] US AAPL SIM ★
-//       銘柄名
-// 行2: [価格・勝率・%] | [買い・クロス] | [スパークライン] | [TV / Y!ボタン縦]
 function StockCard(p) {
   var s=p.s, toggleFav=p.toggleFav, isFav=p.isFav, cross=p.cross;
   var bc=BADGE[s.timing], mc=MKT[s.market]||MKT["US"], isUp=parseFloat(s.change)>=0;
@@ -214,18 +253,18 @@ function StockCard(p) {
         <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:13,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060"}}>{isFav(s.ticker)?"★":"☆"}</button>
       </div>
 
-      {/* 行2: 4カラム [価格・勝率・%] | [バッジ・クロス] | [スパークライン] | [ボタン] */}
-      <div style={{display:"grid",gridTemplateColumns:"auto auto 1fr auto",gap:6,alignItems:"center",borderTop:"1px solid #0a1828",paddingTop:5}}>
+      {/* 行2: [価格・勝率] | [バッジ・クロス] | [スパークライン+MA] | [ボタン] */}
+      <div style={{display:"grid",gridTemplateColumns:"auto auto 1fr auto",gap:5,alignItems:"center",borderTop:"1px solid #0a1828",paddingTop:5}}>
 
         {/* カラム1: 価格・勝率・前日比 */}
-        <div style={{display:"flex",flexDirection:"column",gap:3,paddingRight:4,borderRight:"1px solid #0a1828"}}>
+        <div style={{display:"flex",flexDirection:"column",gap:3,paddingRight:5,borderRight:"1px solid #0a1828"}}>
           <span style={{fontSize:10,color:"#b8cce0",fontWeight:700,whiteSpace:"nowrap"}}>{s.price}</span>
           <span style={{fontSize:9,color:"#22d3a0",whiteSpace:"nowrap"}}>{s.winRate}%</span>
           <span style={{fontSize:9,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e",whiteSpace:"nowrap"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
         </div>
 
-        {/* カラム2: 買い/様子見/見送りバッジ + クロスバッジ */}
-        <div style={{display:"flex",flexDirection:"column",gap:3,paddingRight:4,borderRight:"1px solid #0a1828"}}>
+        {/* カラム2: 買い/様子見バッジ + クロスバッジ */}
+        <div style={{display:"flex",flexDirection:"column",gap:3,paddingRight:5,borderRight:"1px solid #0a1828"}}>
           <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
           {cross&&cross.type!=="NONE"
             ? <span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>
@@ -233,13 +272,18 @@ function StockCard(p) {
           }
         </div>
 
-        {/* カラム3: スパークライン（flex-grow で余白を使い切る） */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
+        {/* カラム3: スパークライン（短期MA黄・長期MA青紫） */}
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
           <Sparkline data={s.spark} up={isUp}/>
+          {/* MA凡例 */}
+          <div style={{display:"flex",gap:6}}>
+            <span style={{fontSize:7,color:"#fbbf24"}}>─ MA5</span>
+            <span style={{fontSize:7,color:"#818cf8"}}>─ MA25</span>
+          </div>
         </div>
 
-        {/* カラム4: TV・Yahooボタン縦2段（左にマージンを取って離す） */}
-        <div style={{display:"flex",flexDirection:"column",gap:4,marginLeft:6}}>
+        {/* カラム4: ボタン縦2段（左マージンで距離を取る） */}
+        <div style={{display:"flex",flexDirection:"column",gap:4,marginLeft:8}}>
           <a href={tvUrl} target="_blank" rel="noreferrer"
             style={{background:"#071428",border:"1px solid #1e6090",borderRadius:6,color:"#4a90c0",
               padding:"6px 7px",fontSize:9,fontWeight:700,fontFamily:"monospace",
