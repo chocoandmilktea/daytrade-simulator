@@ -351,9 +351,9 @@ function MarketBar(){
         var vixAlert=isVix&&d.price>=20;
         return(
           <div key={idx.key} style={{display:"flex",flexDirection:"column",alignItems:"center",flex:1,minWidth:52,background:vixAlert?"#1f0010":"transparent",borderRadius:6,padding:"3px 4px",border:vixAlert?"1px solid #f43f5e30":"1px solid transparent"}}>
-            <div style={{fontSize:8,color:vixAlert?"#f43f5e":"#2a6090",fontWeight:vixAlert?700:400}}>{idx.label}{vixAlert?"⚠":""}</div>
-            <div style={{fontSize:11,fontWeight:700,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
-            <div style={{fontSize:9,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
+            <div style={{fontSize:10,color:vixAlert?"#f43f5e":"#2a6090",fontWeight:vixAlert?700:400}}>{idx.label}{vixAlert?"⚠":""}</div>
+            <div style={{fontSize:13,fontWeight:700,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
+            <div style={{fontSize:10,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
           </div>
         );
       })}
