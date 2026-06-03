@@ -300,6 +300,67 @@ function StockCard(p){
 }
 
 
+
+// ── MarketBar ─────────────────────────────────────────────────────────────────
+function MarketBar(){
+  var dataS=useState({}); var data=dataS[0],setData=dataS[1];
+  var loadingS=useState(true); var loading=loadingS[0],setLoading=loadingS[1];
+
+  var INDICES=[
+    {key:"nikkei",  ticker:"^N225",   label:"日経平均",  prefix:"¥", round:true},
+    {key:"dow",     ticker:"^DJI",    label:"NYダウ",    prefix:"$", round:true},
+    {key:"sp500",   ticker:"^GSPC",   label:"S&P500",   prefix:"",  round:true},
+    {key:"usdjpy",  ticker:"USDJPY=X",label:"ドル円",    prefix:"¥", round:false},
+    {key:"vix",     ticker:"^VIX",    label:"VIX",      prefix:"",  round:false},
+  ];
+
+  useEffect(function(){
+    Promise.all(INDICES.map(async function(idx){
+      try{
+        var res=await fetch("https://daytrade-simulator.vercel.app/api/stock?ticker="+encodeURIComponent(idx.ticker),{signal:AbortSignal.timeout(8000)});
+        var json=await res.json();
+        var meta=json&&json.chart&&json.chart.result&&json.chart.result[0]&&json.chart.result[0].meta;
+        if(!meta) return{key:idx.key,error:true};
+        var price=meta.regularMarketPrice||0;
+        var prev=meta.chartPreviousClose||price;
+        var change=prev?((price-prev)/prev*100).toFixed(2):"0.00";
+        return{key:idx.key,price:price,change:change,label:idx.label,prefix:idx.prefix,round:idx.round};
+      }catch(e){return{key:idx.key,error:true,label:idx.label};}
+    })).then(function(results){
+      var obj={};
+      results.forEach(function(r){obj[r.key]=r;});
+      setData(obj);
+      setLoading(false);
+    });
+  },[]);
+
+  if(loading) return(
+    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",gap:8,alignItems:"center"}}>
+      <span style={{fontSize:10,color:"#2a6090"}}>市況取得中...</span>
+    </div>
+  );
+
+  return(
+    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 12px",marginBottom:12,display:"flex",gap:6,flexWrap:"wrap"}}>
+      {INDICES.map(function(idx){
+        var d=data[idx.key];
+        if(!d||d.error) return(<div key={idx.key} style={{display:"flex",flexDirection:"column",alignItems:"center",minWidth:60}}><div style={{fontSize:8,color:"#2a6090"}}>{idx.label}</div><div style={{fontSize:10,color:"#4a7090"}}>─</div></div>);
+        var isUp=parseFloat(d.change)>=0;
+        var price=d.round?Math.round(d.price).toLocaleString():parseFloat(d.price).toFixed(2);
+        var isVix=idx.key==="vix";
+        var vixAlert=isVix&&d.price>=20;
+        return(
+          <div key={idx.key} style={{display:"flex",flexDirection:"column",alignItems:"center",flex:1,minWidth:52,background:vixAlert?"#1f0010":"transparent",borderRadius:6,padding:"3px 4px",border:vixAlert?"1px solid #f43f5e30":"1px solid transparent"}}>
+            <div style={{fontSize:8,color:vixAlert?"#f43f5e":"#2a6090",fontWeight:vixAlert?700:400}}>{idx.label}{vixAlert?"⚠":""}</div>
+            <div style={{fontSize:11,fontWeight:700,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
+            <div style={{fontSize:9,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── CrossPanel（メインタブ） ───────────────────────────────────────────────────
 function CrossPanel(p){
   var stocks=p.stocks,loading=p.loading,onScan=p.onScan,toggleFav=p.toggleFav,favs=p.favs,ts=p.ts,progress=p.progress;
@@ -356,6 +417,7 @@ function CrossPanel(p){
 
   return(
     <div>
+      <MarketBar/>
       {/* ステータスバー */}
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
         <div style={{fontSize:10,color:"#4a7090"}}>
