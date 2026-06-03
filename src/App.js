@@ -341,19 +341,24 @@ function MarketBar(){
   );
 
   return(
-    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 12px",marginBottom:12,display:"flex",gap:6,flexWrap:"wrap"}}>
+    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px",marginBottom:12,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
       {INDICES.map(function(idx){
         var d=data[idx.key];
-        if(!d||d.error) return(<div key={idx.key} style={{display:"flex",flexDirection:"column",alignItems:"center",minWidth:60}}><div style={{fontSize:8,color:"#2a6090"}}>{idx.label}</div><div style={{fontSize:10,color:"#4a7090"}}>─</div></div>);
+        if(!d||d.error) return(
+          <div key={idx.key} style={{background:"#050e1c",borderRadius:8,padding:"10px 12px"}}>
+            <div style={{fontSize:11,color:"#2a6090"}}>{idx.label}</div>
+            <div style={{fontSize:13,color:"#4a7090"}}>─</div>
+          </div>
+        );
         var isUp=parseFloat(d.change)>=0;
         var price=d.round?Math.round(d.price).toLocaleString():parseFloat(d.price).toFixed(2);
         var isVix=idx.key==="vix";
         var vixAlert=isVix&&d.price>=20;
         return(
-          <div key={idx.key} style={{display:"flex",flexDirection:"column",alignItems:"center",flex:1,minWidth:52,background:vixAlert?"#1f0010":"transparent",borderRadius:6,padding:"3px 4px",border:vixAlert?"1px solid #f43f5e30":"1px solid transparent"}}>
-            <div style={{fontSize:20,color:vixAlert?"#f43f5e":"#2a6090",fontWeight:vixAlert?700:400}}>{idx.label}{vixAlert?"⚠":""}</div>
-            <div style={{fontSize:26,fontWeight:700,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
-            <div style={{fontSize:20,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
+          <div key={idx.key} style={{background:vixAlert?"#1f0010":"#050e1c",borderRadius:8,padding:"10px 12px",border:vixAlert?"1px solid #f43f5e50":"1px solid transparent"}}>
+            <div style={{fontSize:11,color:vixAlert?"#f43f5e":"#4a7090",fontWeight:700,marginBottom:4}}>{idx.label}{vixAlert?" ⚠ 警戒":""}</div>
+            <div style={{fontSize:20,fontWeight:800,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
+            <div style={{fontSize:13,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e",marginTop:2}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
           </div>
         );
       })}
