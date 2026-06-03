@@ -170,7 +170,7 @@ function analyzeStock(stock, pd) {
 function Sparkline(p){
   var data=p.data,up=p.up;
   if(!data||data.length<2) return null;
-  var W=56,H=20,mn=Math.min.apply(null,data),mx=Math.max.apply(null,data),rng=mx-mn||1;
+  var W=64,H=36,mn=Math.min.apply(null,data),mx=Math.max.apply(null,data),rng=mx-mn||1;
   var pts=data.map(function(v,i){return(i/(data.length-1))*W+","+(H-((v-mn)/rng)*(H-2)-1);}).join(" ");
   return <svg width={W} height={H}><polyline points={pts} fill="none" stroke={up?"#22d3a0":"#f43f5e"} strokeWidth={1.5} strokeLinejoin="round"/></svg>;
 }
@@ -190,51 +190,58 @@ function TabBtn(p){ return(<button onClick={p.onClick} style={{background:p.acti
 
 // ── StockCard ─────────────────────────────────────────────────────────────────
 // レイアウト:
-// [左: スコアリング + テキスト情報] [右: スパークライン上 / TVボタン・Yahooボタン下]
+// 行1: [スコア] ティッカー・名前・★
+// 行2: [左:バッジ・価格・勝率・%] [中:スパークライン] [右:TVボタン・Yahooボタン縦]
 function StockCard(p) {
   var s=p.s, toggleFav=p.toggleFav, isFav=p.isFav, cross=p.cross;
   var bc=BADGE[s.timing], mc=MKT[s.market]||MKT["US"], isUp=parseFloat(s.change)>=0;
   var tvUrl="https://www.tradingview.com/chart/?symbol="+encodeURIComponent(s.tvSymbol)+"&interval=D";
+
   return(
-    <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"9px 9px",display:"flex",gap:7}}>
+    <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"8px 9px",display:"flex",flexDirection:"column",gap:5}}>
 
-      {/* 左カラム: メイン情報 */}
-      <div style={{flex:1,minWidth:0,display:"flex",flexDirection:"column",gap:4}}>
-        {/* 1行目: スコア・マーケット・ティッカー・星 */}
-        <div style={{display:"flex",gap:5,alignItems:"center"}}>
-          <ScoreRing score={s.score}/>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap"}}>
-              <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
-              <span style={{fontSize:12,fontWeight:800,color:"#d8eeff"}}>{s.ticker.replace(".T","")}</span>
-              {!s.real&&<span style={bStyle("#1a1200","#7c6010","#fbbf24")}>SIM</span>}
-            </div>
-            <div style={{fontSize:9,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.name}</div>
+      {/* 行1: スコア + ティッカー + 名前 + 星 */}
+      <div style={{display:"flex",gap:5,alignItems:"center"}}>
+        <ScoreRing score={s.score}/>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{display:"flex",gap:3,alignItems:"center"}}>
+            <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
+            <span style={{fontSize:12,fontWeight:800,color:"#d8eeff"}}>{s.ticker.replace(".T","")}</span>
+            {!s.real&&<span style={bStyle("#1a1200","#7c6010","#fbbf24")}>SIM</span>}
           </div>
-          <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:13,cursor:"pointer",padding:0,flexShrink:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060"}}>{isFav(s.ticker)?"★":"☆"}</button>
+          <div style={{fontSize:9,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
         </div>
-
-        {/* 2行目: バッジ・クロス */}
-        <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
-          <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
-          {cross&&cross.type!=="NONE"&&<span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>}
-        </div>
-
-        {/* 3行目: 価格・勝率・前日比 */}
-        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-          <span style={{fontSize:10,color:"#b8cce0",fontWeight:700}}>{s.price}</span>
-          <span style={{fontSize:9,color:"#22d3a0"}}>{s.winRate}%</span>
-          <span style={{fontSize:9,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
-        </div>
+        <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:13,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060"}}>{isFav(s.ticker)?"★":"☆"}</button>
       </div>
 
-      {/* 右カラム: スパークライン上 / ボタン2つ下 */}
-      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",gap:4,flexShrink:0}}>
-        <Sparkline data={s.spark} up={isUp}/>
-        <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #1e6090",borderRadius:5,color:"#4a90c0",padding:"4px 6px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block",width:52}}>📈 TV</a>
-        <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:5,color:"#a5b4fc",padding:"4px 6px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block",width:52}}>🔗 Y!</a>
-      </div>
+      {/* 行2: 左(バッジ+数値) / 中(スパークライン) / 右(ボタン縦2つ) */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 66px 46px",gap:4,alignItems:"center"}}>
 
+        {/* 左: バッジ・価格・勝率・前日比 */}
+        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+          <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+            <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
+            {cross&&cross.type!=="NONE"&&<span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>}
+          </div>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
+            <span style={{fontSize:10,color:"#b8cce0",fontWeight:700}}>{s.price}</span>
+            <span style={{fontSize:9,color:"#22d3a0"}}>{s.winRate}%</span>
+            <span style={{fontSize:9,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
+          </div>
+        </div>
+
+        {/* 中: スパークライン */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <Sparkline data={s.spark} up={isUp}/>
+        </div>
+
+        {/* 右: TVボタン・Yahooボタン縦2段 */}
+        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+          <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #1e6090",borderRadius:5,color:"#4a90c0",padding:"5px 2px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📈 TV</a>
+          <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:5,color:"#a5b4fc",padding:"5px 2px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
+        </div>
+
+      </div>
     </div>
   );
 }
@@ -423,12 +430,12 @@ function classifyStockFn(s) {
   var sigs=s.signals,macdSig=null;
   for(var i=0;i<sigs.length;i++){if(sigs[i].label==="MACD"){macdSig=sigs[i];break;}}
   if(!macdSig) return null;
-  if(macdSig.val==="ゴールデンクロス") return{type:"GC_NOW",label:"GC発生中",color:"#22d3a0",bg:"#052e16",border:"#22d3a0",desc:"ゴールデンクロス発生中"};
-  if(macdSig.val==="デッドクロス")     return{type:"DC_NOW",label:"DC発生中",color:"#f43f5e",bg:"#1f0010",border:"#f43f5e",desc:"デッドクロス発生中"};
-  if(macdSig.val==="強気ゾーン"&&s.score>=55) return{type:"GC_NEAR",label:"GC接近",color:"#fbbf24",bg:"#1c1400",border:"#fbbf24",desc:"ゴールデンクロス間近"};
-  if(macdSig.val==="弱気ゾーン"&&s.score<=30) return{type:"DC_NEAR",label:"DC接近",color:"#fb923c",bg:"#1a0800",border:"#fb923c",desc:"デッドクロス間近"};
-  if(macdSig.val==="強気ゾーン") return{type:"GC_WATCH",label:"GC監視",color:"#60a5fa",bg:"#0a1e3a",border:"#3b82f6",desc:"上昇傾向・監視中"};
-  return{type:"NONE",label:"中立",color:"#4a7090",bg:"#071428",border:"#1e3050",desc:"特筆なし"};
+  if(macdSig.val==="ゴールデンクロス") return{type:"GC_NOW",label:"GC発生",color:"#22d3a0",bg:"#052e16",border:"#22d3a0",desc:"GC発生中"};
+  if(macdSig.val==="デッドクロス")     return{type:"DC_NOW",label:"DC発生",color:"#f43f5e",bg:"#1f0010",border:"#f43f5e",desc:"DC発生中"};
+  if(macdSig.val==="強気ゾーン"&&s.score>=55) return{type:"GC_NEAR",label:"GC接近",color:"#fbbf24",bg:"#1c1400",border:"#fbbf24",desc:"GC間近"};
+  if(macdSig.val==="弱気ゾーン"&&s.score<=30) return{type:"DC_NEAR",label:"DC接近",color:"#fb923c",bg:"#1a0800",border:"#fb923c",desc:"DC間近"};
+  if(macdSig.val==="強気ゾーン") return{type:"GC_WATCH",label:"GC監視",color:"#60a5fa",bg:"#0a1e3a",border:"#3b82f6",desc:"監視中"};
+  return{type:"NONE",label:"中立",color:"#4a7090",bg:"#071428",border:"#1e3050",desc:""};
 }
 
 function FavPanel(p) {
@@ -478,12 +485,11 @@ function CrossPanel(p) {
     else if(c.type==="GC_WATCH") gcWatch.push({s:s,cross:c});
   });
   if(stocks.length===0) return(<div style={{textAlign:"center",padding:"80px 20px",color:"#2a6090"}}><div style={{fontSize:40,marginBottom:16}}>✨</div><button onClick={onScan} disabled={loading} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"12px 24px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>{loading?"取得中...":"スキャン開始"}</button></div>);
-
   function Section(sp) {
     if(!sp.items||!sp.items.length) return null;
     return(
       <div style={{marginBottom:14}}>
-        <div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:6,padding:"3px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
+        <div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:6,borderBottom:"1px solid #0f2040",paddingBottom:3}}>{sp.title} ({sp.items.length})</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
           {sp.items.map(function(item){ return <StockCard key={item.s.ticker} s={item.s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={item.cross}/>; })}
         </div>
