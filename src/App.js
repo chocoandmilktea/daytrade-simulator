@@ -258,17 +258,16 @@ function StockCard(p){
       <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:6,alignItems:"center"}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,alignItems:"center"}}>
           {/* 左上: 価格 */}
-          <span style={{fontSize:11,color:"#d8eeff",fontWeight:700}}>{s.price}</span>
+          <span style={{fontSize:13,color:"#d8eeff",fontWeight:800}}>{s.price}</span>
           {/* 右上: クロスバッジ */}
           <div style={{textAlign:"right"}}>
             {cross&&cross.type!=="NONE"
               ? <span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>
               : <span style={{fontSize:9,color:"#1a3050"}}>─</span>}
           </div>
-          {/* 左下: 勝率・前日比 */}
+          {/* 左下: 前日比 */}
           <div style={{display:"flex",gap:4,alignItems:"center"}}>
-            <span style={{fontSize:9,color:"#22d3a0"}}>{s.winRate}%</span>
-            <span style={{fontSize:9,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
+            <span style={{fontSize:12,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
           </div>
           {/* 右下: 買い/様子見バッジ */}
           <div style={{textAlign:"right"}}>
@@ -448,7 +447,7 @@ function BacktestPanel(p){
     <div>
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px 16px",marginBottom:14}}><div style={{fontSize:12,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>バックテスト</div><div style={{fontSize:10,color:"#4a7090"}}>MACDゴールデンクロス → 5日後売却の過去勝率を検証します。</div></div>
       <div style={{display:"flex",gap:8,marginBottom:14}}><select value={sel} onChange={function(e){setSel(e.target.value);setResult(null);}} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 12px",fontSize:12,fontFamily:"monospace",flex:1}}><option value="">銘柄を選択</option>{favStocks.length>0&&<optgroup label="お気に入り">{favStocks.map(function(s){return(<option key={s.ticker} value={s.ticker}>{s.ticker.replace(".T","")} {s.name}</option>);})}</optgroup>}{otherStocks.length>0&&<optgroup label="その他">{otherStocks.map(function(s){return(<option key={s.ticker} value={s.ticker}>{s.ticker.replace(".T","")} {s.name}</option>);})}</optgroup>}</select><button onClick={run} disabled={!sel} style={{background:sel?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"8px 20px",fontSize:12,fontWeight:700,cursor:sel?"pointer":"not-allowed",fontFamily:"monospace"}}>実行</button></div>
-      {result&&(<div><div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap"}}><div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:8,padding:"10px 16px"}}><div style={{fontSize:9,color:"#2a6090"}}>検証回数</div><div style={{fontSize:18,fontWeight:800,color:"#e0f0ff"}}>{result.total}回</div></div><div style={{background:parseFloat(result.winRate)>=50?"#052e16":"#1f0010",border:"1px solid "+(parseFloat(result.winRate)>=50?"#22d3a0":"#f43f5e"),borderRadius:8,padding:"10px 16px"}}><div style={{fontSize:9,color:"#2a6090"}}>勝率</div><div style={{fontSize:18,fontWeight:800,color:parseFloat(result.winRate)>=50?"#22d3a0":"#f43f5e"}}>{result.winRate}%</div></div><button onClick={function(){setResult(null);setSel("");}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:8,color:"#4a7090",padding:"8px 14px",fontSize:11,cursor:"pointer",fontFamily:"monospace",marginLeft:"auto"}}>戻る</button></div><div style={{display:"flex",flexDirection:"column",gap:6}}>{result.results.map(function(r,i){return(<div key={i} style={{background:"#050e1c",border:"1px solid "+(r.win?"#22d3a040":"#f43f5e40"),borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",gap:12}}><span style={{fontSize:11,color:"#4a7090"}}>買 <span style={{color:"#b8cce0"}}>{r.buyPrice}</span></span><span style={{fontSize:11,color:"#4a7090"}}>売 <span style={{color:"#b8cce0"}}>{r.sellPrice}</span></span></div><span style={{fontSize:12,fontWeight:700,color:r.win?"#22d3a0":"#f43f5e"}}>{r.win?"+":""}{r.ret}%</span></div>);})}</div></div>)}
+      {result&&(<div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,marginBottom:14}}><div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:8,padding:"10px 12px"}}><div style={{fontSize:9,color:"#2a6090"}}>検証回数</div><div style={{fontSize:18,fontWeight:800,color:"#e0f0ff"}}>{result.total}回</div></div><div style={{background:parseFloat(result.winRate)>=50?"#052e16":"#1f0010",border:"1px solid "+(parseFloat(result.winRate)>=50?"#22d3a0":"#f43f5e"),borderRadius:8,padding:"10px 12px"}}><div style={{fontSize:9,color:"#2a6090"}}>勝率</div><div style={{fontSize:18,fontWeight:800,color:parseFloat(result.winRate)>=50?"#22d3a0":"#f43f5e"}}>{result.winRate}%</div></div><button onClick={function(){setResult(null);setSel("");}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:8,color:"#4a7090",padding:"8px 12px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>戻る</button></div><div style={{display:"flex",flexDirection:"column",gap:6}}>{result.results.map(function(r,i){return(<div key={i} style={{background:"#050e1c",border:"1px solid "+(r.win?"#22d3a040":"#f43f5e40"),borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",gap:12}}><span style={{fontSize:11,color:"#4a7090"}}>買 <span style={{color:"#b8cce0"}}>{r.buyPrice}</span></span><span style={{fontSize:11,color:"#4a7090"}}>売 <span style={{color:"#b8cce0"}}>{r.sellPrice}</span></span></div><span style={{fontSize:12,fontWeight:700,color:r.win?"#22d3a0":"#f43f5e"}}>{r.win?"+":""}{r.ret}%</span></div>);})}</div></div>)}
     </div>
   );
 }
