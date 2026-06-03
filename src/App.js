@@ -305,6 +305,7 @@ function StockCard(p){
 function MarketBar(){
   var dataS=useState({}); var data=dataS[0],setData=dataS[1];
   var loadingS=useState(true); var loading=loadingS[0],setLoading=loadingS[1];
+  var isWide=window.innerWidth>=768;
 
   var INDICES=[
     {key:"nikkei",  ticker:"^N225",   label:"日経平均",  prefix:"¥", round:true},
@@ -341,7 +342,7 @@ function MarketBar(){
   );
 
   return(
-    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px",marginBottom:12,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8}}>
+    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px",marginBottom:12,display:"grid",gridTemplateColumns:isWide?"repeat(5,1fr)":"1fr 1fr",gap:8}}>
       {INDICES.map(function(idx){
         var d=data[idx.key];
         if(!d||d.error) return(
