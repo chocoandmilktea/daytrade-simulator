@@ -427,7 +427,7 @@ export default function App(){
   function isFav(ticker){return favs.indexOf(ticker)>=0;}
 
   var scan=useCallback(async function(){
-    setLoading(true);setFbCount&&setFbCount(0);
+    setLoading(true);
     setProgress({done:0,total:0,msg:"出来高ランキング取得中..."});
     var universe=(await buildStockUniverse()).slice();
     var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
