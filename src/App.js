@@ -170,7 +170,7 @@ function analyzeStock(stock, pd) {
 function Sparkline(p){
   var data=p.data,up=p.up;
   if(!data||data.length<2) return null;
-  var W=64,H=36,mn=Math.min.apply(null,data),mx=Math.max.apply(null,data),rng=mx-mn||1;
+  var W=62,H=38,mn=Math.min.apply(null,data),mx=Math.max.apply(null,data),rng=mx-mn||1;
   var pts=data.map(function(v,i){return(i/(data.length-1))*W+","+(H-((v-mn)/rng)*(H-2)-1);}).join(" ");
   return <svg width={W} height={H}><polyline points={pts} fill="none" stroke={up?"#22d3a0":"#f43f5e"} strokeWidth={1.5} strokeLinejoin="round"/></svg>;
 }
@@ -189,18 +189,18 @@ function ScoreRing(p){
 function TabBtn(p){ return(<button onClick={p.onClick} style={{background:p.active?p.color+"18":"transparent",border:"1px solid "+(p.active?p.color:"#1e3050"),borderRadius:6,color:p.active?p.color:"#4a6080",padding:"5px 12px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:p.active?700:400}}>{p.label}</button>); }
 
 // ── StockCard ─────────────────────────────────────────────────────────────────
-// レイアウト:
-// 行1: [スコア] ティッカー・名前・★
-// 行2: [左:バッジ・価格・勝率・%] [中:スパークライン] [右:TVボタン・Yahooボタン縦]
+// 行1: [スコア] US AAPL SIM ★
+//       銘柄名
+// 行2: [価格・勝率・%] | [買い・クロス] | [スパークライン] | [TV / Y!ボタン縦]
 function StockCard(p) {
   var s=p.s, toggleFav=p.toggleFav, isFav=p.isFav, cross=p.cross;
   var bc=BADGE[s.timing], mc=MKT[s.market]||MKT["US"], isUp=parseFloat(s.change)>=0;
   var tvUrl="https://www.tradingview.com/chart/?symbol="+encodeURIComponent(s.tvSymbol)+"&interval=D";
 
   return(
-    <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"8px 9px",display:"flex",flexDirection:"column",gap:5}}>
+    <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"8px 9px",display:"flex",flexDirection:"column",gap:6}}>
 
-      {/* 行1: スコア + ティッカー + 名前 + 星 */}
+      {/* 行1: スコア・ティッカー・名前・星 */}
       <div style={{display:"flex",gap:5,alignItems:"center"}}>
         <ScoreRing score={s.score}/>
         <div style={{flex:1,minWidth:0}}>
@@ -214,31 +214,44 @@ function StockCard(p) {
         <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:13,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060"}}>{isFav(s.ticker)?"★":"☆"}</button>
       </div>
 
-      {/* 行2: 左(バッジ+数値) / 中(スパークライン) / 右(ボタン縦2つ) */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 66px 46px",gap:4,alignItems:"center"}}>
+      {/* 行2: 4カラム [価格・勝率・%] | [バッジ・クロス] | [スパークライン] | [ボタン] */}
+      <div style={{display:"grid",gridTemplateColumns:"auto auto 1fr auto",gap:6,alignItems:"center",borderTop:"1px solid #0a1828",paddingTop:5}}>
 
-        {/* 左: バッジ・価格・勝率・前日比 */}
-        <div style={{display:"flex",flexDirection:"column",gap:3}}>
-          <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
-            <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
-            {cross&&cross.type!=="NONE"&&<span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>}
-          </div>
-          <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
-            <span style={{fontSize:10,color:"#b8cce0",fontWeight:700}}>{s.price}</span>
-            <span style={{fontSize:9,color:"#22d3a0"}}>{s.winRate}%</span>
-            <span style={{fontSize:9,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
-          </div>
+        {/* カラム1: 価格・勝率・前日比 */}
+        <div style={{display:"flex",flexDirection:"column",gap:3,paddingRight:4,borderRight:"1px solid #0a1828"}}>
+          <span style={{fontSize:10,color:"#b8cce0",fontWeight:700,whiteSpace:"nowrap"}}>{s.price}</span>
+          <span style={{fontSize:9,color:"#22d3a0",whiteSpace:"nowrap"}}>{s.winRate}%</span>
+          <span style={{fontSize:9,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e",whiteSpace:"nowrap"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
         </div>
 
-        {/* 中: スパークライン */}
+        {/* カラム2: 買い/様子見/見送りバッジ + クロスバッジ */}
+        <div style={{display:"flex",flexDirection:"column",gap:3,paddingRight:4,borderRight:"1px solid #0a1828"}}>
+          <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
+          {cross&&cross.type!=="NONE"
+            ? <span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>
+            : <span style={{fontSize:9,color:"#1a3050"}}>─</span>
+          }
+        </div>
+
+        {/* カラム3: スパークライン（flex-grow で余白を使い切る） */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
           <Sparkline data={s.spark} up={isUp}/>
         </div>
 
-        {/* 右: TVボタン・Yahooボタン縦2段 */}
-        <div style={{display:"flex",flexDirection:"column",gap:3}}>
-          <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #1e6090",borderRadius:5,color:"#4a90c0",padding:"5px 2px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📈 TV</a>
-          <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:5,color:"#a5b4fc",padding:"5px 2px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
+        {/* カラム4: TV・Yahooボタン縦2段（左にマージンを取って離す） */}
+        <div style={{display:"flex",flexDirection:"column",gap:4,marginLeft:6}}>
+          <a href={tvUrl} target="_blank" rel="noreferrer"
+            style={{background:"#071428",border:"1px solid #1e6090",borderRadius:6,color:"#4a90c0",
+              padding:"6px 7px",fontSize:9,fontWeight:700,fontFamily:"monospace",
+              textDecoration:"none",textAlign:"center",display:"block",whiteSpace:"nowrap"}}>
+            📈 TV
+          </a>
+          <a href={s.yahooUrl} target="_blank" rel="noreferrer"
+            style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:6,color:"#a5b4fc",
+              padding:"6px 7px",fontSize:9,fontWeight:700,fontFamily:"monospace",
+              textDecoration:"none",textAlign:"center",display:"block",whiteSpace:"nowrap"}}>
+            🔗 Y!
+          </a>
         </div>
 
       </div>
@@ -430,12 +443,12 @@ function classifyStockFn(s) {
   var sigs=s.signals,macdSig=null;
   for(var i=0;i<sigs.length;i++){if(sigs[i].label==="MACD"){macdSig=sigs[i];break;}}
   if(!macdSig) return null;
-  if(macdSig.val==="ゴールデンクロス") return{type:"GC_NOW",label:"GC発生",color:"#22d3a0",bg:"#052e16",border:"#22d3a0",desc:"GC発生中"};
-  if(macdSig.val==="デッドクロス")     return{type:"DC_NOW",label:"DC発生",color:"#f43f5e",bg:"#1f0010",border:"#f43f5e",desc:"DC発生中"};
-  if(macdSig.val==="強気ゾーン"&&s.score>=55) return{type:"GC_NEAR",label:"GC接近",color:"#fbbf24",bg:"#1c1400",border:"#fbbf24",desc:"GC間近"};
-  if(macdSig.val==="弱気ゾーン"&&s.score<=30) return{type:"DC_NEAR",label:"DC接近",color:"#fb923c",bg:"#1a0800",border:"#fb923c",desc:"DC間近"};
-  if(macdSig.val==="強気ゾーン") return{type:"GC_WATCH",label:"GC監視",color:"#60a5fa",bg:"#0a1e3a",border:"#3b82f6",desc:"監視中"};
-  return{type:"NONE",label:"中立",color:"#4a7090",bg:"#071428",border:"#1e3050",desc:""};
+  if(macdSig.val==="ゴールデンクロス") return{type:"GC_NOW",label:"GC発生",color:"#22d3a0",bg:"#052e16",border:"#22d3a0"};
+  if(macdSig.val==="デッドクロス")     return{type:"DC_NOW",label:"DC発生",color:"#f43f5e",bg:"#1f0010",border:"#f43f5e"};
+  if(macdSig.val==="強気ゾーン"&&s.score>=55) return{type:"GC_NEAR",label:"GC接近",color:"#fbbf24",bg:"#1c1400",border:"#fbbf24"};
+  if(macdSig.val==="弱気ゾーン"&&s.score<=30) return{type:"DC_NEAR",label:"DC接近",color:"#fb923c",bg:"#1a0800",border:"#fb923c"};
+  if(macdSig.val==="強気ゾーン") return{type:"GC_WATCH",label:"GC監視",color:"#60a5fa",bg:"#0a1e3a",border:"#3b82f6"};
+  return{type:"NONE",label:"中立",color:"#4a7090",bg:"#071428",border:"#1e3050"};
 }
 
 function FavPanel(p) {
