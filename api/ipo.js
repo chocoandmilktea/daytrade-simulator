@@ -16,51 +16,11 @@ export default async function handler(req, res) {
     const json = await r.json();
     const stocks = json?.data || [];
 
-    const now = new Date();
-    const from = new Date(now);
-    from.setMonth(from.getMonth() - 6);
-    const to = new Date(now);
-    to.setMonth(to.getMonth() + 3);
-
-    // ETF・投資信託・REIT除外キーワード
-    const excludeKeywords = [
-      "ETF","投信","投資信託","ファンド","FUND","Fund",
-      "連動型","インデックス","INDEX","Index",
-      "REIT","リート","上場投資","アセットマネジメント",
-      "eMAXIS","iFree","NEXT FUNDS","上場インデックス"
-    ];
-
-    const ipos = stocks
-      .filter(function(s) {
-        if (!s.Date) return false;
-        const d = new Date(s.Date);
-        if (d < from || d > to) return false;
-        // ETF・投信除外
-        var name = s.CoName || "";
-        var sector = s.S33Nm || "";
-        if (sector === "その他") return false;
-        for (var i = 0; i < excludeKeywords.length; i++) {
-          if (name.indexOf(excludeKeywords[i]) >= 0) return false;
-        }
-        // 市場コードでETF除外（0111=ETF・ETN）
-        if (s.ProdCat === "011" || s.ProdCat === "012") return false;
-        return true;
-      })
-      .sort(function(a, b) {
-        return new Date(b.Date) - new Date(a.Date);
-      })
-      .slice(0, 30)
-      .map(function(s) {
-        return {
-          code: String(s.Code || "").replace(/0$/, ""),
-          name: s.CoName || s.Code,
-          listingDate: s.Date,
-          market: s.MktNm || "─",
-          sector: s.S33Nm || "─",
-        };
-      });
-
-    return res.status(200).json({ ipos });
+    // 最初の3件の全フィールドを返す
+    return res.status(200).json({
+      total: stocks.length,
+      sample: stocks.slice(0, 3)
+    });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
