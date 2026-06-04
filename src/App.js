@@ -94,19 +94,63 @@ function analyzeStock(stock,pd){
   var bollVal=calcBoll(closes)[n],stochVal=calcStoch(closes,highs,lows)[n];
   var mNow=macdArr[n],mPrev=macdArr[n-1],price=pd.currentPrice||closes[n];
   var sc=0,signals=[];
+
+  // トレンド判定（最大30点）
   if(s20&&s50){
-    if(price>s20&&s20>s50){sc+=20;signals.push({label:"トレンド",val:"上昇トレンド",state:1});}
-    else if(price<s20&&s20<s50){signals.push({label:"トレンド",val:"下降トレンド",state:-1});}
-    else{sc+=8;signals.push({label:"トレンド",val:"横ばい",state:0});}
+    var trendStr=(price-s50)/s50*100; // 価格がMA50からどれだけ乖離しているか
+    if(price>s20&&s20>s50){
+      sc+=20+Math.min(10,Math.max(0,trendStr));// 乖離が大きいほど高スコア
+      signals.push({label:"トレンド",val:"上昇トレンド",state:1});
+    }else if(price<s20&&s20<s50){
+      signals.push({label:"トレンド",val:"下降トレンド",state:-1});
+    }else{sc+=5;signals.push({label:"トレンド",val:"横ばい",state:0});}
   }else if(s20){
-    if(price>s20){sc+=12;signals.push({label:"トレンド",val:"MA20上",state:1});}
+    if(price>s20){sc+=10;signals.push({label:"トレンド",val:"MA20上",state:1});}
     else{signals.push({label:"トレンド",val:"MA20下",state:-1});}
   }
-  if(mNow.hist>0&&mPrev&&mPrev.hist<=0){sc+=25;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});}else if(mNow.hist>0){sc+=14;signals.push({label:"MACD",val:"強気ゾーン",state:1});}else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){signals.push({label:"MACD",val:"デッドクロス",state:-1});}else{signals.push({label:"MACD",val:"弱気ゾーン",state:-1});}
+
+  // MACD（最大30点）
+  if(mNow.hist>0&&mPrev&&mPrev.hist<=0){
+    sc+=30;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});
+  }else if(mNow.hist>0){
+    // ヒストグラムの強さで差をつける
+    var histStrength=Math.min(15,Math.max(5,Math.abs(mNow.hist)/Math.abs(mNow.hist+0.0001)*20));
+    sc+=Math.round(histStrength);
+    signals.push({label:"MACD",val:"強気ゾーン",state:1});
+  }else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){
+    signals.push({label:"MACD",val:"デッドクロス",state:-1});
+  }else{
+    signals.push({label:"MACD",val:"弱気ゾーン",state:-1});
+  }
+
+  // RSI（最大25点）
   var rl="RSI("+rsiVal.toFixed(1)+")";
-  if(rsiVal<30){sc+=20;signals.push({label:rl,val:"売られすぎ",state:1});}else if(rsiVal<45){sc+=12;signals.push({label:rl,val:"やや弱め",state:0});}else if(rsiVal>70){signals.push({label:rl,val:"買われすぎ",state:-1});}else{sc+=10;signals.push({label:rl,val:"中立",state:0});}
-  if(bollVal){if(price<=bollVal.lower){sc+=20;signals.push({label:"BB",val:"下限→反発",state:1});}else if(price>=bollVal.upper){signals.push({label:"BB",val:"上限→過熱",state:-1});}else{sc+=8;signals.push({label:"BB",val:"バンド内",state:0});}}
-  if(stochVal!==null){var sl="Stoch("+stochVal.toFixed(1)+")";if(stochVal<20){sc+=15;signals.push({label:sl,val:"売られすぎ",state:1});}else if(stochVal>80){signals.push({label:sl,val:"買われすぎ",state:-1});}else{sc+=6;signals.push({label:sl,val:"中立",state:0});}}
+  if(rsiVal<30){sc+=25;signals.push({label:rl,val:"売られすぎ",state:1});}
+  else if(rsiVal<40){sc+=18;signals.push({label:rl,val:"やや売られ",state:1});}
+  else if(rsiVal<50){sc+=12;signals.push({label:rl,val:"やや弱め",state:0});}
+  else if(rsiVal<60){sc+=8;signals.push({label:rl,val:"中立",state:0});}
+  else if(rsiVal<70){sc+=5;signals.push({label:rl,val:"やや強め",state:0});}
+  else{signals.push({label:rl,val:"買われすぎ",state:-1});}
+
+  // ボリンジャーバンド（最大20点）
+  if(bollVal){
+    var bbPos=(closes[n]-bollVal.lower)/(bollVal.upper-bollVal.lower||1);
+    if(price<=bollVal.lower){sc+=20;signals.push({label:"BB",val:"下限→反発",state:1});}
+    else if(bbPos<0.2){sc+=15;signals.push({label:"BB",val:"下限付近",state:1});}
+    else if(price>=bollVal.upper){signals.push({label:"BB",val:"上限→過熱",state:-1});}
+    else if(bbPos>0.8){sc+=3;signals.push({label:"BB",val:"上限付近",state:0});}
+    else{sc+=8;signals.push({label:"BB",val:"バンド内",state:0});}
+  }
+
+  // ストキャスティクス（最大15点）
+  if(stochVal!==null){
+    var sl="Stoch("+stochVal.toFixed(1)+")";
+    if(stochVal<20){sc+=15;signals.push({label:sl,val:"売られすぎ",state:1});}
+    else if(stochVal<35){sc+=10;signals.push({label:sl,val:"やや売られ",state:1});}
+    else if(stochVal>80){signals.push({label:sl,val:"買われすぎ",state:-1});}
+    else if(stochVal>65){sc+=3;signals.push({label:sl,val:"やや強め",state:0});}
+    else{sc+=6;signals.push({label:sl,val:"中立",state:0});}
+  }
   var winRate=Math.min(88,Math.max(28,sc*0.72));
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
   var timing=sc>=68?"BUY":sc>=42?"WATCH":"SKIP";
