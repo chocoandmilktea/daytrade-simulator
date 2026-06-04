@@ -851,8 +851,8 @@ export default function App(){
       .finally(function(){scan();});
   },[]);
 
-  var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["ipo","🚀"],["news","📰"],["trend","🔥"],["sync","🔗"]];
-  var TAB_LABELS={"cross":"クロス予測","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","ipo":"IPO","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
+  var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
+  var TAB_LABELS={"cross":"クロス予測","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
 
   return(
     <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex"}}>
@@ -870,7 +870,6 @@ export default function App(){
           {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav}/>}
           {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
           {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
-          {activeTab==="ipo"&&<IpoPanel/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="trend"&&<TrendPanel/>}
           {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
