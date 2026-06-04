@@ -165,9 +165,12 @@ function classifyStockFn(s){
   if(!macdSig) return null;
   if(macdSig.val==="ゴールデンクロス") return{type:"GC_NOW",label:"GC発生",color:"#22d3a0",bg:"#052e16",border:"#22d3a0"};
   if(macdSig.val==="デッドクロス")     return{type:"DC_NOW",label:"DC発生",color:"#f43f5e",bg:"#1f0010",border:"#f43f5e"};
-  if(macdSig.val==="強気ゾーン"&&s.score>=55) return{type:"GC_NEAR",label:"GC接近",color:"#fbbf24",bg:"#1c1400",border:"#fbbf24"};
-  if(macdSig.val==="弱気ゾーン"&&s.score<=30) return{type:"DC_NEAR",label:"DC接近",color:"#fb923c",bg:"#1a0800",border:"#fb923c"};
-  if(macdSig.val==="強気ゾーン") return{type:"GC_WATCH",label:"GC監視",color:"#60a5fa",bg:"#0a1e3a",border:"#3b82f6"};
+  // GC接近: 強気ゾーン + スコア60以上
+  if(macdSig.val==="強気ゾーン"&&s.score>=60) return{type:"GC_NEAR",label:"GC接近",color:"#fbbf24",bg:"#1c1400",border:"#fbbf24"};
+  // DC接近: 弱気ゾーン + スコア35以下
+  if(macdSig.val==="弱気ゾーン"&&s.score<=35) return{type:"DC_NEAR",label:"DC接近",color:"#fb923c",bg:"#1a0800",border:"#fb923c"};
+  // GC監視: 強気ゾーン + スコア50以上（50未満は表示しない）
+  if(macdSig.val==="強気ゾーン"&&s.score>=50) return{type:"GC_WATCH",label:"GC監視",color:"#60a5fa",bg:"#0a1e3a",border:"#3b82f6"};
   return{type:"NONE",label:"中立",color:"#4a7090",bg:"#071428",border:"#1e3050"};
 }
 
