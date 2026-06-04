@@ -97,9 +97,8 @@ function analyzeStock(stock,pd){
 
   // トレンド判定（最大30点）
   if(s20&&s50){
-    var trendStr=(price-s50)/s50*100; // 価格がMA50からどれだけ乖離しているか
     if(price>s20&&s20>s50){
-      sc+=20+Math.min(10,Math.max(0,trendStr));// 乖離が大きいほど高スコア
+      sc+=20;
       signals.push({label:"トレンド",val:"上昇トレンド",state:1});
     }else if(price<s20&&s20<s50){
       signals.push({label:"トレンド",val:"下降トレンド",state:-1});
@@ -113,9 +112,7 @@ function analyzeStock(stock,pd){
   if(mNow.hist>0&&mPrev&&mPrev.hist<=0){
     sc+=30;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});
   }else if(mNow.hist>0){
-    // ヒストグラムの強さで差をつける
-    var histStrength=Math.min(15,Math.max(5,Math.abs(mNow.hist)/Math.abs(mNow.hist+0.0001)*20));
-    sc+=Math.round(histStrength);
+    sc+=10;
     signals.push({label:"MACD",val:"強気ゾーン",state:1});
   }else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){
     signals.push({label:"MACD",val:"デッドクロス",state:-1});
