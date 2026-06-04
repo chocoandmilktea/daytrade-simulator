@@ -559,6 +559,34 @@ function PortfolioPanel(p){
   var initPort=(function(){try{var v=localStorage.getItem("portfolio_v1");return v?JSON.parse(v):[];}catch(e){return[];}})();
   var portS=useState(initPort);var portfolio=portS[0],setPortfolio=portS[1];
   var tabS=useState("list");var ptab=tabS[0],setPtab=tabS[1];
+  var pricesS=useState({});var livePrices=pricesS[0],setLivePrices=pricesS[1];
+  var lastUpdS=useState(null);var lastUpd=lastUpdS[0],setLastUpd=lastUpdS[1];
+  var refreshingS=useState(false);var refreshing=refreshingS[0],setRefreshing=refreshingS[1];
+
+  // 保有銘柄の価格を取得
+  async function fetchLivePrices(port){
+    if(!port||port.length===0) return;
+    setRefreshing(true);
+    var newPrices={};
+    await Promise.all(port.map(async function(pos){
+      try{
+        var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(pos.ticker)+"&range=5d",{signal:AbortSignal.timeout(8000)});
+        var json=await res.json();
+        var meta=json&&json.chart&&json.chart.result&&json.chart.result[0]&&json.chart.result[0].meta;
+        if(meta) newPrices[pos.ticker]=meta.regularMarketPrice||0;
+      }catch(e){}
+    }));
+    setLivePrices(newPrices);
+    setLastUpd(new Date().toLocaleTimeString("ja-JP"));
+    setRefreshing(false);
+  }
+
+  // 初回 + 5分ごとに自動更新
+  useEffect(function(){
+    fetchLivePrices(portfolio);
+    var timer=setInterval(function(){fetchLivePrices(portfolio);},5*60*1000);
+    return function(){clearInterval(timer);};
+  },[portfolio.length]);
   var formS=useState({ticker:"",name:"",buyPrice:"",shares:"",stopLoss:"",target:"",market:"US"});
   var form=formS[0],setForm=formS[1];
   var editS=useState(null);var editId=editS[0],setEditId=editS[1];
@@ -568,15 +596,19 @@ function PortfolioPanel(p){
   function removePos(id){savePort(portfolio.filter(function(p){return p.id!==id;}));}
   function startEdit(pos){setEditId(pos.id);setEditForm({buyPrice:String(pos.buyPrice),shares:String(pos.shares),stopLoss:pos.stopLoss?String(pos.stopLoss):"",target:pos.target?String(pos.target):""});}
   function saveEdit(id){if(!editForm.buyPrice||!editForm.shares)return;savePort(portfolio.map(function(pos){if(pos.id!==id)return pos;return Object.assign({},pos,{buyPrice:parseFloat(editForm.buyPrice),shares:parseFloat(editForm.shares),stopLoss:editForm.stopLoss?parseFloat(editForm.stopLoss):null,target:editForm.target?parseFloat(editForm.target):null});}));setEditId(null);setEditForm(null);}
-  function getCurrentPrice(ticker){var found=stocks.find(function(s){return s.ticker===ticker;});return found?found.rawPrice:null;}
+  function getCurrentPrice(ticker){if(livePrices[ticker]) return livePrices[ticker];var found=stocks.find(function(s){return s.ticker===ticker;});return found?found.rawPrice:null;}
   var totalPnL=portfolio.reduce(function(sum,pos){var cur=getCurrentPrice(pos.ticker);return sum+(cur?(cur-pos.buyPrice)*pos.shares:0);},0);
   var inp={background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
   var inpSm={background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"6px 8px",fontSize:11,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
   return(
     <div>
-      <div style={{display:"flex",gap:6,marginBottom:14}}>
+      <div style={{display:"flex",gap:6,marginBottom:10,alignItems:"center"}}>
         <TabBtn label="保有銘柄" active={ptab==="list"} onClick={function(){setPtab("list");}} color="#22d3a0"/>
         <TabBtn label="追加" active={ptab==="add"} onClick={function(){setPtab("add");}} color="#0ea5e9"/>
+        <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
+          {lastUpd&&<span style={{fontSize:9,color:"#2a6090"}}>更新: {lastUpd}</span>}
+          <button onClick={function(){fetchLivePrices(portfolio);}} disabled={refreshing} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:refreshing?"#2a6090":"#4a90c0",padding:"3px 8px",fontSize:9,cursor:refreshing?"not-allowed":"pointer",fontFamily:"monospace"}}>{refreshing?"更新中...":"🔄"}</button>
+        </div>
       </div>
       {ptab==="add"&&(<div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:16,marginBottom:16}}><div style={{fontSize:12,fontWeight:700,color:"#e0f0ff",marginBottom:12}}>ポジション追加</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>{[["ティッカー","ticker","AAPL","text"],["銘柄名","name","Apple","text"],["買値","buyPrice","150.00","number"],["株数","shares","100","number"],["損切り","stopLoss","140.00","number"],["目標価格","target","180.00","number"]].map(function(row){return(<div key={row[0]}><div style={{fontSize:9,color:"#2a6090",marginBottom:3}}>{row[0]}</div><input style={inp} type={row[3]} value={form[row[1]]} placeholder={row[2]} onChange={function(e){var up={};up[row[1]]=e.target.value;setForm(Object.assign({},form,up));}}/></div>);})}</div><div style={{display:"flex",gap:6,marginBottom:12}}>{["US","JP"].map(function(m){return(<button key={m} onClick={function(){setForm(Object.assign({},form,{market:m}));}} style={{background:form.market===m?"#0ea5e9":"#071428",border:"1px solid "+(form.market===m?"#0ea5e9":"#1e3050"),borderRadius:6,color:form.market===m?"#fff":"#4a7090",padding:"5px 16px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>{m}</button>);})}</div><button onClick={addPosition} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>追加する</button></div>)}
       {ptab==="list"&&(portfolio.length===0?(<div style={{textAlign:"center",padding:"60px 20px",color:"#2a6090"}}><div style={{fontSize:36,marginBottom:12}}>📊</div><div style={{fontSize:13,color:"#4a90c0"}}>保有銘柄がありません</div></div>):(<div><div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px 16px",marginBottom:12,display:"flex",gap:20}}><div><div style={{fontSize:9,color:"#2a6090"}}>保有銘柄</div><div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>{portfolio.length}銘柄</div></div><div><div style={{fontSize:9,color:"#2a6090"}}>損益合計</div><div style={{fontSize:16,fontWeight:800,color:totalPnL>=0?"#22d3a0":"#f43f5e"}}>{totalPnL>=0?"+":""}{totalPnL.toFixed(2)}</div></div></div><div style={{display:"flex",flexDirection:"column",gap:8}}>{portfolio.map(function(pos){var cur=getCurrentPrice(pos.ticker),pnl=cur?(cur-pos.buyPrice)*pos.shares:null,pct=cur?(cur-pos.buyPrice)/pos.buyPrice*100:null,hitStop=cur&&pos.stopLoss&&cur<=pos.stopLoss,hitTarget=cur&&pos.target&&cur>=pos.target,isEditing=editId===pos.id;return(<div key={pos.id} style={{background:"#050e1c",border:"1px solid "+(hitStop?"#f43f5e":hitTarget?"#22d3a0":"#1e3050"),borderRadius:10,padding:"14px 16px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{pos.ticker.replace(".T","")}</span><span style={{fontSize:11,color:"#4a7090"}}>{pos.name}</span>{hitStop&&<span style={bStyle("#1f0010","#f43f5e","#f43f5e")}>損切りライン</span>}{hitTarget&&<span style={bStyle("#052e16","#22d3a0","#22d3a0")}>目標達成</span>}</div><div style={{display:"flex",gap:6}}><button onClick={function(){isEditing?setEditId(null):startEdit(pos);}} style={{background:"transparent",border:"1px solid "+(isEditing?"#fbbf24":"#2a3050"),borderRadius:6,color:isEditing?"#fbbf24":"#4a7090",padding:"3px 8px",fontSize:10,cursor:"pointer",fontFamily:"monospace"}}>{isEditing?"閉じる":"編集"}</button><button onClick={function(){removePos(pos.id);}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:6,color:"#4a7090",padding:"3px 8px",fontSize:10,cursor:"pointer",fontFamily:"monospace"}}>削除</button></div></div>{isEditing&&editForm&&(<div style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:8,padding:"12px",marginBottom:10}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>{[["買値","buyPrice"],["株数","shares"],["損切り","stopLoss"],["目標","target"]].map(function(row){return(<div key={row[0]}><div style={{fontSize:9,color:"#2a6090",marginBottom:2}}>{row[0]}</div><input style={inpSm} type="number" value={editForm[row[1]]} onChange={function(e){var up={};up[row[1]]=e.target.value;setEditForm(Object.assign({},editForm,up));}}/></div>);})}</div><button onClick={function(){saveEdit(pos.id);}} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"8px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>保存する</button></div>)}<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:6}}>{[["買値",pos.market==="JP"?"¥"+pos.buyPrice.toLocaleString():"$"+pos.buyPrice,"#b8cce0"],["株数",pos.shares+"株","#b8cce0"],["現在値",cur?(pos.market==="JP"?"¥"+Math.round(cur).toLocaleString():"$"+cur.toFixed(2)):"─","#b8cce0"],["損益",pnl!==null?(pnl>=0?"+":"")+pnl.toFixed(2):"─",pnl!==null?(pnl>=0?"#22d3a0":"#f43f5e"):"#4a7090"],["損益率",pct!==null?(pct>=0?"+":"")+pct.toFixed(2)+"%":"─",pct!==null?(pct>=0?"#22d3a0":"#f43f5e"):"#4a7090"]].map(function(row){return(<div key={row[0]} style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:9,color:"#2a6090"}}>{row[0]}</div><div style={{fontSize:11,fontWeight:700,color:row[2]}}>{row[1]}</div></div>);})}</div></div>);})}</div></div>))}
@@ -600,10 +632,70 @@ function BacktestPanel(p){
   );
 }
 
-var IPO_DATA=[{name:"サンコーテクノ",code:"3441",market:"東証スタンダード",listDate:"2025-06-10",price:1200,cap:36,sector:"建設",url:"https://finance.yahoo.co.jp/ipo/3441"},{name:"トライアルHD",code:"141A",market:"東証プライム",listDate:"2025-06-17",price:1450,cap:580,sector:"小売",url:"https://finance.yahoo.co.jp/ipo/141A"},{name:"グロービング",code:"5575",market:"東証グロース",listDate:"2025-06-19",price:880,cap:18,sector:"IT",url:"https://finance.yahoo.co.jp/ipo/5575"},{name:"フォーラムエンジ",code:"7088",market:"東証プライム",listDate:"2025-06-24",price:2100,cap:210,sector:"人材",url:"https://finance.yahoo.co.jp/ipo/7088"},{name:"ソシオネクスト",code:"6526",market:"東証プライム",listDate:"2025-07-01",price:3800,cap:1900,sector:"半導体",url:"https://finance.yahoo.co.jp/ipo/6526"},{name:"アストロスケール",code:"186A",market:"東証グロース",listDate:"2025-07-08",price:750,cap:310,sector:"宇宙",url:"https://finance.yahoo.co.jp/ipo/186A"}];
-var TREND_LINKS=[{category:"日本株ランキング",links:[{label:"値上がり率",url:"https://finance.yahoo.co.jp/stocks/ranking/up?market=all"},{label:"値下がり率",url:"https://finance.yahoo.co.jp/stocks/ranking/down?market=all"},{label:"出来高",url:"https://finance.yahoo.co.jp/stocks/ranking/volume?market=all"}]},{category:"米国株ランキング",links:[{label:"値上がり率",url:"https://finance.yahoo.co.jp/stocks/us/ranking/up?market=all"},{label:"値下がり率",url:"https://finance.yahoo.co.jp/stocks/us/ranking/down?market=all"},{label:"出来高",url:"https://finance.yahoo.co.jp/stocks/us/ranking/volume?market=all"}]},{category:"市況・指数",links:[{label:"日経平均",url:"https://finance.yahoo.co.jp/quote/998407.O"},{label:"NYダウ",url:"https://finance.yahoo.co.jp/quote/%5EDJI"},{label:"ドル円",url:"https://finance.yahoo.co.jp/quote/USDJPY=X"}]}];
+function IpoPanel(){
+  var dataS=useState(null);var ipoData=dataS[0],setIpoData=dataS[1];
+  var errS=useState(null);var err=errS[0],setErr=errS[1];
+  var loadS=useState(true);var load=loadS[0],setLoad=loadS[1];
 
-function IpoPanel(){var today=new Date();function daysUntil(d){return Math.ceil((new Date(d)-today)/(1000*60*60*24));}function ipoScore(ipo){var s=0;if(ipo.market==="東証プライム")s+=30;else if(ipo.market==="東証スタンダード")s+=20;else s+=10;if(ipo.cap>=500)s+=30;else if(ipo.cap>=100)s+=20;else s+=10;if(["半導体","SaaS","IT","宇宙"].indexOf(ipo.sector)>=0)s+=25;else s+=10;return Math.min(100,s);}return(<div>{IPO_DATA.map(function(ipo){var sc=ipoScore(ipo),days=daysUntil(ipo.listDate),dLabel=days<0?"上場済み":days===0?"本日上場":"あと"+days+"日",dColor=days<0?"#4a7090":days<=3?"#f43f5e":days<=7?"#fbbf24":"#4a90c0",sColor=sc>=70?"#22d3a0":sc>=50?"#fbbf24":"#94a3b8";return(<div key={ipo.code} style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",gap:12}}><div style={{flex:1}}><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}><span style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>{ipo.name}</span><span style={{fontSize:10,color:"#4a7090"}}>{ipo.code}</span></div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>{[["上場日",ipo.listDate],["公開価格","¥"+ipo.price.toLocaleString()],["時価総額",ipo.cap+"億円"],["セクター",ipo.sector]].map(function(row){return(<div key={row[0]} style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:9,color:"#2a6090"}}>{row[0]}</div><div style={{fontSize:11,fontWeight:700,color:"#b8cce0"}}>{row[1]}</div></div>);})}</div><div style={{display:"flex",gap:8,alignItems:"center"}}><span style={{fontSize:11,fontWeight:700,color:dColor}}>{dLabel}</span><a href={ipo.url} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #3b82f6",borderRadius:6,color:"#93c5fd",padding:"4px 10px",fontSize:10,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>Yahoo!</a></div></div><div style={{background:sc>=70?"#052e16":"#0a1428",border:"1px solid "+sColor+"50",borderRadius:8,padding:"8px 12px",textAlign:"center",minWidth:52}}><div style={{fontSize:9,color:"#4a7090"}}>スコア</div><div style={{fontSize:18,fontWeight:800,color:sColor}}>{sc}</div></div></div></div>);})}</div>);}
+  useEffect(function(){
+    fetch("https://daytrade-simulator.vercel.app/api/ipo")
+      .then(function(r){return r.json();})
+      .then(function(json){
+        setIpoData(json.ipos||[]);
+        setLoad(false);
+      })
+      .catch(function(e){
+        setErr(e.message);
+        setLoad(false);
+      });
+  },[]);
+
+  var today=new Date();
+  function daysUntil(d){return Math.ceil((new Date(d)-today)/(1000*60*60*24));}
+
+  if(load) return(<div style={{textAlign:"center",padding:"60px",color:"#4a7090"}}><div style={{fontSize:24,marginBottom:12}}>🚀</div><div style={{fontSize:12}}>IPOデータ取得中...</div></div>);
+  if(err) return(<div style={{textAlign:"center",padding:"60px",color:"#f43f5e"}}><div style={{fontSize:12}}>取得エラー: {err}</div></div>);
+  if(!ipoData||ipoData.length===0) return(<div style={{textAlign:"center",padding:"60px",color:"#4a7090"}}><div style={{fontSize:24,marginBottom:12}}>🚀</div><div style={{fontSize:12}}>直近のIPOデータがありません</div></div>);
+
+  return(
+    <div>
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
+        <div style={{fontSize:11,fontWeight:700,color:"#e0f0ff"}}>🚀 IPO・新規上場 <span style={{fontSize:9,color:"#4a7090",fontWeight:400}}>直近6ヶ月〜3ヶ月先</span></div>
+      </div>
+      {ipoData.map(function(ipo){
+        var days=daysUntil(ipo.listingDate);
+        var dLabel=days<0?"上場済み":days===0?"本日上場！":"あと"+days+"日";
+        var dColor=days<0?"#4a7090":days===0?"#22d3a0":days<=7?"#f43f5e":days<=30?"#fbbf24":"#4a90c0";
+        var yahooUrl="https://finance.yahoo.co.jp/ipo/"+ipo.code;
+        return(
+          <div key={ipo.code} style={{background:"#050e1c",border:"1px solid "+(days===0?"#22d3a0":"#0f2040"),borderRadius:10,padding:"14px 16px",marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+                  <span style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>{ipo.name}</span>
+                  <span style={{fontSize:10,color:"#4a7090"}}>{ipo.code}</span>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
+                  {[["上場日",ipo.listingDate],["市場",ipo.market],["セクター",ipo.sector]].map(function(row){
+                    return(<div key={row[0]} style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}>
+                      <div style={{fontSize:9,color:"#2a6090"}}>{row[0]}</div>
+                      <div style={{fontSize:11,fontWeight:700,color:"#b8cce0"}}>{row[1]}</div>
+                    </div>);
+                  })}
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:dColor}}>{dLabel}</span>
+                  <a href={yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #3b82f6",borderRadius:6,color:"#93c5fd",padding:"4px 10px",fontSize:10,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>Yahoo!</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function NewsPanel(){var NEWS=[{label:"株式ニュース",url:"https://finance.yahoo.co.jp/news",desc:"国内外の最新株式ニュース"},{label:"日本株ニュース",url:"https://finance.yahoo.co.jp/news/stocks",desc:"日本株関連ニュース"},{label:"米国株ニュース",url:"https://finance.yahoo.co.jp/news/world",desc:"米国株最新情報"},{label:"マーケット概況",url:"https://finance.yahoo.co.jp/stocks",desc:"日本株式市場の概況"}];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px"}}><div style={{fontSize:13,fontWeight:700,color:"#e0f0ff"}}>ニュース</div></div><div style={{padding:"8px"}}>{NEWS.map(function(item,i){return(<a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}><span style={{fontSize:13,fontWeight:700,color:"#93c5fd"}}>{item.label}</span><span style={{fontSize:10,color:"#4a7090"}}>{item.desc}</span></a>);})}</div></div>);}
 function TrendPanel(){var cs=useState(0);var openCat=cs[0],setOpenCat=cs[1];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}><div style={{fontSize:12,fontWeight:700,color:"#e0f0ff"}}>トレンド・ランキング</div></div>{TREND_LINKS.map(function(cat,ci){var isOpen=openCat===ci;return(<div key={ci}><div onClick={function(){setOpenCat(isOpen?-1:ci);}} style={{padding:"10px 14px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #0a1828",background:isOpen?"#071a2e":"transparent"}}><span style={{fontSize:12,fontWeight:700,color:"#b8cce0"}}>{cat.category}</span><span style={{fontSize:10,color:"#2a6090"}}>{isOpen?"▲":"▼"}</span></div>{isOpen&&<div style={{background:"#040c18",borderBottom:"1px solid #0a1828"}}>{cat.links.map(function(link,li){return(<a key={li} href={link.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",padding:"9px 20px",borderBottom:"1px solid #0a1828",textDecoration:"none",gap:8}}><span style={{fontSize:10,color:"#22d3a0"}}>→</span><span style={{fontSize:12,color:"#93c5fd"}}>{link.label}</span></a>);})}</div>}</div>);})}</div>);}
 
