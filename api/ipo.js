@@ -22,11 +22,29 @@ export default async function handler(req, res) {
     const to = new Date(now);
     to.setMonth(to.getMonth() + 3);
 
+    // ETF・投資信託・REIT除外キーワード
+    const excludeKeywords = [
+      "ETF","投信","投資信託","ファンド","FUND","Fund",
+      "連動型","インデックス","INDEX","Index",
+      "REIT","リート","上場投資","アセットマネジメント",
+      "eMAXIS","iFree","NEXT FUNDS","上場インデックス"
+    ];
+
     const ipos = stocks
       .filter(function(s) {
         if (!s.Date) return false;
         const d = new Date(s.Date);
-        return d >= from && d <= to;
+        if (d < from || d > to) return false;
+        // ETF・投信除外
+        var name = s.CoName || "";
+        var sector = s.S33Nm || "";
+        if (sector === "その他") return false;
+        for (var i = 0; i < excludeKeywords.length; i++) {
+          if (name.indexOf(excludeKeywords[i]) >= 0) return false;
+        }
+        // 市場コードでETF除外（0111=ETF・ETN）
+        if (s.ProdCat === "011" || s.ProdCat === "012") return false;
+        return true;
       })
       .sort(function(a, b) {
         return new Date(b.Date) - new Date(a.Date);
