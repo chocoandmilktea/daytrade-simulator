@@ -14,7 +14,8 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "ticker is required" });
   }
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
+ const range = req.query.range || "6mo";
+const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=${range}`;
 
   try {
     const response = await fetch(url, {
