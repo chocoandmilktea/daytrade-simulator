@@ -24,7 +24,7 @@ var MKT = {
 function scoreColor(n){ return n>=68?"#22d3a0":n>=42?"#fbbf24":"#f43f5e"; }
 function bStyle(bg,border,text){ return{background:bg,border:"1px solid "+border,color:text,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:4}; }
 
-var CACHE={}, CACHE_TTL=15*60*1000;
+var CACHE={}, CACHE_TTL=30*60*1000;
 var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 
@@ -50,7 +50,7 @@ async function buildStockUniverse(){
 async function fetchYahoo(ticker){
   var now=Date.now();
   if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real};}
-  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=6mo",{signal:AbortSignal.timeout(10000)});
+  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=2y",{signal:AbortSignal.timeout(15000)});
   if(!res.ok) throw new Error("HTTP "+res.status);
   var json=await res.json();
   var result=json&&json.chart&&json.chart.result&&json.chart.result[0];
@@ -83,7 +83,7 @@ function runBacktest(closes){
     var slice=closes.slice(0,i+1),macd=calcMACD(slice),mn=macd[i],mp=macd[i-1];
     if(mn&&mp&&mn.hist>0&&mp.hist<=0){var buyPrice=closes[i],sellPrice=closes[Math.min(i+5,closes.length-1)],ret=(sellPrice-buyPrice)/buyPrice*100;total++;if(ret>0)wins++;results.push({buyPrice:buyPrice.toFixed(2),sellPrice:sellPrice.toFixed(2),ret:ret.toFixed(2),win:ret>0});}
   }
-  return{results:results.slice(-10),winRate:total>0?(wins/total*100).toFixed(1):"0",total:total};
+  return{results:results.slice(-20),winRate:total>0?(wins/total*100).toFixed(1):"0",total:total};
 }
 
 function analyzeStock(stock,pd){
@@ -534,7 +534,7 @@ function FavPanel(p){
   var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
-  async function addByTicker(){var raw=searchTicker.trim().toUpperCase();if(!raw)return;var ticker=(raw.match(/^\d{4}$/)?raw+".T":raw);if(favs.indexOf(ticker)>=0){setSearchStatus("already");return;}setSearchStatus("loading");try{var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=6mo",{signal:AbortSignal.timeout(10000)});if(!res.ok)throw new Error("not found");toggleFav(ticker);setSearchTicker("");setSearchStatus("ok");setTimeout(function(){setSearchStatus(null);},2000);}catch(e){setSearchStatus("error");setTimeout(function(){setSearchStatus(null);},2000);}}
+  async function addByTicker(){var raw=searchTicker.trim().toUpperCase();if(!raw)return;var ticker=(raw.match(/^\d{4}$/)?raw+".T":raw);if(favs.indexOf(ticker)>=0){setSearchStatus("already");return;}setSearchStatus("loading");try{var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=2y",{signal:AbortSignal.timeout(15000)});if(!res.ok)throw new Error("not found");toggleFav(ticker);setSearchTicker("");setSearchStatus("ok");setTimeout(function(){setSearchStatus(null);},2000);}catch(e){setSearchStatus("error");setTimeout(function(){setSearchStatus(null);},2000);}}
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
   return(
     <div>
