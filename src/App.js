@@ -313,8 +313,9 @@ function StockCard(p){
   }
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"5px 7px",fontSize:11,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
   return(
-    <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"10px 10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}} onClick={function(e){if(e.target.tagName!=="BUTTON"&&e.target.tagName!=="A"&&e.target.closest("button")===null&&e.target.closest("a")===null){setShowModal(true);}}}>
+    <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"10px 10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}} onClick={function(e){if(e.target.tagName!=="BUTTON"&&e.target.tagName!=="A"&&e.target.tagName!=="INPUT"&&e.target.closest("button")===null&&e.target.closest("a")===null&&e.target.closest("input")===null&&!showAdd){setShowModal(true);}}}>
       {showModal&&<SignalModal s={s} onClose={function(){setShowModal(false);}}/>}
+      {showAdd&&<div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:50}} onClick={function(e){e.stopPropagation();}}/>}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <ScoreRing score={s.score}/>
         <div style={{flex:1,minWidth:0}}>
