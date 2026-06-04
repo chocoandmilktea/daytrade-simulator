@@ -50,7 +50,7 @@ async function buildStockUniverse(){
 async function fetchYahoo(ticker){
   var now=Date.now();
   if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real};}
-  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
+  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=6mo",{signal:AbortSignal.timeout(10000)});
   if(!res.ok) throw new Error("HTTP "+res.status);
   var json=await res.json();
   var result=json&&json.chart&&json.chart.result&&json.chart.result[0];
@@ -94,7 +94,14 @@ function analyzeStock(stock,pd){
   var bollVal=calcBoll(closes)[n],stochVal=calcStoch(closes,highs,lows)[n];
   var mNow=macdArr[n],mPrev=macdArr[n-1],price=pd.currentPrice||closes[n];
   var sc=0,signals=[];
-  if(s20&&s50){if(price>s20&&s20>s50){sc+=20;signals.push({label:"トレンド",val:"上昇トレンド",state:1});}else if(price<s20&&s20<s50){signals.push({label:"トレンド",val:"下降トレンド",state:-1});}else{sc+=8;signals.push({label:"トレンド",val:"横ばい",state:0});}}
+  if(s20&&s50){
+    if(price>s20&&s20>s50){sc+=20;signals.push({label:"トレンド",val:"上昇トレンド",state:1});}
+    else if(price<s20&&s20<s50){signals.push({label:"トレンド",val:"下降トレンド",state:-1});}
+    else{sc+=8;signals.push({label:"トレンド",val:"横ばい",state:0});}
+  }else if(s20){
+    if(price>s20){sc+=12;signals.push({label:"トレンド",val:"MA20上",state:1});}
+    else{signals.push({label:"トレンド",val:"MA20下",state:-1});}
+  }
   if(mNow.hist>0&&mPrev&&mPrev.hist<=0){sc+=25;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});}else if(mNow.hist>0){sc+=14;signals.push({label:"MACD",val:"強気ゾーン",state:1});}else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){signals.push({label:"MACD",val:"デッドクロス",state:-1});}else{signals.push({label:"MACD",val:"弱気ゾーン",state:-1});}
   var rl="RSI("+rsiVal.toFixed(1)+")";
   if(rsiVal<30){sc+=20;signals.push({label:rl,val:"売られすぎ",state:1});}else if(rsiVal<45){sc+=12;signals.push({label:rl,val:"やや弱め",state:0});}else if(rsiVal>70){signals.push({label:rl,val:"買われすぎ",state:-1});}else{sc+=10;signals.push({label:rl,val:"中立",state:0});}
@@ -402,7 +409,7 @@ function FavPanel(p){
   var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
-  async function addByTicker(){var raw=searchTicker.trim().toUpperCase();if(!raw)return;var ticker=(raw.match(/^\d{4}$/)?raw+".T":raw);if(favs.indexOf(ticker)>=0){setSearchStatus("already");return;}setSearchStatus("loading");try{var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});if(!res.ok)throw new Error("not found");toggleFav(ticker);setSearchTicker("");setSearchStatus("ok");setTimeout(function(){setSearchStatus(null);},2000);}catch(e){setSearchStatus("error");setTimeout(function(){setSearchStatus(null);},2000);}}
+  async function addByTicker(){var raw=searchTicker.trim().toUpperCase();if(!raw)return;var ticker=(raw.match(/^\d{4}$/)?raw+".T":raw);if(favs.indexOf(ticker)>=0){setSearchStatus("already");return;}setSearchStatus("loading");try{var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=6mo",{signal:AbortSignal.timeout(10000)});if(!res.ok)throw new Error("not found");toggleFav(ticker);setSearchTicker("");setSearchStatus("ok");setTimeout(function(){setSearchStatus(null);},2000);}catch(e){setSearchStatus("error");setTimeout(function(){setSearchStatus(null);},2000);}}
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
   return(
     <div>
