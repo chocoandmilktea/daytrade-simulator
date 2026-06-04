@@ -216,11 +216,91 @@ function ScoreRing(p){
 
 function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.active?p.color+"18":"transparent",border:"1px solid "+(p.active?p.color:"#1e3050"),borderRadius:6,color:p.active?p.color:"#4a6080",padding:"4px 10px",fontSize:10,cursor:"pointer",fontFamily:"monospace",fontWeight:p.active?700:400}}>{p.label}</button>);}
 
+
+// ── SignalModal ───────────────────────────────────────────────────────────────
+function SignalModal(p){
+  var s=p.s,onClose=p.onClose;
+  if(!s) return null;
+  var mc=MKT[s.market]||MKT["US"];
+  var isUp=parseFloat(s.change)>=0;
+  var tvUrl="https://www.tradingview.com/chart/?symbol="+encodeURIComponent(s.tvSymbol)+"&interval=D";
+
+  var stateColor=function(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";};
+  var stateLabel=function(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";};
+
+  return(
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto"}} onClick={function(e){e.stopPropagation();}}>
+
+        {/* ヘッダー */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
+          <div>
+            <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
+              <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
+              <span style={{fontSize:18,fontWeight:800,color:"#e0f0ff"}}>{s.ticker.replace(".T","")}</span>
+            </div>
+            <div style={{fontSize:11,color:"#4a7090"}}>{s.name}</div>
+          </div>
+          <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
+        </div>
+
+        {/* 価格・前日比 */}
+        <div style={{background:"#050e1c",borderRadius:10,padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:22,fontWeight:800,color:"#e0f0ff"}}>{s.price}</span>
+          <span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
+        </div>
+
+        {/* スパークライン */}
+        <div style={{background:"#030b14",borderRadius:8,padding:"8px",marginBottom:14}}>
+          <SparklineWithMA data={s.spark} up={isUp}/>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4}}>
+            <span style={{fontSize:8,color:"#fbbf24",fontWeight:700}}>─ MA5</span>
+            <span style={{fontSize:8,color:"#818cf8",fontWeight:700}}>─ MA25</span>
+            <span style={{fontSize:8,color:isUp?"#22d3a060":"#f43f5e60"}}>─ 価格</span>
+          </div>
+        </div>
+
+        {/* スコア */}
+        <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
+          <ScoreRing score={s.score}/>
+          <div>
+            <div style={{fontSize:11,color:"#4a7090"}}>総合スコア</div>
+            <div style={{fontSize:13,fontWeight:700,color:scoreColor(s.score)}}>{s.score>=68?"買いシグナル強":s.score>=50?"中程度":"弱いシグナル"}</div>
+          </div>
+        </div>
+
+        {/* シグナル詳細 */}
+        <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:8}}>📊 シグナル詳細</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
+          {s.signals.map(function(sig,i){
+            return(
+              <div key={i} style={{background:"#050e1c",borderRadius:8,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
+                <span style={{fontSize:11,color:"#4a7090"}}>{sig.label}</span>
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <span style={{fontSize:11,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
+                  <span style={{fontSize:9,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ボタン */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"12px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📈 TradingView</a>
+          <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"12px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Yahoo!</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── StockCard ─────────────────────────────────────────────────────────────────
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross;
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var tvUrl="https://www.tradingview.com/chart/?symbol="+encodeURIComponent(s.tvSymbol)+"&interval=D";
+  var showModalS=useState(false); var showModal=showModalS[0],setShowModal=showModalS[1];
   var addFormS=useState(false); var showAdd=addFormS[0],setShowAdd=addFormS[1];
   var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):""); var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
   var sharesS=useState(""); var shares=sharesS[0],setShares=sharesS[1];
@@ -233,7 +313,8 @@ function StockCard(p){
   }
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"5px 7px",fontSize:11,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
   return(
-    <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"10px 10px",display:"flex",flexDirection:"column",gap:7}}>
+    <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"10px 10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}} onClick={function(e){if(e.target.tagName!=="BUTTON"&&e.target.tagName!=="A"&&e.target.closest("button")===null&&e.target.closest("a")===null){setShowModal(true);}}}>
+      {showModal&&<SignalModal s={s} onClose={function(){setShowModal(false);}}/>}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <ScoreRing score={s.score}/>
         <div style={{flex:1,minWidth:0}}>
