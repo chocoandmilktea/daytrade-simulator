@@ -14,35 +14,11 @@ export default async function handler(req, res) {
     });
     if (!r.ok) throw new Error("J-Quants master: " + r.status);
     const json = await r.json();
-    const stocks = json?.equities || json?.data || [];
 
-    const now = new Date();
-    const from = new Date(now);
-    from.setMonth(from.getMonth() - 6);
-    const to = new Date(now);
-    to.setMonth(to.getMonth() + 3);
-
-    const ipos = stocks
-      .filter(function(s) {
-        if (!s.ListingDate) return false;
-        const d = new Date(s.ListingDate);
-        return d >= from && d <= to;
-      })
-      .sort(function(a, b) {
-        return new Date(b.ListingDate) - new Date(a.ListingDate);
-      })
-      .slice(0, 30)
-      .map(function(s) {
-        return {
-          code: String(s.Code || "").replace(/0$/, ""),
-          name: s.CompanyNameRFC || s.CompanyName || s.Code,
-          listingDate: s.ListingDate,
-          market: s.MarketCodeName || s.MarketCode || "─",
-          sector: s.Sector33CodeName || s.Sector17CodeName || "─",
-        };
-      });
-
-    return res.status(200).json({ ipos });
+    // デバッグ: キー一覧と最初の1件を返す
+    const keys = Object.keys(json);
+    const firstItem = json[keys[0]]?.[0] || null;
+    return res.status(200).json({ keys, firstItem });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
