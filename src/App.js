@@ -212,6 +212,7 @@ function SignalModal(p){
   var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
   var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
+  var helpModalS=useState(false);var showHelp=helpModalS[0],setShowHelp=helpModalS[1];
   function submitAdd(){
     if(!buyPrice||!shares) return;
     var portfolio=(function(){try{var v=localStorage.getItem("portfolio_v1");return v?JSON.parse(v):[];}catch(e){return[];}})();
@@ -235,6 +236,8 @@ function SignalModal(p){
             <div style={{fontSize:11,color:"#4a7090"}}>{s.name}</div>
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:26,height:26,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</button>
+            {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
             <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:isFav(s.ticker)?"#fbbf24":"#4a7090",padding:"4px 10px",fontSize:16,cursor:"pointer"}}>
               {isFav(s.ticker)?"★":"☆"}
             </button>
@@ -839,7 +842,6 @@ export default function App(){
           <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>
             DaySimulator <span style={{fontSize:10,color:"#4a7090",fontWeight:400}}>/ {TAB_LABELS[activeTab]}</span>
           </div>
-          <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:28,height:28,fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</button>
           {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
         </div>
         <div style={{flex:1,padding:"10px 10px 60px",overflowY:"auto"}}>
