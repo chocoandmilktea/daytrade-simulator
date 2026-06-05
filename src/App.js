@@ -245,8 +245,8 @@ function SignalModal(p){
   return(
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300}}>
       <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,background:"#000000cc",cursor:"pointer"}} onClick={onClose} onTouchEnd={function(e){e.preventDefault();onClose();}}/>
-      <div style={{position:"relative",zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:16,minHeight:"100%",pointerEvents:"none"}}>
-      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",pointerEvents:"auto"}}>
+      <div style={{position:"relative",zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:16,minHeight:"100%"}} onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto"}} onClick={function(e){e.stopPropagation();}}>
 
         {/* ヘッダー */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
