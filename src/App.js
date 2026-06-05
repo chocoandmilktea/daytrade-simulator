@@ -159,7 +159,7 @@ function analyzeStock(stock,pd){
   if(hasGC&&hasRSIOversold&&hasBBLow){overlap+=10;overlapLabels.push("トリプル");}
 
   sc=Math.min(100,sc+overlap);
-  // 重複ラベルはscoreに含めるのみ（詳細表示しない）
+  // 重複ラベルをreturnに含める
 
   var winRate=Math.min(88,Math.max(28,sc*0.72));
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
@@ -180,6 +180,7 @@ function analyzeStock(stock,pd){
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
     real:pd.real,closes:closes,per:pd.per||null,pbr:pd.pbr||null,
     high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
+    overlapLabels:overlapLabels,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
 }
 
@@ -375,6 +376,11 @@ function SignalModal(p){
           <div>
             <div style={{fontSize:11,color:"#4a7090"}}>総合スコア</div>
             <div style={{fontSize:13,fontWeight:700,color:scoreColor(s.score)}}>{s.score>=68?"買いシグナル強":s.score>=50?"中程度":"弱いシグナル"}</div>
+            {s.overlapLabels&&s.overlapLabels.length>0&&(
+              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:3}}>
+                {s.overlapLabels.map(function(lb,i){return(<span key={i} style={{background:"#1a0a3a",border:"1px solid #a78bfa",color:"#a78bfa",fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:4}}>{lb}</span>);})}
+              </div>
+            )}
           </div>
         </div>
         {/* 52週レンジ */}
@@ -1006,12 +1012,12 @@ function HelpModal(p){
       "目標価格到達で枠が緑に変化",
       "5分ごとに自動で価格更新",
     ]},
-    {title:"📖 Indicators",items:[
-      "PER (Price Earnings Ratio): How many times earnings the stock price is → Lower than industry average = undervalued buy candidate",
-      "PBR (Price Book Ratio): How many times book value the stock price is → Below 1x = theoretically undervalued buy candidate",
-      "RSI (Relative Strength Index): 0-100 scale of overbought/oversold → Below 30 = oversold, potential bounce buy candidate",
-      "MACD: Trend reversal indicator → Golden cross signal = buy signal",
-      "VIX: Market fear index → After spike to 30-40+, when it starts declining = market recovery buy candidate",
+    {title:"📖 指標の見方",items:[
+      "PER（株価収益率）：株価が1株利益の何倍か → 業種平均より低ければ割安で買い候補",
+      "PBR（株価純資産倍率）：株価が純資産の何倍か → 1倍割れは理論上割安で買い候補",
+      "RSI（相対力指数）：0〜100で買われすぎ・売られすぎを表示 → 30以下で売られすぎ・反発狙いの買い候補",
+      "MACD：トレンド転換を示す指標 → ゴールデンクロス発生時が買いシグナル",
+      "VIX（恐怖指数）：市場の不安度を示す指数 → 30〜40超の急騰後に低下し始めたら相場回復の買い候補",
     ]},
   ];
   return(
