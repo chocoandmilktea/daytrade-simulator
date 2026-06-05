@@ -252,15 +252,19 @@ function SignalModal(p){
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
   var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
   var helpModalS=useState(false);var showHelp=helpModalS[0],setShowHelp=helpModalS[1];
-  // モーダル表示中はbodyのスクロールを止める
+  // モーダル表示中はbodyスクロールを止める（iOS対応：スクロール位置を保存）
   useEffect(function(){
+    var scrollY=window.scrollY;
     document.body.style.overflow="hidden";
     document.body.style.position="fixed";
+    document.body.style.top="-"+scrollY+"px";
     document.body.style.width="100%";
     return function(){
       document.body.style.overflow="";
       document.body.style.position="";
+      document.body.style.top="";
       document.body.style.width="";
+      window.scrollTo(0,scrollY);
     };
   },[]);
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
@@ -280,9 +284,10 @@ function SignalModal(p){
   return(
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16,touchAction:"none"}}
       onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
-      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}
-        onTouchEnd={function(e){e.stopPropagation();}}
-        onTouchMove={function(e){e.stopPropagation(); e.cancelBubble=true;}}>
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"80vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}
+        onTouchStart={function(e){e.stopPropagation();}}
+        onTouchMove={function(e){e.stopPropagation();}}
+        onTouchEnd={function(e){e.stopPropagation();}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
           <div>
             <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
