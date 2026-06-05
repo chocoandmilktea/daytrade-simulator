@@ -57,9 +57,10 @@ async function fetchYahoo(ticker){
   if(!result) throw new Error("empty");
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
-  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true};
+  var per=result.per||null,pbr=result.pbr||null;
+  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr};
 }
 
 function genSim(ticker){
@@ -143,7 +144,8 @@ function analyzeStock(stock,pd){
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
-    real:pd.real,closes:closes,yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
+    real:pd.real,closes:closes,per:pd.per||null,pbr:pd.pbr||null,
+    yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
 }
 
 function classifyStockFn(s){
@@ -279,6 +281,21 @@ function SignalModal(p){
             <div style={{fontSize:13,fontWeight:700,color:scoreColor(s.score)}}>{s.score>=68?"買いシグナル強":s.score>=50?"中程度":"弱いシグナル"}</div>
           </div>
         </div>
+        {/* PER・PBR・VIX */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:14}}>
+          <div style={{background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
+            <div style={{fontSize:9,color:"#2a6090",marginBottom:2}}>PER</div>
+            <div style={{fontSize:13,fontWeight:700,color:s.per?"#d8eeff":"#4a7090"}}>{s.per?s.per.toFixed(1)+"x":"─"}</div>
+          </div>
+          <div style={{background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
+            <div style={{fontSize:9,color:"#2a6090",marginBottom:2}}>PBR</div>
+            <div style={{fontSize:13,fontWeight:700,color:s.pbr?"#d8eeff":"#4a7090"}}>{s.pbr?s.pbr.toFixed(2)+"x":"─"}</div>
+          </div>
+          <div style={{background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
+            <div style={{fontSize:9,color:"#2a6090",marginBottom:2}}>VIX</div>
+            <div style={{fontSize:13,fontWeight:700,color:"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div>
+          </div>
+        </div>
         <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:8}}>📊 シグナル詳細</div>
         <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
           {s.signals.map(function(sig,i){
@@ -327,7 +344,7 @@ function StockCard(p){
       if(t.closest("button")||t.closest("a")||t.closest("input")) return;
       setShowModal(true);
     }}>
-      {showModal&&<SignalModal s={s} onClose={function(){setShowModal(false);}} toggleFav={toggleFav} isFav={isFav}/>}
+      {showModal&&<SignalModal s={s} onClose={function(){setShowModal(false);}} toggleFav={toggleFav} isFav={isFav} vix={p.vix}/>}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <ScoreRing score={s.score}/>
         <div style={{flex:1,minWidth:0}}>
@@ -468,7 +485,7 @@ function CrossPanel(p){
       <div style={{marginBottom:16}}>
         <div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:8,padding:"4px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
-          {sp.items.map(function(item){return <StockCard key={item.s.ticker} s={item.s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={item.cross}/>;  })}
+          {sp.items.map(function(item){return <StockCard key={item.s.ticker} s={item.s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={item.cross} vix={p.vix}/>;  })}
         </div>
       </div>
     );
@@ -536,7 +553,7 @@ function FavPanel(p){
         {statusMsg&&<div style={{fontSize:10,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
-        {favStocks.map(function(s){var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross}/>;  })}
+        {favStocks.map(function(s){var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix}/>;  })}
       </div>
       {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:11}}>ティッカーを入力して追加できます</div>}
     </div>
@@ -778,6 +795,7 @@ export default function App(){
   var b=useState(false);var loading=b[0],setLoading=b[1];
   var c=useState({done:0,total:0,msg:null});var progress=c[0],setProgress=c[1];
   var g=useState(null);var ts=g[0],setTs=g[1];
+  var vixS=useState(null);var vix=vixS[0],setVix=vixS[1];
   var k=useState("cross");var activeTab=k[0],setActiveTab=k[1];
   var userId=(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}})();
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
@@ -819,6 +837,16 @@ export default function App(){
     setTs(new Date().toLocaleTimeString("ja-JP"));
     setLoading(false);
   },[]);
+  // VIX取得
+  useEffect(function(){
+    fetch(VERCEL_API+"?ticker="+encodeURIComponent("^VIX")+"&range=5d")
+      .then(function(r){return r.json();})
+      .then(function(json){
+        var meta=json&&json.chart&&json.chart.result&&json.chart.result[0]&&json.chart.result[0].meta;
+        if(meta) setVix(meta.regularMarketPrice||null);
+      }).catch(function(){});
+  },[]);
+
   useEffect(function(){
     fetch(SYNC_API+"?userId="+userId)
       .then(function(r){return r.json();})
@@ -845,7 +873,7 @@ export default function App(){
           {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
         </div>
         <div style={{flex:1,padding:"10px 10px 60px",overflowY:"auto"}}>
-          {activeTab==="cross"&&<CrossPanel stocks={stocks} loading={loading} onScan={scan} toggleFav={toggleFav} favs={favs} ts={ts} progress={progress}/>}
+          {activeTab==="cross"&&<CrossPanel stocks={stocks} loading={loading} onScan={scan} toggleFav={toggleFav} favs={favs} ts={ts} progress={progress} vix={vix}/>}
           {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav}/>}
           {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
           {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
