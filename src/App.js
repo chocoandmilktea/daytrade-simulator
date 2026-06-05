@@ -280,9 +280,9 @@ function SignalModal(p){
   return(
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16,touchAction:"none"}}
       onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
-      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"scroll",WebkitOverflowScrolling:"touch",touchAction:"pan-y",overscrollBehavior:"contain"}}
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}
         onTouchEnd={function(e){e.stopPropagation();}}
-        onTouchMove={function(e){e.stopPropagation();}}>
+        onTouchMove={function(e){e.stopPropagation(); e.cancelBubble=true;}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
           <div>
             <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
