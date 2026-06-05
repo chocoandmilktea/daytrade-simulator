@@ -19,9 +19,15 @@ export default async function handler(req, res) {
 }
 
 async function getUSRanking() {
-  const url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
-    + "?formatted=false&lang=en-US&region=US&scrIds=most_actives&count=50&start=0";
-  const res = await fetch(url, {
+  const url = new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
+url.searchParams.set("formatted", "false");
+url.searchParams.set("lang", "en-US");
+url.searchParams.set("region", "US");
+url.searchParams.set("scrIds", "most_actives");
+url.searchParams.set("count", "50");
+url.searchParams.set("start", "0");
+const res = await fetch(url.toString(), {
+
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       "Accept": "application/json",
