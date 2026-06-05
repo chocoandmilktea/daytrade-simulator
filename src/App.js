@@ -649,13 +649,145 @@ function PortfolioPanel(p){
       <div style={{display:"flex",gap:6,marginBottom:10,alignItems:"center"}}>
         <TabBtn label="保有銘柄" active={ptab==="list"} onClick={function(){setPtab("list");}} color="#22d3a0"/>
         <TabBtn label="追加" active={ptab==="add"} onClick={function(){setPtab("add");}} color="#0ea5e9"/>
+        <TabBtn label="シミュ" active={ptab==="sim"} onClick={function(){setPtab("sim");}} color="#a78bfa"/>
         <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
           {lastUpd&&<span style={{fontSize:9,color:"#2a6090"}}>更新: {lastUpd}</span>}
           <button onClick={function(){fetchLivePrices(portfolio);}} disabled={refreshing} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:refreshing?"#2a6090":"#4a90c0",padding:"3px 8px",fontSize:9,cursor:refreshing?"not-allowed":"pointer",fontFamily:"monospace"}}>{refreshing?"更新中...":"🔄"}</button>
         </div>
       </div>
+      {ptab==="sim"&&<SimPanel stocks={stocks}/>}
       {ptab==="add"&&(<div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:16,marginBottom:16}}><div style={{fontSize:12,fontWeight:700,color:"#e0f0ff",marginBottom:12}}>ポジション追加</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>{[["ティッカー","ticker","AAPL","text"],["銘柄名","name","Apple","text"],["買値","buyPrice","150.00","number"],["株数","shares","100","number"],["損切り","stopLoss","140.00","number"],["目標価格","target","180.00","number"]].map(function(row){return(<div key={row[0]}><div style={{fontSize:9,color:"#2a6090",marginBottom:3}}>{row[0]}</div><input style={inp} type={row[3]} value={form[row[1]]} placeholder={row[2]} onChange={function(e){var up={};up[row[1]]=e.target.value;setForm(Object.assign({},form,up));}}/></div>);})}</div><div style={{display:"flex",gap:6,marginBottom:12}}>{["US","JP"].map(function(m){return(<button key={m} onClick={function(){setForm(Object.assign({},form,{market:m}));}} style={{background:form.market===m?"#0ea5e9":"#071428",border:"1px solid "+(form.market===m?"#0ea5e9":"#1e3050"),borderRadius:6,color:form.market===m?"#fff":"#4a7090",padding:"5px 16px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>{m}</button>);})}</div><button onClick={addPosition} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>追加する</button></div>)}
       {ptab==="list"&&(portfolio.length===0?(<div style={{textAlign:"center",padding:"60px 20px",color:"#2a6090"}}><div style={{fontSize:36,marginBottom:12}}>📊</div><div style={{fontSize:13,color:"#4a90c0"}}>保有銘柄がありません</div></div>):(<div><div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px 16px",marginBottom:12,display:"flex",gap:20}}><div><div style={{fontSize:9,color:"#2a6090"}}>保有銘柄</div><div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>{portfolio.length}銘柄</div></div><div><div style={{fontSize:9,color:"#2a6090"}}>損益合計</div><div style={{fontSize:16,fontWeight:800,color:totalPnL>=0?"#22d3a0":"#f43f5e"}}>{totalPnL>=0?"+":""}{totalPnL.toFixed(2)}</div></div></div><div style={{display:"flex",flexDirection:"column",gap:8}}>{portfolio.map(function(pos){var cur=getCurrentPrice(pos.ticker),pnl=cur?(cur-pos.buyPrice)*pos.shares:null,pct=cur?(cur-pos.buyPrice)/pos.buyPrice*100:null,hitStop=cur&&pos.stopLoss&&cur<=pos.stopLoss,hitTarget=cur&&pos.target&&cur>=pos.target,isEditing=editId===pos.id;return(<div key={pos.id} style={{background:"#050e1c",border:"1px solid "+(hitStop?"#f43f5e":hitTarget?"#22d3a0":"#1e3050"),borderRadius:10,padding:"14px 16px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{pos.ticker.replace(".T","")}</span><span style={{fontSize:11,color:"#4a7090"}}>{pos.name}</span>{hitStop&&<span style={bStyle("#1f0010","#f43f5e","#f43f5e")}>損切りライン</span>}{hitTarget&&<span style={bStyle("#052e16","#22d3a0","#22d3a0")}>目標達成</span>}</div><div style={{display:"flex",gap:6}}><button onClick={function(){isEditing?setEditId(null):startEdit(pos);}} style={{background:"transparent",border:"1px solid "+(isEditing?"#fbbf24":"#2a3050"),borderRadius:6,color:isEditing?"#fbbf24":"#4a7090",padding:"3px 8px",fontSize:10,cursor:"pointer",fontFamily:"monospace"}}>{isEditing?"閉じる":"編集"}</button><button onClick={function(){removePos(pos.id);}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:6,color:"#4a7090",padding:"3px 8px",fontSize:10,cursor:"pointer",fontFamily:"monospace"}}>削除</button></div></div>{isEditing&&editForm&&(<div style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:8,padding:"12px",marginBottom:10}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>{[["買値","buyPrice"],["株数","shares"],["損切り","stopLoss"],["目標","target"]].map(function(row){return(<div key={row[0]}><div style={{fontSize:9,color:"#2a6090",marginBottom:2}}>{row[0]}</div><input style={inpSm} type="number" value={editForm[row[1]]} onChange={function(e){var up={};up[row[1]]=e.target.value;setEditForm(Object.assign({},editForm,up));}}/></div>);})}</div><button onClick={function(){saveEdit(pos.id);}} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"8px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>保存する</button></div>)}<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:6}}>{[["買値",pos.market==="JP"?"¥"+pos.buyPrice.toLocaleString():"$"+pos.buyPrice,"#b8cce0"],["株数",pos.shares+"株","#b8cce0"],["現在値",cur?(pos.market==="JP"?"¥"+Math.round(cur).toLocaleString():"$"+cur.toFixed(2)):"─","#b8cce0"],["損益",pnl!==null?(pnl>=0?"+":"")+pnl.toFixed(2):"─",pnl!==null?(pnl>=0?"#22d3a0":"#f43f5e"):"#4a7090"],["損益率",pct!==null?(pct>=0?"+":"")+pct.toFixed(2)+"%":"─",pct!==null?(pct>=0?"#22d3a0":"#f43f5e"):"#4a7090"]].map(function(row){return(<div key={row[0]} style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:9,color:"#2a6090"}}>{row[0]}</div><div style={{fontSize:11,fontWeight:700,color:row[2]}}>{row[1]}</div></div>);})}</div></div>);})}</div></div>))}
+    </div>
+  );
+}
+
+
+// ── SimPanel ──────────────────────────────────────────────────────────────────
+function SimPanel(p){
+  var stocks=p.stocks;
+  var tickerS=useState("");var ticker=tickerS[0],setTicker=tickerS[1];
+  var buyPriceS=useState("");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
+  var sharesS=useState("100");var shares=sharesS[0],setShares=sharesS[1];
+  var targetPctS=useState(20);var targetPct=targetPctS[0],setTargetPct=targetPctS[1];
+  var stopPctS=useState(-10);var stopPct=stopPctS[0],setStopPct=stopPctS[1];
+
+  var inp={background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+
+  var bp=parseFloat(buyPrice)||0;
+  var sh=parseFloat(shares)||0;
+  var cost=bp*sh;
+
+  // シナリオ計算
+  var scenarios=[
+    {label:"損切りライン",pct:stopPct,color:"#f43f5e"},
+    {label:"-5%",pct:-5,color:"#fb923c"},
+    {label:"現在値",pct:0,color:"#b8cce0"},
+    {label:"+5%",pct:5,color:"#22d3a0"},
+    {label:"+10%",pct:10,color:"#22d3a0"},
+    {label:"+20%",pct:20,color:"#22d3a0"},
+    {label:"目標価格",pct:targetPct,color:"#fbbf24"},
+  ];
+
+  // 現在値を取得
+  var found=stocks.find(function(s){return s.ticker===ticker;});
+  var currentPrice=found?found.rawPrice:null;
+  var currentPct=currentPrice&&bp>0?((currentPrice-bp)/bp*100):null;
+
+  var isJP=ticker.endsWith(".T");
+
+  function fmtPrice(v){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);}
+  function fmtPnL(v){return(v>=0?"+":"")+( isJP?"¥"+Math.round(v).toLocaleString():"$"+Math.abs(v).toFixed(2));}
+
+  return(
+    <div>
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px 16px",marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>💹 損益シミュレーション</div>
+        <div style={{fontSize:10,color:"#4a7090"}}>買値・株数を入力して損益を確認できます</div>
+      </div>
+
+      {/* 入力フォーム */}
+      <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"14px",marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+          <div>
+            <div style={{fontSize:9,color:"#2a6090",marginBottom:4}}>銘柄（任意）</div>
+            <select value={ticker} onChange={function(e){
+              setTicker(e.target.value);
+              var s=stocks.find(function(s){return s.ticker===e.target.value;});
+              if(s) setBuyPrice(s.rawPrice.toFixed(2));
+            }} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 6px",fontSize:11,fontFamily:"monospace",width:"100%"}}>
+              <option value="">手動入力</option>
+              {stocks.slice(0,50).map(function(s){return(<option key={s.ticker} value={s.ticker}>{s.ticker.replace(".T","")} {s.name.slice(0,12)}</option>);})}
+            </select>
+          </div>
+          <div>
+            <div style={{fontSize:9,color:"#2a6090",marginBottom:4}}>株数</div>
+            <input style={inp} type="number" value={shares} onChange={function(e){setShares(e.target.value);}} placeholder="100"/>
+          </div>
+        </div>
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:9,color:"#2a6090",marginBottom:4}}>買値</div>
+          <input style={inp} type="number" value={buyPrice} onChange={function(e){setBuyPrice(e.target.value);}} placeholder="150.00"/>
+        </div>
+        {bp>0&&sh>0&&(
+          <div style={{background:"#071428",borderRadius:6,padding:"8px 12px",fontSize:11,color:"#4a7090"}}>
+            投資総額: <span style={{color:"#d8eeff",fontWeight:700}}>{fmtPrice(cost)}</span>
+            {currentPct!==null&&<span style={{marginLeft:12}}>現在: <span style={{color:currentPct>=0?"#22d3a0":"#f43f5e",fontWeight:700}}>{currentPct>=0?"+":""}{currentPct.toFixed(1)}%</span></span>}
+          </div>
+        )}
+      </div>
+
+      {/* スライダー */}
+      {bp>0&&sh>0&&(
+        <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"14px",marginBottom:14}}>
+          <div style={{marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#4a7090",marginBottom:6}}>
+              <span>目標価格</span>
+              <span style={{color:"#fbbf24",fontWeight:700}}>+{targetPct}% → {fmtPrice(bp*(1+targetPct/100))}</span>
+            </div>
+            <input type="range" min={1} max={100} value={targetPct} onChange={function(e){setTargetPct(parseInt(e.target.value));}}
+              style={{width:"100%",accentColor:"#fbbf24"}}/>
+          </div>
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#4a7090",marginBottom:6}}>
+              <span>損切りライン</span>
+              <span style={{color:"#f43f5e",fontWeight:700}}>{stopPct}% → {fmtPrice(bp*(1+stopPct/100))}</span>
+            </div>
+            <input type="range" min={-50} max={-1} value={stopPct} onChange={function(e){setStopPct(parseInt(e.target.value));}}
+              style={{width:"100%",accentColor:"#f43f5e"}}/>
+          </div>
+        </div>
+      )}
+
+      {/* シナリオ一覧 */}
+      {bp>0&&sh>0&&(
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){
+            var sellPrice=bp*(1+sc.pct/100);
+            var pnl=(sellPrice-bp)*sh;
+            var isProfit=pnl>=0;
+            return(
+              <div key={i} style={{background:"#050e1c",border:"1px solid "+(isProfit?"#22d3a040":"#f43f5e40"),borderRadius:8,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontSize:11,color:sc.color,fontWeight:700}}>{sc.label}</div>
+                  <div style={{fontSize:10,color:"#4a7090"}}>{fmtPrice(sellPrice)} ({sc.pct>=0?"+":""}{sc.pct}%)</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:13,fontWeight:800,color:isProfit?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</div>
+                  <div style={{fontSize:9,color:"#4a7090"}}>{sh}株</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {(!bp||!sh)&&(
+        <div style={{textAlign:"center",padding:"40px 20px",color:"#2a6090"}}>
+          <div style={{fontSize:32,marginBottom:12}}>💹</div>
+          <div style={{fontSize:12}}>買値と株数を入力してください</div>
+        </div>
+      )}
     </div>
   );
 }
