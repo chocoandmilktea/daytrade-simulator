@@ -141,10 +141,20 @@ function analyzeStock(stock,pd){
   var timing=sc>=68?"BUY":sc>=42?"WATCH":"SKIP";
   var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
   var dispPrice=stock.market==="JP"?"¥"+Math.round(price).toLocaleString():"$"+price.toFixed(2);
+  // 52週高値・安値（約252営業日）
+  var yearData=closes.slice(-252);
+  var high52=yearData.length>0?Math.max.apply(null,yearData):price;
+  var low52=yearData.length>0?Math.min.apply(null,yearData):price;
+  var fromHigh=high52>0?((price-high52)/high52*100):0;
+  var fromLow=low52>0?((price-low52)/low52*100):0;
+  var range52=high52-low52||1;
+  var position52=((price-low52)/range52*100); // 0%=安値圏 100%=高値圏
+
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
     real:pd.real,closes:closes,per:pd.per||null,pbr:pd.pbr||null,
+    high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
 }
 
@@ -281,21 +291,48 @@ function SignalModal(p){
             <div style={{fontSize:13,fontWeight:700,color:scoreColor(s.score)}}>{s.score>=68?"買いシグナル強":s.score>=50?"中程度":"弱いシグナル"}</div>
           </div>
         </div>
-        {/* PER・PBR・VIX */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:14}}>
-          <div style={{background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
-            <div style={{fontSize:9,color:"#2a6090",marginBottom:2}}>PER</div>
-            <div style={{fontSize:13,fontWeight:700,color:s.per?"#d8eeff":"#4a7090"}}>{s.per?s.per.toFixed(1)+"x":"─"}</div>
-          </div>
-          <div style={{background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
-            <div style={{fontSize:9,color:"#2a6090",marginBottom:2}}>PBR</div>
-            <div style={{fontSize:13,fontWeight:700,color:s.pbr?"#d8eeff":"#4a7090"}}>{s.pbr?s.pbr.toFixed(2)+"x":"─"}</div>
-          </div>
-          <div style={{background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
-            <div style={{fontSize:9,color:"#2a6090",marginBottom:2}}>VIX</div>
-            <div style={{fontSize:13,fontWeight:700,color:"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div>
-          </div>
-        </div>
+        {/* 52週レンジ */}
+        {s.high52&&(function(){
+          var pos=s.position52||0;
+          // 色判定: 安値圏(0-25%)=買い候補=緑, 中間(25-75%)=中立=黄, 高値圏(75-100%)=警戒=赤
+          var posColor=pos<=25?"#22d3a0":pos<=75?"#fbbf24":"#f43f5e";
+          var posLabel=pos<=25?"安値圏・買い候補":pos<=75?"中間レンジ":"高値圏・警戒";
+          var fromHighColor=s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0";
+          var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
+          var mkt=s.market==="JP";
+          var fmtPrice=function(v){return mkt?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);};
+          return(
+            <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#4a90c0",marginBottom:8}}>📊 52週レンジ</div>
+              {/* プログレスバー */}
+              <div style={{marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#4a7090",marginBottom:4}}>
+                  <span>安値 {fmtPrice(s.low52)}</span>
+                  <span style={{color:posColor,fontWeight:700}}>{posLabel}</span>
+                  <span>高値 {fmtPrice(s.high52)}</span>
+                </div>
+                <div style={{background:"#0a1828",borderRadius:4,height:6,position:"relative"}}>
+                  <div style={{background:"linear-gradient(90deg,#22d3a0,#fbbf24,#f43f5e)",height:6,borderRadius:4,width:"100%",opacity:0.3}}/>
+                  <div style={{position:"absolute",top:-2,left:"calc("+Math.min(98,Math.max(2,pos))+"% - 5px)",width:10,height:10,borderRadius:"50%",background:posColor,border:"2px solid #071428"}}/>
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
+                  <div style={{fontSize:9,color:"#2a6090"}}>高値比</div>
+                  <div style={{fontSize:12,fontWeight:700,color:fromHighColor}}>{s.fromHigh.toFixed(1)}%</div>
+                </div>
+                <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
+                  <div style={{fontSize:9,color:"#2a6090"}}>安値比</div>
+                  <div style={{fontSize:12,fontWeight:700,color:fromLowColor}}>+{s.fromLow.toFixed(1)}%</div>
+                </div>
+                <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
+                  <div style={{fontSize:9,color:"#2a6090"}}>VIX</div>
+                  <div style={{fontSize:12,fontWeight:700,color:p.vix&&parseFloat(p.vix)>=20?"#f43f5e":"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:8}}>📊 シグナル詳細</div>
         <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
           {s.signals.map(function(sig,i){
