@@ -95,32 +95,20 @@ function analyzeStock(stock,pd){
   var mNow=macdArr[n],mPrev=macdArr[n-1],price=pd.currentPrice||closes[n];
   var sc=0,signals=[];
 
-  // トレンド判定（最大30点）
   if(s20&&s50){
-    if(price>s20&&s20>s50){
-      sc+=20;
-      signals.push({label:"トレンド",val:"上昇トレンド",state:1});
-    }else if(price<s20&&s20<s50){
-      signals.push({label:"トレンド",val:"下降トレンド",state:-1});
-    }else{sc+=5;signals.push({label:"トレンド",val:"横ばい",state:0});}
+    if(price>s20&&s20>s50){sc+=20;signals.push({label:"トレンド",val:"上昇トレンド",state:1});}
+    else if(price<s20&&s20<s50){signals.push({label:"トレンド",val:"下降トレンド",state:-1});}
+    else{sc+=5;signals.push({label:"トレンド",val:"横ばい",state:0});}
   }else if(s20){
     if(price>s20){sc+=10;signals.push({label:"トレンド",val:"MA20上",state:1});}
     else{signals.push({label:"トレンド",val:"MA20下",state:-1});}
   }
 
-  // MACD（最大30点）
-  if(mNow.hist>0&&mPrev&&mPrev.hist<=0){
-    sc+=30;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});
-  }else if(mNow.hist>0){
-    sc+=10;
-    signals.push({label:"MACD",val:"強気ゾーン",state:1});
-  }else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){
-    signals.push({label:"MACD",val:"デッドクロス",state:-1});
-  }else{
-    signals.push({label:"MACD",val:"弱気ゾーン",state:-1});
-  }
+  if(mNow.hist>0&&mPrev&&mPrev.hist<=0){sc+=30;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});}
+  else if(mNow.hist>0){sc+=10;signals.push({label:"MACD",val:"強気ゾーン",state:1});}
+  else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){signals.push({label:"MACD",val:"デッドクロス",state:-1});}
+  else{signals.push({label:"MACD",val:"弱気ゾーン",state:-1});}
 
-  // RSI（最大25点）
   var rl="RSI("+rsiVal.toFixed(1)+")";
   if(rsiVal<30){sc+=25;signals.push({label:rl,val:"売られすぎ",state:1});}
   else if(rsiVal<40){sc+=18;signals.push({label:rl,val:"やや売られ",state:1});}
@@ -129,7 +117,6 @@ function analyzeStock(stock,pd){
   else if(rsiVal<70){sc+=5;signals.push({label:rl,val:"やや強め",state:0});}
   else{signals.push({label:rl,val:"買われすぎ",state:-1});}
 
-  // ボリンジャーバンド（最大20点）
   if(bollVal){
     var bbPos=(closes[n]-bollVal.lower)/(bollVal.upper-bollVal.lower||1);
     if(price<=bollVal.lower){sc+=20;signals.push({label:"BB",val:"下限→反発",state:1});}
@@ -139,7 +126,6 @@ function analyzeStock(stock,pd){
     else{sc+=8;signals.push({label:"BB",val:"バンド内",state:0});}
   }
 
-  // ストキャスティクス（最大15点）
   if(stochVal!==null){
     var sl="Stoch("+stochVal.toFixed(1)+")";
     if(stochVal<20){sc+=15;signals.push({label:sl,val:"売られすぎ",state:1});}
@@ -148,6 +134,7 @@ function analyzeStock(stock,pd){
     else if(stochVal>65){sc+=3;signals.push({label:sl,val:"やや強め",state:0});}
     else{sc+=6;signals.push({label:sl,val:"中立",state:0});}
   }
+
   var winRate=Math.min(88,Math.max(28,sc*0.72));
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
   var timing=sc>=68?"BUY":sc>=42?"WATCH":"SKIP";
@@ -165,16 +152,12 @@ function classifyStockFn(s){
   if(!macdSig) return null;
   if(macdSig.val==="ゴールデンクロス") return{type:"GC_NOW",label:"GC発生",color:"#22d3a0",bg:"#052e16",border:"#22d3a0"};
   if(macdSig.val==="デッドクロス")     return{type:"DC_NOW",label:"DC発生",color:"#f43f5e",bg:"#1f0010",border:"#f43f5e"};
-  // GC接近: 強気ゾーン + スコア60以上
   if(macdSig.val==="強気ゾーン"&&s.score>=60) return{type:"GC_NEAR",label:"GC接近",color:"#fbbf24",bg:"#1c1400",border:"#fbbf24"};
-  // DC接近: 弱気ゾーン + スコア35以下
   if(macdSig.val==="弱気ゾーン"&&s.score<=35) return{type:"DC_NEAR",label:"DC接近",color:"#fb923c",bg:"#1a0800",border:"#fb923c"};
-  // GC監視: 強気ゾーン + スコア50以上（50未満は表示しない）
   if(macdSig.val==="強気ゾーン"&&s.score>=50) return{type:"GC_WATCH",label:"GC監視",color:"#60a5fa",bg:"#0a1e3a",border:"#3b82f6"};
   return{type:"NONE",label:"中立",color:"#4a7090",bg:"#071428",border:"#1e3050"};
 }
 
-// ── SparklineWithMA ───────────────────────────────────────────────────────────
 function SparklineWithMA(p){
   var data=p.data,up=p.up;
   if(!data||data.length<2) return null;
@@ -216,7 +199,6 @@ function ScoreRing(p){
 
 function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.active?p.color+"18":"transparent",border:"1px solid "+(p.active?p.color:"#1e3050"),borderRadius:6,color:p.active?p.color:"#4a6080",padding:"4px 10px",fontSize:10,cursor:"pointer",fontFamily:"monospace",fontWeight:p.active?700:400}}>{p.label}</button>);}
 
-
 // ── SignalModal ───────────────────────────────────────────────────────────────
 function SignalModal(p){
   var s=p.s,onClose=p.onClose,toggleFav=p.toggleFav,isFav=p.isFav;
@@ -226,8 +208,6 @@ function SignalModal(p){
   var tvUrl="https://www.tradingview.com/chart/?symbol="+encodeURIComponent(s.tvSymbol)+"&interval=D";
   var stateColor=function(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";};
   var stateLabel=function(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";};
-
-  // ポートフォリオ追加
   var addFormS=useState(false);var showAdd=addFormS[0],setShowAdd=addFormS[1];
   var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
@@ -241,14 +221,11 @@ function SignalModal(p){
     setTimeout(function(){setAdded(false);},2000);
   }
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
-
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300}}>
-      <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,background:"#000000cc",cursor:"pointer"}} onTouchEnd={function(e){e.preventDefault();onClose();}}/>
-      <div style={{position:"relative",zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:16,minHeight:"100%"}}>
-      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto"}}>
-
-        {/* ヘッダー */}
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto"}}
+        onTouchEnd={function(e){e.stopPropagation();}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
           <div>
             <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
@@ -258,20 +235,15 @@ function SignalModal(p){
             <div style={{fontSize:11,color:"#4a7090"}}>{s.name}</div>
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            {/* ★お気に入り */}
             <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:isFav(s.ticker)?"#fbbf24":"#4a7090",padding:"4px 10px",fontSize:16,cursor:"pointer"}}>
               {isFav(s.ticker)?"★":"☆"}
             </button>
-            {/* 💼ポートフォリオ */}
             <button onClick={function(){setShowAdd(!showAdd);}} style={{background:showAdd?"#052e16":"transparent",border:"1px solid "+(showAdd?"#22d3a0":"#2a4060"),borderRadius:8,color:showAdd?"#22d3a0":added?"#22d3a0":"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer"}}>
               {added?"✅":"💼"}
             </button>
-            {/* ✕閉じる */}
             <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
           </div>
         </div>
-
-        {/* ポートフォリオ追加フォーム */}
         {showAdd&&(
           <div style={{background:"#040c18",border:"1px solid #22d3a030",borderRadius:8,padding:"12px",marginBottom:14}}>
             <div style={{fontSize:10,fontWeight:700,color:"#22d3a0",marginBottom:8}}>💼 ポートフォリオに追加</div>
@@ -285,14 +257,10 @@ function SignalModal(p){
             </div>
           </div>
         )}
-
-        {/* 価格・前日比 */}
         <div style={{background:"#050e1c",borderRadius:10,padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontSize:22,fontWeight:800,color:"#e0f0ff"}}>{s.price}</span>
           <span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
         </div>
-
-        {/* スパークライン */}
         <div style={{background:"#030b14",borderRadius:8,padding:"8px",marginBottom:14}}>
           <SparklineWithMA data={s.spark} up={isUp}/>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4}}>
@@ -301,8 +269,6 @@ function SignalModal(p){
             <span style={{fontSize:8,color:isUp?"#22d3a060":"#f43f5e60"}}>─ 価格</span>
           </div>
         </div>
-
-        {/* スコア */}
         <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
           <ScoreRing score={s.score}/>
           <div>
@@ -310,8 +276,6 @@ function SignalModal(p){
             <div style={{fontSize:13,fontWeight:700,color:scoreColor(s.score)}}>{s.score>=68?"買いシグナル強":s.score>=50?"中程度":"弱いシグナル"}</div>
           </div>
         </div>
-
-        {/* シグナル詳細 */}
         <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:8}}>📊 シグナル詳細</div>
         <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
           {s.signals.map(function(sig,i){
@@ -326,13 +290,10 @@ function SignalModal(p){
             );
           })}
         </div>
-
-        {/* ボタン */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
           <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"12px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📈 TradingView</a>
           <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"12px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Yahoo!</a>
         </div>
-      </div>
       </div>
     </div>
   );
@@ -357,12 +318,12 @@ function StockCard(p){
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"5px 7px",fontSize:11,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
   return(
     <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"10px 10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}} onClick={function(e){
-  if(showAdd) return;
-  var t=e.target;
-  if(t.tagName==="BUTTON"||t.tagName==="A"||t.tagName==="INPUT") return;
-  if(t.closest("button")||t.closest("a")||t.closest("input")) return;
-  setShowModal(true);
-}}>
+      if(showAdd) return;
+      var t=e.target;
+      if(t.tagName==="BUTTON"||t.tagName==="A"||t.tagName==="INPUT") return;
+      if(t.closest("button")||t.closest("a")||t.closest("input")) return;
+      setShowModal(true);
+    }}>
       {showModal&&<SignalModal s={s} onClose={function(){setShowModal(false);}} toggleFav={toggleFav} isFav={isFav}/>}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <ScoreRing score={s.score}/>
@@ -386,19 +347,15 @@ function StockCard(p){
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:6,alignItems:"center"}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,alignItems:"center"}}>
-          {/* 左上: 価格 */}
           <span style={{fontSize:13,color:"#d8eeff",fontWeight:800}}>{s.price}</span>
-          {/* 右上: クロスバッジ */}
           <div style={{textAlign:"right"}}>
             {cross&&cross.type!=="NONE"
               ? <span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>
               : <span style={{fontSize:9,color:"#1a3050"}}>─</span>}
           </div>
-          {/* 左下: 前日比 */}
           <div style={{display:"flex",gap:4,alignItems:"center"}}>
             <span style={{fontSize:12,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
           </div>
-          {/* 右下: 買い/様子見バッジ */}
           <div style={{textAlign:"right"}}>
             <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
           </div>
@@ -428,14 +385,11 @@ function StockCard(p){
   );
 }
 
-
-
 // ── MarketBar ─────────────────────────────────────────────────────────────────
 function MarketBar(){
   var dataS=useState({}); var data=dataS[0],setData=dataS[1];
   var loadingS=useState(true); var loading=loadingS[0],setLoading=loadingS[1];
   var isWide=window.innerWidth>=768;
-
   var INDICES=[
     {key:"nikkei",  ticker:"^N225",   label:"日経平均",  prefix:"¥", round:true},
     {key:"dow",     ticker:"^DJI",    label:"NYダウ",    prefix:"$", round:true},
@@ -443,7 +397,6 @@ function MarketBar(){
     {key:"usdjpy",  ticker:"USDJPY=X",label:"ドル円",    prefix:"¥", round:false},
     {key:"vix",     ticker:"^VIX",    label:"VIX",      prefix:"",  round:false},
   ];
-
   useEffect(function(){
     Promise.all(INDICES.map(async function(idx){
       try{
@@ -463,13 +416,11 @@ function MarketBar(){
       setLoading(false);
     });
   },[]);
-
   if(loading) return(
-    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12,display:"flex",gap:8,alignItems:"center"}}>
+    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
       <span style={{fontSize:10,color:"#2a6090"}}>市況取得中...</span>
     </div>
   );
-
   return(
     <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px",marginBottom:12,display:"grid",gridTemplateColumns:isWide?"repeat(5,1fr)":"1fr 1fr",gap:8}}>
       {INDICES.map(function(idx){
@@ -496,7 +447,7 @@ function MarketBar(){
   );
 }
 
-// ── CrossPanel（メインタブ） ───────────────────────────────────────────────────
+// ── CrossPanel ────────────────────────────────────────────────────────────────
 function CrossPanel(p){
   var stocks=p.stocks,loading=p.loading,onScan=p.onScan,toggleFav=p.toggleFav,favs=p.favs,ts=p.ts,progress=p.progress;
   var gcNow=[],dcNow=[],gcNear=[],dcNear=[],gcWatch=[];
@@ -508,7 +459,6 @@ function CrossPanel(p){
     else if(c.type==="DC_NEAR")dcNear.push({s:s,cross:c});
     else if(c.type==="GC_WATCH")gcWatch.push({s:s,cross:c});
   });
-
   function Section(sp){
     if(!sp.items||!sp.items.length) return null;
     return(
@@ -520,8 +470,6 @@ function CrossPanel(p){
       </div>
     );
   }
-
-  // スキャン中
   if(loading){
     return(
       <div style={{padding:"20px 0"}}>
@@ -536,8 +484,6 @@ function CrossPanel(p){
       </div>
     );
   }
-
-  // データなし（初回前）
   if(stocks.length===0){
     return(
       <div style={{textAlign:"center",padding:"80px 20px",color:"#2a6090"}}>
@@ -546,14 +492,11 @@ function CrossPanel(p){
       </div>
     );
   }
-
   var hasAny=gcNow.length+dcNow.length+gcNear.length+dcNear.length+gcWatch.length>0;
   var realCount=stocks.filter(function(s){return s.real;}).length;
-
   return(
     <div>
       <MarketBar/>
-      {/* ステータスバー */}
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
         <div style={{fontSize:10,color:"#4a7090"}}>
           <span style={{color:"#22d3a0",fontWeight:700}}>{realCount}</span>
@@ -562,12 +505,7 @@ function CrossPanel(p){
         {ts&&<span style={{fontSize:9,color:"#2a6090"}}>更新: {ts}</span>}
         <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
       </div>
-
-      {!hasAny&&(
-        <div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:12}}>
-          現在クロス条件に該当する銘柄がありません
-        </div>
-      )}
+      {!hasAny&&(<div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:12}}>現在クロス条件に該当する銘柄がありません</div>)}
       <Section title="⚡ GC接近中" items={gcNear} color="#fbbf24"/>
       <Section title="🔥 GC発生中" items={gcNow} color="#22d3a0"/>
       <Section title="👀 GC監視中" items={gcWatch} color="#60a5fa"/>
@@ -611,8 +549,6 @@ function PortfolioPanel(p){
   var pricesS=useState({});var livePrices=pricesS[0],setLivePrices=pricesS[1];
   var lastUpdS=useState(null);var lastUpd=lastUpdS[0],setLastUpd=lastUpdS[1];
   var refreshingS=useState(false);var refreshing=refreshingS[0],setRefreshing=refreshingS[1];
-
-  // 保有銘柄の価格を取得
   async function fetchLivePrices(port){
     if(!port||port.length===0) return;
     setRefreshing(true);
@@ -629,8 +565,6 @@ function PortfolioPanel(p){
     setLastUpd(new Date().toLocaleTimeString("ja-JP"));
     setRefreshing(false);
   }
-
-  // 初回 + 5分ごとに自動更新
   useEffect(function(){
     fetchLivePrices(portfolio);
     var timer=setInterval(function(){fetchLivePrices(portfolio);},5*60*1000);
@@ -681,73 +615,10 @@ function BacktestPanel(p){
   );
 }
 
-function IpoPanel(){
-  var dataS=useState(null);var ipoData=dataS[0],setIpoData=dataS[1];
-  var errS=useState(null);var err=errS[0],setErr=errS[1];
-  var loadS=useState(true);var load=loadS[0],setLoad=loadS[1];
-
-  useEffect(function(){
-    fetch("https://daytrade-simulator.vercel.app/api/ipo")
-      .then(function(r){return r.json();})
-      .then(function(json){
-        setIpoData(json.ipos||[]);
-        setLoad(false);
-      })
-      .catch(function(e){
-        setErr(e.message);
-        setLoad(false);
-      });
-  },[]);
-
-  var today=new Date();
-  function daysUntil(d){return Math.ceil((new Date(d)-today)/(1000*60*60*24));}
-
-  if(load) return(<div style={{textAlign:"center",padding:"60px",color:"#4a7090"}}><div style={{fontSize:24,marginBottom:12}}>🚀</div><div style={{fontSize:12}}>IPOデータ取得中...</div></div>);
-  if(err) return(<div style={{textAlign:"center",padding:"60px",color:"#f43f5e"}}><div style={{fontSize:12}}>取得エラー: {err}</div></div>);
-  if(!ipoData||ipoData.length===0) return(<div style={{textAlign:"center",padding:"60px",color:"#4a7090"}}><div style={{fontSize:24,marginBottom:12}}>🚀</div><div style={{fontSize:12}}>直近のIPOデータがありません</div></div>);
-
-  return(
-    <div>
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
-        <div style={{fontSize:11,fontWeight:700,color:"#e0f0ff"}}>🚀 IPO・新規上場 <span style={{fontSize:9,color:"#4a7090",fontWeight:400}}>直近6ヶ月〜3ヶ月先</span></div>
-      </div>
-      {ipoData.map(function(ipo){
-        var days=daysUntil(ipo.listingDate);
-        var dLabel=days<0?"上場済み":days===0?"本日上場！":"あと"+days+"日";
-        var dColor=days<0?"#4a7090":days===0?"#22d3a0":days<=7?"#f43f5e":days<=30?"#fbbf24":"#4a90c0";
-        var yahooUrl="https://finance.yahoo.co.jp/ipo/"+ipo.code;
-        return(
-          <div key={ipo.code} style={{background:"#050e1c",border:"1px solid "+(days===0?"#22d3a0":"#0f2040"),borderRadius:10,padding:"14px 16px",marginBottom:8}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
-              <div style={{flex:1}}>
-                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
-                  <span style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>{ipo.name}</span>
-                  <span style={{fontSize:10,color:"#4a7090"}}>{ipo.code}</span>
-                </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>
-                  {[["上場日",ipo.listingDate],["市場",ipo.market],["セクター",ipo.sector]].map(function(row){
-                    return(<div key={row[0]} style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}>
-                      <div style={{fontSize:9,color:"#2a6090"}}>{row[0]}</div>
-                      <div style={{fontSize:11,fontWeight:700,color:"#b8cce0"}}>{row[1]}</div>
-                    </div>);
-                  })}
-                </div>
-                <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <span style={{fontSize:12,fontWeight:700,color:dColor}}>{dLabel}</span>
-                  <a href={yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #3b82f6",borderRadius:6,color:"#93c5fd",padding:"4px 10px",fontSize:10,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>Yahoo!</a>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+var TREND_LINKS=[{category:"日本株ランキング",links:[{label:"値上がり率",url:"https://finance.yahoo.co.jp/stocks/ranking/up?market=all"},{label:"値下がり率",url:"https://finance.yahoo.co.jp/stocks/ranking/down?market=all"},{label:"出来高",url:"https://finance.yahoo.co.jp/stocks/ranking/volume?market=all"}]},{category:"米国株ランキング",links:[{label:"値上がり率",url:"https://finance.yahoo.co.jp/stocks/us/ranking/up?market=all"},{label:"値下がり率",url:"https://finance.yahoo.co.jp/stocks/us/ranking/down?market=all"},{label:"出来高",url:"https://finance.yahoo.co.jp/stocks/us/ranking/volume?market=all"}]},{category:"市況・指数",links:[{label:"日経平均",url:"https://finance.yahoo.co.jp/quote/998407.O"},{label:"NYダウ",url:"https://finance.yahoo.co.jp/quote/%5EDJI"},{label:"ドル円",url:"https://finance.yahoo.co.jp/quote/USDJPY=X"}]}];
 
 function NewsPanel(){var NEWS=[{label:"株式ニュース",url:"https://finance.yahoo.co.jp/news",desc:"国内外の最新株式ニュース"},{label:"日本株ニュース",url:"https://finance.yahoo.co.jp/news/stocks",desc:"日本株関連ニュース"},{label:"米国株ニュース",url:"https://finance.yahoo.co.jp/news/world",desc:"米国株最新情報"},{label:"マーケット概況",url:"https://finance.yahoo.co.jp/stocks",desc:"日本株式市場の概況"}];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px"}}><div style={{fontSize:13,fontWeight:700,color:"#e0f0ff"}}>ニュース</div></div><div style={{padding:"8px"}}>{NEWS.map(function(item,i){return(<a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}><span style={{fontSize:13,fontWeight:700,color:"#93c5fd"}}>{item.label}</span><span style={{fontSize:10,color:"#4a7090"}}>{item.desc}</span></a>);})}</div></div>);}
 function TrendPanel(){var cs=useState(0);var openCat=cs[0],setOpenCat=cs[1];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}><div style={{fontSize:12,fontWeight:700,color:"#e0f0ff"}}>トレンド・ランキング</div></div>{TREND_LINKS.map(function(cat,ci){var isOpen=openCat===ci;return(<div key={ci}><div onClick={function(){setOpenCat(isOpen?-1:ci);}} style={{padding:"10px 14px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #0a1828",background:isOpen?"#071a2e":"transparent"}}><span style={{fontSize:12,fontWeight:700,color:"#b8cce0"}}>{cat.category}</span><span style={{fontSize:10,color:"#2a6090"}}>{isOpen?"▲":"▼"}</span></div>{isOpen&&<div style={{background:"#040c18",borderBottom:"1px solid #0a1828"}}>{cat.links.map(function(link,li){return(<a key={li} href={link.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",padding:"9px 20px",borderBottom:"1px solid #0a1828",textDecoration:"none",gap:8}}><span style={{fontSize:10,color:"#22d3a0"}}>→</span><span style={{fontSize:12,color:"#93c5fd"}}>{link.label}</span></a>);})}</div>}</div>);})}</div>);}
-
 
 // ── SyncPanel ─────────────────────────────────────────────────────────────────
 function SyncPanel(p){
@@ -755,12 +626,10 @@ function SyncPanel(p){
   var copyStatusS=useState(null);var copyStatus=copyStatusS[0],setCopyStatus=copyStatusS[1];
   var inputS=useState("");var input=inputS[0],setInput=inputS[1];
   var syncStatusS=useState(null);var syncStatus=syncStatusS[0],setSyncStatus=syncStatusS[1];
-
   function copyId(){
     if(navigator.clipboard){navigator.clipboard.writeText(userId).then(function(){setCopyStatus("ok");setTimeout(function(){setCopyStatus(null);},2000);});}
     else{prompt("ユーザーID",userId);}
   }
-
   async function syncById(){
     var id=input.trim();if(!id)return;
     setSyncStatus("loading");
@@ -776,13 +645,10 @@ function SyncPanel(p){
       setTimeout(function(){setSyncStatus(null);scan();},1500);
     }catch(e){setSyncStatus("error");setTimeout(function(){setSyncStatus(null);},2500);}
   }
-
   var favCount=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]").length;}catch(e){return 0;}})();
   var portCount=(function(){try{return JSON.parse(localStorage.getItem("portfolio_v1")||"[]").length;}catch(e){return 0;}})();
-
   return(
     <div>
-      {/* 現在のデータ */}
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
         <div style={{fontSize:12,fontWeight:700,color:"#e0f0ff",marginBottom:10}}>🔗 デバイス間同期</div>
         <div style={{display:"flex",gap:12,marginBottom:14}}>
@@ -798,23 +664,14 @@ function SyncPanel(p){
           📱 Pushoverを開く
         </a>
       </div>
-
-      {/* 別デバイスから同期 */}
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
         <div style={{fontSize:12,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>別デバイスのIDで同期</div>
         <div style={{fontSize:10,color:"#4a7090",marginBottom:10}}>他のデバイスのIDを入力するとお気に入り・ポートフォリオが引き継がれます</div>
-        <input
-          style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box",marginBottom:10}}
-          value={input} placeholder="別デバイスのIDを貼り付け"
-          onChange={function(e){setInput(e.target.value);}}
-        />
-        <button onClick={syncById} disabled={!input.trim()||syncStatus==="loading"}
-          style={{width:"100%",background:input.trim()?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,cursor:input.trim()?"pointer":"not-allowed",fontFamily:"monospace"}}>
+        <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box",marginBottom:10}} value={input} placeholder="別デバイスのIDを貼り付け" onChange={function(e){setInput(e.target.value);}}/>
+        <button onClick={syncById} disabled={!input.trim()||syncStatus==="loading"} style={{width:"100%",background:input.trim()?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,cursor:input.trim()?"pointer":"not-allowed",fontFamily:"monospace"}}>
           {syncStatus==="loading"?"同期中...":syncStatus==="ok"?"✅ 同期完了！":syncStatus==="error"?"❌ IDが見つかりません":"このIDで同期する"}
         </button>
       </div>
-
-      {/* 使い方 */}
       <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px"}}>
         <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:10}}>使い方</div>
         {[["1","iPadで「IDをコピー」をタップ"],["2","iPhoneのDaySimulatorを開く"],["3","🔗タブ → IDを貼り付けて「同期」"],["4","お気に入り・ポートフォリオが反映される"]].map(function(row){
@@ -835,30 +692,23 @@ export default function App(){
   var c=useState({done:0,total:0,msg:null});var progress=c[0],setProgress=c[1];
   var g=useState(null);var ts=g[0],setTs=g[1];
   var k=useState("cross");var activeTab=k[0],setActiveTab=k[1];
-  // ユーザーID（初回自動生成）
   var userId=(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}})();
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
-
   var favInit=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
   var fvS=useState(favInit);var favs=fvS[0],setFavs=fvS[1];
-
   var NOTIFY_API="https://daytrade-simulator.vercel.app/api/notify";
-
   function toggleFav(ticker){setFavs(function(prev){
     var isAdding=prev.indexOf(ticker)<0;
     var next=isAdding?prev.concat([ticker]):prev.filter(function(t){return t!==ticker;});
     try{localStorage.setItem("fav_tickers",JSON.stringify(next));}catch(e){}
-    // サーバー同期
     var port=(function(){try{return JSON.parse(localStorage.getItem("portfolio_v1")||"[]");}catch(e){return[];}})();
     fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({favs:next,portfolio:port})}).catch(function(){});
-    // Pushover通知（デバイスIDを送信）
     if(isAdding){
-      fetch(NOTIFY_API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:"DaySimulator 同期ID",message:userId})}).catch(function(){});
+      fetch(NOTIFY_API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:" ",message:userId})}).catch(function(){});
     }
     return next;
   });}
   function isFav(ticker){return favs.indexOf(ticker)>=0;}
-
   var scan=useCallback(async function(){
     setLoading(true);
     setProgress({done:0,total:0,msg:"出来高ランキング取得中..."});
@@ -882,27 +732,18 @@ export default function App(){
     setTs(new Date().toLocaleTimeString("ja-JP"));
     setLoading(false);
   },[]);
-
-  // 起動時: サーバーからデータ取得 → スキャン
   useEffect(function(){
     fetch(SYNC_API+"?userId="+userId)
       .then(function(r){return r.json();})
       .then(function(data){
-        if(data.favs&&data.favs.length>0){
-          setFavs(data.favs.slice());
-          try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}
-        }
-        if(data.portfolio&&data.portfolio.length>0){
-          try{localStorage.setItem("portfolio_v1",JSON.stringify(data.portfolio));}catch(e){}
-        }
+        if(data.favs&&data.favs.length>0){setFavs(data.favs.slice());try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}}
+        if(data.portfolio&&data.portfolio.length>0){try{localStorage.setItem("portfolio_v1",JSON.stringify(data.portfolio));}catch(e){}}
       })
       .catch(function(){})
       .finally(function(){scan();});
   },[]);
-
   var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
   var TAB_LABELS={"cross":"クロス予測","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
-
   return(
     <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex"}}>
       <div style={{width:50,background:"#050f20",borderRight:"1px solid #0f2040",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:10,gap:4,flexShrink:0,position:"sticky",top:0,height:"100vh",overflowY:"auto"}}>
