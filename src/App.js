@@ -219,14 +219,28 @@ function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.activ
 
 // ── SignalModal ───────────────────────────────────────────────────────────────
 function SignalModal(p){
-  var s=p.s,onClose=p.onClose;
+  var s=p.s,onClose=p.onClose,toggleFav=p.toggleFav,isFav=p.isFav;
   if(!s) return null;
   var mc=MKT[s.market]||MKT["US"];
   var isUp=parseFloat(s.change)>=0;
   var tvUrl="https://www.tradingview.com/chart/?symbol="+encodeURIComponent(s.tvSymbol)+"&interval=D";
-
   var stateColor=function(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";};
   var stateLabel=function(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";};
+
+  // ポートフォリオ追加
+  var addFormS=useState(false);var showAdd=addFormS[0],setShowAdd=addFormS[1];
+  var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
+  var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
+  var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
+  function submitAdd(){
+    if(!buyPrice||!shares) return;
+    var portfolio=(function(){try{var v=localStorage.getItem("portfolio_v1");return v?JSON.parse(v):[];}catch(e){return[];}})();
+    var pos={id:Date.now(),ticker:s.ticker,name:s.name,market:s.market,buyPrice:parseFloat(buyPrice),shares:parseFloat(shares),stopLoss:null,target:null,addedAt:new Date().toLocaleDateString("ja-JP")};
+    try{localStorage.setItem("portfolio_v1",JSON.stringify(portfolio.concat([pos])));}catch(e){}
+    setShowAdd(false);setShares("");setAdded(true);
+    setTimeout(function(){setAdded(false);},2000);
+  }
+  var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
 
   return(
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
@@ -241,8 +255,34 @@ function SignalModal(p){
             </div>
             <div style={{fontSize:11,color:"#4a7090"}}>{s.name}</div>
           </div>
-          <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            {/* ★お気に入り */}
+            <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:isFav(s.ticker)?"#fbbf24":"#4a7090",padding:"4px 10px",fontSize:16,cursor:"pointer"}}>
+              {isFav(s.ticker)?"★":"☆"}
+            </button>
+            {/* 💼ポートフォリオ */}
+            <button onClick={function(){setShowAdd(!showAdd);}} style={{background:showAdd?"#052e16":"transparent",border:"1px solid "+(showAdd?"#22d3a0":"#2a4060"),borderRadius:8,color:showAdd?"#22d3a0":added?"#22d3a0":"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer"}}>
+              {added?"✅":"💼"}
+            </button>
+            {/* ✕閉じる */}
+            <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
+          </div>
         </div>
+
+        {/* ポートフォリオ追加フォーム */}
+        {showAdd&&(
+          <div style={{background:"#040c18",border:"1px solid #22d3a030",borderRadius:8,padding:"12px",marginBottom:14}}>
+            <div style={{fontSize:10,fontWeight:700,color:"#22d3a0",marginBottom:8}}>💼 ポートフォリオに追加</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <div><div style={{fontSize:9,color:"#2a6090",marginBottom:3}}>買値</div><input style={inp} type="number" value={buyPrice} onChange={function(e){setBuyPrice(e.target.value);}} placeholder="150.00"/></div>
+              <div><div style={{fontSize:9,color:"#2a6090",marginBottom:3}}>株数</div><input style={inp} type="number" value={shares} onChange={function(e){setShares(e.target.value);}} placeholder="100"/></div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <button onClick={function(){setShowAdd(false);}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:6,color:"#4a7090",padding:"8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
+              <button onClick={submitAdd} disabled={!buyPrice||!shares} style={{background:buyPrice&&shares?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:6,color:"#fff",padding:"8px",fontSize:11,fontWeight:700,cursor:buyPrice&&shares?"pointer":"not-allowed",fontFamily:"monospace"}}>追加</button>
+            </div>
+          </div>
+        )}
 
         {/* 価格・前日比 */}
         <div style={{background:"#050e1c",borderRadius:10,padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -320,7 +360,7 @@ function StockCard(p){
   if(t.closest("button")||t.closest("a")||t.closest("input")) return;
   setShowModal(true);
 }}>
-      {showModal&&<SignalModal s={s} onClose={function(){setShowModal(false);}}/>}
+      {showModal&&<SignalModal s={s} onClose={function(){setShowModal(false);}} toggleFav={toggleFav} isFav={isFav}/>}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <ScoreRing score={s.score}/>
         <div style={{flex:1,minWidth:0}}>
