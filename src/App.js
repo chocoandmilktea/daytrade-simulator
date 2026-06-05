@@ -333,6 +333,7 @@ function SignalModal(p){
           <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"12px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Yahoo!</a>
         </div>
       </div>
+      </div>
     </div>
   );
 }
