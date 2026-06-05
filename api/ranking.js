@@ -87,8 +87,8 @@ async function getJPRanking() {
   if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
 
   const dateStr = getLatestBusinessDay();
-
   const url = `https://api.jquants.com/v2/equities/bars/daily?date=${dateStr}`;
+  
   const res = await fetch(url, {
     headers: { "x-api-key": apiKey },
     signal: AbortSignal.timeout(9000),
@@ -100,34 +100,10 @@ async function getJPRanking() {
   }
 
   const json = await res.json();
-  const bars = json?.data || json?.daily_bars || json?.bars || [];
-
-  if (!bars.length) {
-    throw new Error("No data. Keys: " + Object.keys(json).join(","));
-  }
-
-  return bars
-    .filter(function(bar) {
-      return (bar.Vo || 0) > 0 && (bar.C || 0) > 0;
-    })
-    .sort(function(a, b) {
-      return (b.Vo || 0) - (a.Vo || 0);
-    })
-    .slice(0, 50)
-    .map(function(bar) {
-      const code = String(bar.Code || "").replace(/0$/, "");
-      const close = bar.C || 0;
-      const open = bar.O || 0;
-      const vol = bar.Vo || 0;
-      const change = open > 0 ? ((close - open) / open * 100) : 0;
-      return {
-        ticker: code + ".T",
-        name: JP_NAMES[code] || code,
-        market: "JP",
-        tvSymbol: "TSE:" + code,
-        volume: vol,
-        price: close,
-        change: parseFloat(change.toFixed(2)),
-      };
-    });
+  // デバッグ: キー一覧とデータ件数を返す
+  const keys = Object.keys(json);
+  const firstKey = keys[0];
+  const dataLen = json[firstKey] ? json[firstKey].length : 0;
+  throw new Error("DEBUG keys:" + keys.join(",") + " len:" + dataLen + " date:" + dateStr);
 }
+
