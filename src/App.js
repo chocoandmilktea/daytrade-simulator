@@ -225,6 +225,11 @@ function SignalModal(p){
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
   var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
   var helpModalS=useState(false);var showHelp=helpModalS[0],setShowHelp=helpModalS[1];
+  var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
+  var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
+  var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
+  var simTargetS=useState(20);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
+  var simStopS=useState(-10);var simStop=simStopS[0],setSimStop=simStopS[1];
   function submitAdd(){
     if(!buyPrice||!shares) return;
     var portfolio=(function(){try{var v=localStorage.getItem("portfolio_v1");return v?JSON.parse(v):[];}catch(e){return[];}})();
@@ -250,6 +255,7 @@ function SignalModal(p){
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:26,height:26,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</button>
             {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
+            <button onClick={function(){setShowSim(!showSim);}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:8,color:showSim?"#a78bfa":"#4a7090",padding:"4px 8px",fontSize:12,cursor:"pointer"}}>💹</button>
             <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:isFav(s.ticker)?"#fbbf24":"#4a7090",padding:"4px 10px",fontSize:16,cursor:"pointer"}}>
               {isFav(s.ticker)?"★":"☆"}
             </button>
@@ -272,6 +278,61 @@ function SignalModal(p){
             </div>
           </div>
         )}
+        {showSim&&(function(){
+          var bp=parseFloat(simBuy)||0;
+          var sh=parseFloat(simShares)||0;
+          var isJP=s.market==="JP";
+          function fmtP(v){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);}
+          function fmtPnL(v){return(v>=0?"+":"")+(isJP?"¥"+Math.round(Math.abs(v)).toLocaleString():"$"+Math.abs(v).toFixed(2));}
+          var inpSim={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+          var scenarios=[
+            {label:"損切りライン",pct:simStop,color:"#f43f5e"},
+            {label:"-5%",pct:-5,color:"#fb923c"},
+            {label:"+5%",pct:5,color:"#22d3a0"},
+            {label:"+10%",pct:10,color:"#22d3a0"},
+            {label:"+20%",pct:20,color:"#22d3a0"},
+            {label:"目標価格",pct:simTarget,color:"#fbbf24"},
+          ];
+          return(
+            <div style={{background:"#040c18",border:"1px solid #a78bfa30",borderRadius:10,padding:"14px",marginBottom:14}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",marginBottom:10}}>💹 損益シミュレーション</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                <div><div style={{fontSize:9,color:"#2a6090",marginBottom:3}}>買値</div><input style={inpSim} type="number" value={simBuy} onChange={function(e){setSimBuy(e.target.value);}}/></div>
+                <div><div style={{fontSize:9,color:"#2a6090",marginBottom:3}}>株数</div><input style={inpSim} type="number" value={simShares} onChange={function(e){setSimShares(e.target.value);}}/></div>
+              </div>
+              {bp>0&&sh>0&&(
+                <div>
+                  <div style={{background:"#071428",borderRadius:6,padding:"6px 10px",fontSize:10,color:"#4a7090",marginBottom:10}}>
+                    投資総額: <span style={{color:"#d8eeff",fontWeight:700}}>{fmtP(bp*sh)}</span>
+                  </div>
+                  <div style={{marginBottom:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#4a7090",marginBottom:4}}>
+                      <span>目標 +{simTarget}%</span><span style={{color:"#fbbf24"}}>{fmtP(bp*(1+simTarget/100))}</span>
+                    </div>
+                    <input type="range" min={1} max={100} value={simTarget} onChange={function(e){setSimTarget(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#fbbf24"}}/>
+                  </div>
+                  <div style={{marginBottom:10}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#4a7090",marginBottom:4}}>
+                      <span>損切り {simStop}%</span><span style={{color:"#f43f5e"}}>{fmtP(bp*(1+simStop/100))}</span>
+                    </div>
+                    <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){setSimStop(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#f43f5e"}}/>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                    {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){
+                      var pnl=(bp*(1+sc.pct/100)-bp)*sh;
+                      return(
+                        <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"6px 10px"}}>
+                          <div><span style={{fontSize:10,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:9,color:"#4a7090",marginLeft:6}}>{sc.pct>=0?"+":""}{sc.pct}%</span></div>
+                          <span style={{fontSize:12,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
         <div style={{background:"#050e1c",borderRadius:10,padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontSize:22,fontWeight:800,color:"#e0f0ff"}}>{s.price}</span>
           <span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
@@ -649,13 +710,11 @@ function PortfolioPanel(p){
       <div style={{display:"flex",gap:6,marginBottom:10,alignItems:"center"}}>
         <TabBtn label="保有銘柄" active={ptab==="list"} onClick={function(){setPtab("list");}} color="#22d3a0"/>
         <TabBtn label="追加" active={ptab==="add"} onClick={function(){setPtab("add");}} color="#0ea5e9"/>
-        <TabBtn label="シミュ" active={ptab==="sim"} onClick={function(){setPtab("sim");}} color="#a78bfa"/>
         <div style={{marginLeft:"auto",display:"flex",gap:8,alignItems:"center"}}>
           {lastUpd&&<span style={{fontSize:9,color:"#2a6090"}}>更新: {lastUpd}</span>}
           <button onClick={function(){fetchLivePrices(portfolio);}} disabled={refreshing} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:refreshing?"#2a6090":"#4a90c0",padding:"3px 8px",fontSize:9,cursor:refreshing?"not-allowed":"pointer",fontFamily:"monospace"}}>{refreshing?"更新中...":"🔄"}</button>
         </div>
       </div>
-      {ptab==="sim"&&<SimPanel stocks={stocks}/>}
       {ptab==="add"&&(<div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:16,marginBottom:16}}><div style={{fontSize:12,fontWeight:700,color:"#e0f0ff",marginBottom:12}}>ポジション追加</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>{[["ティッカー","ticker","AAPL","text"],["銘柄名","name","Apple","text"],["買値","buyPrice","150.00","number"],["株数","shares","100","number"],["損切り","stopLoss","140.00","number"],["目標価格","target","180.00","number"]].map(function(row){return(<div key={row[0]}><div style={{fontSize:9,color:"#2a6090",marginBottom:3}}>{row[0]}</div><input style={inp} type={row[3]} value={form[row[1]]} placeholder={row[2]} onChange={function(e){var up={};up[row[1]]=e.target.value;setForm(Object.assign({},form,up));}}/></div>);})}</div><div style={{display:"flex",gap:6,marginBottom:12}}>{["US","JP"].map(function(m){return(<button key={m} onClick={function(){setForm(Object.assign({},form,{market:m}));}} style={{background:form.market===m?"#0ea5e9":"#071428",border:"1px solid "+(form.market===m?"#0ea5e9":"#1e3050"),borderRadius:6,color:form.market===m?"#fff":"#4a7090",padding:"5px 16px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>{m}</button>);})}</div><button onClick={addPosition} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>追加する</button></div>)}
       {ptab==="list"&&(portfolio.length===0?(<div style={{textAlign:"center",padding:"60px 20px",color:"#2a6090"}}><div style={{fontSize:36,marginBottom:12}}>📊</div><div style={{fontSize:13,color:"#4a90c0"}}>保有銘柄がありません</div></div>):(<div><div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px 16px",marginBottom:12,display:"flex",gap:20}}><div><div style={{fontSize:9,color:"#2a6090"}}>保有銘柄</div><div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>{portfolio.length}銘柄</div></div><div><div style={{fontSize:9,color:"#2a6090"}}>損益合計</div><div style={{fontSize:16,fontWeight:800,color:totalPnL>=0?"#22d3a0":"#f43f5e"}}>{totalPnL>=0?"+":""}{totalPnL.toFixed(2)}</div></div></div><div style={{display:"flex",flexDirection:"column",gap:8}}>{portfolio.map(function(pos){var cur=getCurrentPrice(pos.ticker),pnl=cur?(cur-pos.buyPrice)*pos.shares:null,pct=cur?(cur-pos.buyPrice)/pos.buyPrice*100:null,hitStop=cur&&pos.stopLoss&&cur<=pos.stopLoss,hitTarget=cur&&pos.target&&cur>=pos.target,isEditing=editId===pos.id;return(<div key={pos.id} style={{background:"#050e1c",border:"1px solid "+(hitStop?"#f43f5e":hitTarget?"#22d3a0":"#1e3050"),borderRadius:10,padding:"14px 16px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}><div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><span style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{pos.ticker.replace(".T","")}</span><span style={{fontSize:11,color:"#4a7090"}}>{pos.name}</span>{hitStop&&<span style={bStyle("#1f0010","#f43f5e","#f43f5e")}>損切りライン</span>}{hitTarget&&<span style={bStyle("#052e16","#22d3a0","#22d3a0")}>目標達成</span>}</div><div style={{display:"flex",gap:6}}><button onClick={function(){isEditing?setEditId(null):startEdit(pos);}} style={{background:"transparent",border:"1px solid "+(isEditing?"#fbbf24":"#2a3050"),borderRadius:6,color:isEditing?"#fbbf24":"#4a7090",padding:"3px 8px",fontSize:10,cursor:"pointer",fontFamily:"monospace"}}>{isEditing?"閉じる":"編集"}</button><button onClick={function(){removePos(pos.id);}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:6,color:"#4a7090",padding:"3px 8px",fontSize:10,cursor:"pointer",fontFamily:"monospace"}}>削除</button></div></div>{isEditing&&editForm&&(<div style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:8,padding:"12px",marginBottom:10}}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:8}}>{[["買値","buyPrice"],["株数","shares"],["損切り","stopLoss"],["目標","target"]].map(function(row){return(<div key={row[0]}><div style={{fontSize:9,color:"#2a6090",marginBottom:2}}>{row[0]}</div><input style={inpSm} type="number" value={editForm[row[1]]} onChange={function(e){var up={};up[row[1]]=e.target.value;setEditForm(Object.assign({},editForm,up));}}/></div>);})}</div><button onClick={function(){saveEdit(pos.id);}} style={{width:"100%",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"8px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>保存する</button></div>)}<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(100px,1fr))",gap:6}}>{[["買値",pos.market==="JP"?"¥"+pos.buyPrice.toLocaleString():"$"+pos.buyPrice,"#b8cce0"],["株数",pos.shares+"株","#b8cce0"],["現在値",cur?(pos.market==="JP"?"¥"+Math.round(cur).toLocaleString():"$"+cur.toFixed(2)):"─","#b8cce0"],["損益",pnl!==null?(pnl>=0?"+":"")+pnl.toFixed(2):"─",pnl!==null?(pnl>=0?"#22d3a0":"#f43f5e"):"#4a7090"],["損益率",pct!==null?(pct>=0?"+":"")+pct.toFixed(2)+"%":"─",pct!==null?(pct>=0?"#22d3a0":"#f43f5e"):"#4a7090"]].map(function(row){return(<div key={row[0]} style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:9,color:"#2a6090"}}>{row[0]}</div><div style={{fontSize:11,fontWeight:700,color:row[2]}}>{row[1]}</div></div>);})}</div></div>);})}</div></div>))}
     </div>
