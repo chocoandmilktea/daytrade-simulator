@@ -63,15 +63,10 @@ const JP_NAMES = {
 
 function getLatestBusinessDay() {
   const now = new Date();
-  // 日本時間に変換
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   let d = new Date(jst);
-  // 市場が閉まっている時間帯（15:30以前）は前営業日を使う
-  const hour = d.getUTCHours();
-  const minute = d.getUTCMinutes();
-  if (hour < 6 || (hour === 6 && minute < 30)) {
-    d.setUTCDate(d.getUTCDate() - 1);
-  }
+  // 常に前営業日を使う（当日データは夕方以降しか確定しないため）
+  d.setUTCDate(d.getUTCDate() - 1);
   // 土日を除く
   while (d.getUTCDay() === 0 || d.getUTCDay() === 6) {
     d.setUTCDate(d.getUTCDate() - 1);
@@ -81,6 +76,7 @@ function getLatestBusinessDay() {
   const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
 
 async function getJPRanking() {
   const apiKey = process.env.JQUANTS_API_KEY;
