@@ -252,6 +252,17 @@ function SignalModal(p){
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
   var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
   var helpModalS=useState(false);var showHelp=helpModalS[0],setShowHelp=helpModalS[1];
+  // モーダル表示中はbodyのスクロールを止める
+  useEffect(function(){
+    document.body.style.overflow="hidden";
+    document.body.style.position="fixed";
+    document.body.style.width="100%";
+    return function(){
+      document.body.style.overflow="";
+      document.body.style.position="";
+      document.body.style.width="";
+    };
+  },[]);
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
