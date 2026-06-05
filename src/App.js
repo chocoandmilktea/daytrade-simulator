@@ -243,8 +243,10 @@ function SignalModal(p){
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
 
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16,cursor:"pointer"}} onClick={function(e){if(e.target===e.currentTarget)onClose();}} onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
-      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto"}} onClick={function(e){e.stopPropagation();}}>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300}}>
+      <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,background:"#000000cc",cursor:"pointer"}} onClick={onClose} onTouchEnd={function(e){e.preventDefault();onClose();}}/>
+      <div style={{position:"relative",zIndex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:16,minHeight:"100%",pointerEvents:"none"}}>
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",pointerEvents:"auto"}}>
 
         {/* ヘッダー */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
