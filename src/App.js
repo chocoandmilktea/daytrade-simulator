@@ -364,7 +364,7 @@ function SignalModal(p){
           <span style={{fontSize:22,fontWeight:800,color:"#e0f0ff"}}>{s.price}</span>
           <span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
         </div>
-        <div style={{background:"#030b14",borderRadius:8,padding:"8px",marginBottom:14}}>
+        <div style={{background:"#030b14",borderRadius:8,padding:"4px",marginBottom:8}}>
           <SparklineWithMA data={s.spark} up={isUp}/>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4}}>
             <span style={{fontSize:8,color:"#fbbf24",fontWeight:700}}>─ MA5</span>
@@ -372,7 +372,7 @@ function SignalModal(p){
             <span style={{fontSize:8,color:isUp?"#22d3a060":"#f43f5e60"}}>─ 価格</span>
           </div>
         </div>
-        <div style={{display:"flex",gap:10,marginBottom:14,alignItems:"center"}}>
+        <div style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
           <ScoreRing score={s.score}/>
           <div>
             <div style={{fontSize:11,color:"#4a7090"}}>総合スコア</div>
@@ -421,11 +421,11 @@ function SignalModal(p){
             </div>
           );
         })()}
-        <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:8}}>📊 シグナル詳細</div>
-        <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
+        <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
+        <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:10}}>
           {s.signals.map(function(sig,i){
             return(
-              <div key={i} style={{background:"#050e1c",borderRadius:8,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
+              <div key={i} style={{background:"#050e1c",borderRadius:6,padding:"7px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
                 <span style={{fontSize:11,color:"#4a7090"}}>{sig.label}</span>
                 <div style={{display:"flex",gap:8,alignItems:"center"}}>
                   <span style={{fontSize:11,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
