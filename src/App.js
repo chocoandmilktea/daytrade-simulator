@@ -136,6 +136,33 @@ function analyzeStock(stock,pd){
     else{sc+=6;signals.push({label:sl,val:"中立",state:0});}
   }
 
+  // 複数シグナル重なりボーナス
+  var strongSignals=signals.filter(function(sig){return sig.state===1;}).length;
+  var weakSignals=signals.filter(function(sig){return sig.state===-1;}).length;
+  var overlap=0;
+  var overlapLabels=[];
+
+  // GCまたは強気 + RSI売られすぎ
+  var hasMACD=signals.find(function(sig){return sig.label==="MACD"&&(sig.val==="ゴールデンクロス"||sig.val==="強気ゾーン");});
+  var hasRSIOversold=signals.find(function(sig){return sig.label.startsWith("RSI")&&(sig.val==="売られすぎ"||sig.val==="やや売られ");});
+  var hasBBLow=signals.find(function(sig){return sig.label==="BB"&&(sig.val==="下限→反発"||sig.val==="下限付近");});
+  var hasStochOversold=signals.find(function(sig){return sig.label.startsWith("Stoch")&&(sig.val==="売られすぎ"||sig.val==="やや売られ");});
+  var hasTrendUp=signals.find(function(sig){return sig.label==="トレンド"&&(sig.val==="上昇トレンド"||sig.val==="MA20上");});
+  var hasGC=signals.find(function(sig){return sig.label==="MACD"&&sig.val==="ゴールデンクロス";});
+
+  if(hasGC&&hasRSIOversold){overlap+=15;overlapLabels.push("GC+RSI");}
+  if(hasGC&&hasBBLow){overlap+=12;overlapLabels.push("GC+BB");}
+  if(hasRSIOversold&&hasBBLow){overlap+=10;overlapLabels.push("RSI+BB");}
+  if(hasRSIOversold&&hasStochOversold){overlap+=8;overlapLabels.push("RSI+Stoch");}
+  if(hasBBLow&&hasStochOversold){overlap+=8;overlapLabels.push("BB+Stoch");}
+  if(hasTrendUp&&hasGC){overlap+=10;overlapLabels.push("トレンド+GC");}
+  if(hasGC&&hasRSIOversold&&hasBBLow){overlap+=10;overlapLabels.push("トリプル");}
+
+  sc=Math.min(100,sc+overlap);
+  if(overlapLabels.length>0){
+    signals.push({label:"重複シグナル",val:overlapLabels.join(" / "),state:1,bonus:overlap});
+  }
+
   var winRate=Math.min(88,Math.max(28,sc*0.72));
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
   var timing=sc>=68?"BUY":sc>=42?"WATCH":"SKIP";
@@ -981,12 +1008,12 @@ function HelpModal(p){
       "目標価格到達で枠が緑に変化",
       "5分ごとに自動で価格更新",
     ]},
-    {title:"📖 指標の見方",items:[
-      "PER：株価が利益の何倍か → 業種平均より低ければ割安で買い候補",
-      "PBR：株価が純資産の何倍か → 1倍割れは理論上割安で買い候補",
-      "RSI：買われすぎ・売られすぎを0〜100で表示 → 30以下で反発狙いの買い候補",
-      "MACD：トレンド転換を示す指標 → ゴールデンクロス発生時が買いシグナル",
-      "VIX：市場の恐怖感を示す指数 → 30〜40超の急騰後に低下し始めたら買い候補",
+    {title:"📖 Indicators",items:[
+      "PER (Price Earnings Ratio): How many times earnings the stock price is → Lower than industry average = undervalued buy candidate",
+      "PBR (Price Book Ratio): How many times book value the stock price is → Below 1x = theoretically undervalued buy candidate",
+      "RSI (Relative Strength Index): 0-100 scale of overbought/oversold → Below 30 = oversold, potential bounce buy candidate",
+      "MACD: Trend reversal indicator → Golden cross signal = buy signal",
+      "VIX: Market fear index → After spike to 30-40+, when it starts declining = market recovery buy candidate",
     ]},
   ];
   return(
