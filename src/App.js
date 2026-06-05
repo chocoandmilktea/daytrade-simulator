@@ -686,6 +686,90 @@ function SyncPanel(p){
   );
 }
 
+
+// ── HelpModal ─────────────────────────────────────────────────────────────────
+function HelpModal(p){
+  var onClose=p.onClose;
+  var SECTIONS=[
+    {title:"📊 データ取得",items:[
+      "米国株：Yahoo Finance・15分遅延",
+      "日本株：Yahoo Finance・15分遅延",
+      "日本株ランキング：J-Quants（前営業日の出来高上位50）",
+      "米国株ランキング：Yahoo Finance 出来高上位50",
+      "市況指数（日経・ダウ等）：Yahoo Finance・15分遅延",
+    ]},
+    {title:"✨ クロス予測",items:[
+      "MACDヒストグラムとスコアで自動分類",
+      "GC発生：MACDがゴールデンクロス直後",
+      "GC接近：強気ゾーン＋スコア60以上",
+      "GC監視：強気ゾーン＋スコア50以上",
+      "DC発生・DC接近：逆のパターン",
+    ]},
+    {title:"📈 スコア計算",items:[
+      "トレンド（MA20・MA50）：最大20点",
+      "MACD：最大30点（GC発生で30点）",
+      "RSI：最大25点（売られすぎで25点）",
+      "ボリンジャーバンド：最大20点",
+      "ストキャスティクス：最大15点",
+    ]},
+    {title:"📉 スパークライン",items:[
+      "直近30本分（約1.5ヶ月）を表示",
+      "黄色ライン：MA5",
+      "青紫ライン：MA25",
+      "緑/赤ライン（半透明）：価格",
+    ]},
+    {title:"🔗 デバイス同期",items:[
+      "お気に入り登録時にサーバーへ自動保存",
+      "起動時にサーバーからデータを自動取得",
+      "Pushoverでデバイスに同期IDを通知",
+      "同期タブでIDを入力して別デバイスと同期",
+    ]},
+    {title:"💼 ポートフォリオ",items:[
+      "損切りライン到達で枠が赤く変化",
+      "目標価格到達で枠が緑に変化",
+      "5分ごとに自動で価格更新",
+    ]},
+    {title:"📖 指標の見方",items:[
+      "PER：株価が利益の何倍か → 業種平均より低ければ割安で買い候補",
+      "PBR：株価が純資産の何倍か → 1倍割れは理論上割安で買い候補",
+      "RSI：買われすぎ・売られすぎを0〜100で表示 → 30以下で反発狙いの買い候補",
+      "MACD：トレンド転換を示す指標 → ゴールデンクロス発生時が買いシグナル",
+      "VIX：市場の恐怖感を示す指数 → 30〜40超の急騰後に低下し始めたら買い候補",
+    ]},
+  ];
+  return(
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:400,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>DaySimulator 使い方</div>
+          <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
+        </div>
+        {SECTIONS.map(function(sec,i){
+          return(
+            <div key={i} style={{marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6,borderBottom:"1px solid #0f2040",paddingBottom:4}}>{sec.title}</div>
+              {sec.items.map(function(item,j){
+                return(
+                  <div key={j} style={{display:"flex",gap:8,marginBottom:5,alignItems:"flex-start"}}>
+                    <span style={{color:"#22d3a0",fontSize:10,marginTop:1,flexShrink:0}}>•</span>
+                    <span style={{fontSize:11,color:"#b8cce0"}}>{item}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+        <div style={{background:"#050e1c",borderRadius:8,padding:"10px 14px",marginTop:8}}>
+          <div style={{fontSize:10,color:"#4a7090"}}>銘柄カードをタップ → 詳細シグナル表示</div>
+          <div style={{fontSize:10,color:"#4a7090",marginTop:4}}>💼ボタン → ポートフォリオに追加</div>
+          <div style={{fontSize:10,color:"#4a7090",marginTop:4}}>★ボタン → お気に入り登録</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App(){
   var a=useState([]);var stocks=a[0],setStocks=a[1];
   var b=useState(false);var loading=b[0],setLoading=b[1];
@@ -742,6 +826,7 @@ export default function App(){
       .catch(function(){})
       .finally(function(){scan();});
   },[]);
+  var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
   var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
   var TAB_LABELS={"cross":"クロス予測","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
   return(
@@ -754,6 +839,8 @@ export default function App(){
           <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>
             DaySimulator <span style={{fontSize:10,color:"#4a7090",fontWeight:400}}>/ {TAB_LABELS[activeTab]}</span>
           </div>
+          <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:28,height:28,fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</button>
+          {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
         </div>
         <div style={{flex:1,padding:"10px 10px 60px",overflowY:"auto"}}>
           {activeTab==="cross"&&<CrossPanel stocks={stocks} loading={loading} onScan={scan} toggleFav={toggleFav} favs={favs} ts={ts} progress={progress}/>}
