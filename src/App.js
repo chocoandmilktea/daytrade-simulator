@@ -268,10 +268,9 @@ function SignalModal(p){
   }
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc"}}
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:"8px 16px"}}
       onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
-      <div style={{position:"absolute",top:"5%",left:"50%",transform:"translateX(-50%)",width:"calc(100% - 32px)",maxWidth:480,maxHeight:"90%",background:"#071428",border:"1px solid #1e4070",borderRadius:14,display:"flex",flexDirection:"column"}}>
-      <div style={{overflowY:"auto",WebkitOverflowScrolling:"touch",padding:20,flex:1}}>
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"95vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
           <div>
             <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
@@ -444,7 +443,6 @@ function SignalModal(p){
             if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}
           }} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"12px",fontSize:11,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
         </div>
-      </div>
       </div>
     </div>
   );
