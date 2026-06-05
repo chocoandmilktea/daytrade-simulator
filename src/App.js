@@ -252,21 +252,7 @@ function SignalModal(p){
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
   var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
   var helpModalS=useState(false);var showHelp=helpModalS[0],setShowHelp=helpModalS[1];
-  // モーダル表示中はbodyスクロールを止める（iOS対応：スクロール位置を保存）
-  useEffect(function(){
-    var scrollY=window.scrollY;
-    document.body.style.overflow="hidden";
-    document.body.style.position="fixed";
-    document.body.style.top="-"+scrollY+"px";
-    document.body.style.width="100%";
-    return function(){
-      document.body.style.overflow="";
-      document.body.style.position="";
-      document.body.style.top="";
-      document.body.style.width="";
-      window.scrollTo(0,scrollY);
-    };
-  },[]);
+
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
@@ -282,12 +268,10 @@ function SignalModal(p){
   }
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16,touchAction:"none"}}
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc"}}
       onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
-      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"80vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}
-        onTouchStart={function(e){e.stopPropagation();}}
-        onTouchMove={function(e){e.stopPropagation();}}
-        onTouchEnd={function(e){e.stopPropagation();}}>
+      <div style={{position:"absolute",top:"5%",left:"50%",transform:"translateX(-50%)",width:"calc(100% - 32px)",maxWidth:480,maxHeight:"90%",background:"#071428",border:"1px solid #1e4070",borderRadius:14,display:"flex",flexDirection:"column"}}>
+      <div style={{overflowY:"auto",WebkitOverflowScrolling:"touch",padding:20,flex:1}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
           <div>
             <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
@@ -460,6 +444,7 @@ function SignalModal(p){
             if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}
           }} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"12px",fontSize:11,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
         </div>
+      </div>
       </div>
     </div>
   );
