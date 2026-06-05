@@ -159,9 +159,7 @@ function analyzeStock(stock,pd){
   if(hasGC&&hasRSIOversold&&hasBBLow){overlap+=10;overlapLabels.push("トリプル");}
 
   sc=Math.min(100,sc+overlap);
-  if(overlapLabels.length>0){
-    signals.push({label:"重複シグナル",val:overlapLabels.join(" / "),state:1,bonus:overlap});
-  }
+  // 重複ラベルはscoreに含めるのみ（詳細表示しない）
 
   var winRate=Math.min(88,Math.max(28,sc*0.72));
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
