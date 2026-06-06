@@ -164,13 +164,23 @@ function analyzeStock(stock,pd){
   // トレードタイプ判定
   var yearRange=high52>0?(high52-low52)/low52*100:0; // 52週の値幅%
   var absChange=Math.abs(parseFloat(change));
+  // 年間変動率とATR（平均変動率）で判定
+  var recentCloses=closes.slice(-20);
+  var avgDailyChange=0;
+  if(recentCloses.length>1){
+    var totalChange=0;
+    for(var dc=1;dc<recentCloses.length;dc++){
+      totalChange+=Math.abs((recentCloses[dc]-recentCloses[dc-1])/recentCloses[dc-1]*100);
+    }
+    avgDailyChange=totalChange/(recentCloses.length-1);
+  }
   var tradeType,tradeLabel,tradeColor;
-  if(yearRange>=80||absChange>=5){
-    tradeType="short";tradeLabel="⚡短期";tradeColor="#f43f5e";
-  }else if(yearRange>=30||absChange>=2){
-    tradeType="mid";tradeLabel="📈中期";tradeColor="#fbbf24";
+  if(yearRange>=60||avgDailyChange>=2||absChange>=5){
+    tradeType="short";tradeLabel="⚡スキャル";tradeColor="#f43f5e";
+  }else if(yearRange>=25||avgDailyChange>=1||absChange>=2){
+    tradeType="mid";tradeLabel="📈デイトレ";tradeColor="#fbbf24";
   }else{
-    tradeType="stable";tradeLabel="🛡安定";tradeColor="#22d3a0";
+    tradeType="stable";tradeLabel="🌊スイング";tradeColor="#22d3a0";
   }
 
   var winRate=Math.min(88,Math.max(28,sc*0.72));
