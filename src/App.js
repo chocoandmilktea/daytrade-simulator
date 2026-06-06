@@ -161,6 +161,18 @@ function analyzeStock(stock,pd){
   sc=Math.min(100,sc+overlap);
   // 重複ラベルをreturnに含める
 
+  // トレードタイプ判定
+  var yearRange=high52>0?(high52-low52)/low52*100:0; // 52週の値幅%
+  var absChange=Math.abs(parseFloat(change));
+  var tradeType,tradeLabel,tradeColor;
+  if(yearRange>=80||absChange>=5){
+    tradeType="short";tradeLabel="⚡短期";tradeColor="#f43f5e";
+  }else if(yearRange>=30||absChange>=2){
+    tradeType="mid";tradeLabel="📈中期";tradeColor="#fbbf24";
+  }else{
+    tradeType="stable";tradeLabel="🛡安定";tradeColor="#22d3a0";
+  }
+
   var winRate=Math.min(88,Math.max(28,sc*0.72));
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
   var timing=sc>=68?"BUY":sc>=42?"WATCH":"SKIP";
@@ -181,6 +193,7 @@ function analyzeStock(stock,pd){
     real:pd.real,closes:closes,per:pd.per||null,pbr:pd.pbr||null,
     high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
     overlapLabels:overlapLabels,
+    tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
 }
 
@@ -276,7 +289,10 @@ function SignalModal(p){
               <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
               <span style={{fontSize:18,fontWeight:800,color:"#e0f0ff"}}>{s.ticker.replace(".T","")}</span>
             </div>
-            <div style={{fontSize:11,color:"#4a7090"}}>{s.name}</div>
+            <div style={{display:"flex",gap:6,alignItems:"center",marginTop:2}}>
+              <span style={{fontSize:10,color:"#4a7090"}}>{s.name}</span>
+              {s.tradeLabel&&<span style={{fontSize:9,fontWeight:700,color:s.tradeColor,background:"#0a0a1a",border:"1px solid "+s.tradeColor,borderRadius:4,padding:"1px 5px"}}>{s.tradeLabel}</span>}
+            </div>
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:26,height:26,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</button>
@@ -470,9 +486,10 @@ function StockCard(p){
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <ScoreRing score={s.score}/>
         <div style={{flex:1,minWidth:0}}>
-          <div style={{display:"flex",gap:3,alignItems:"center"}}>
+          <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap"}}>
             <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
             <span style={{fontSize:12,fontWeight:800,color:"#d8eeff"}}>{s.ticker.replace(".T","")}</span>
+            {s.tradeLabel&&<span style={bStyle("#0a0a1a","1px solid "+s.tradeColor,s.tradeColor)}>{s.tradeLabel}</span>}
             {!s.real&&<span style={bStyle("#1a1200","#7c6010","#fbbf24")}>SIM</span>}
           </div>
           <div style={{fontSize:9,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.name}</div>
