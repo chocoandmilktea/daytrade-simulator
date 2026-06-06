@@ -1061,17 +1061,23 @@ function MarketHours(){
   var usTime=isSummer?"22:30〜翌5:00":"23:30〜翌6:00";
 
   return(
-    <div style={{display:"flex",gap:6,alignItems:"center"}}>
-      <div style={{display:"flex",gap:3,alignItems:"center"}}>
-        <span style={{fontSize:9,color:"#4a7090"}}>🇯🇵</span>
-        <span style={{fontSize:8,color:"#4a7090"}}>9:00〜15:30</span>
-        <span style={{fontSize:8,fontWeight:700,color:jpOpen?"#22d3a0":"#f43f5e",background:jpOpen?"#052e16":"#1f0010",border:"1px solid "+(jpOpen?"#22d3a0":"#f43f5e"),borderRadius:3,padding:"1px 4px"}}>{jpLabel}</span>
+    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+      {/* 日本株 */}
+      <div style={{display:"flex",flexDirection:"column",gap:2}}>
+        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+          <span style={{fontSize:11,color:"#4a7090"}}>🇯🇵 9:00〜11:30</span>
+          <span style={{fontSize:10,fontWeight:700,color:jpOpen?"#22d3a0":"#f43f5e",background:jpOpen?"#052e16":"#1f0010",border:"1px solid "+(jpOpen?"#22d3a0":"#f43f5e"),borderRadius:3,padding:"1px 5px"}}>{jpLabel}</span>
+        </div>
+        <div style={{fontSize:11,color:"#4a7090"}}>🇯🇵 12:30〜15:30</div>
       </div>
-      <span style={{fontSize:8,color:"#1e3050"}}>|</span>
-      <div style={{display:"flex",gap:3,alignItems:"center"}}>
-        <span style={{fontSize:9,color:"#4a7090"}}>🇺🇸</span>
-        <span style={{fontSize:8,color:"#4a7090"}}>{usTime}</span>
-        <span style={{fontSize:8,fontWeight:700,color:usOpen?"#22d3a0":"#f43f5e",background:usOpen?"#052e16":"#1f0010",border:"1px solid "+(usOpen?"#22d3a0":"#f43f5e"),borderRadius:3,padding:"1px 4px"}}>{usLabel}</span>
+      <span style={{fontSize:11,color:"#1e3050"}}>|</span>
+      {/* 米国株 */}
+      <div style={{display:"flex",flexDirection:"column",gap:2}}>
+        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+          <span style={{fontSize:11,color:"#4a7090"}}>🇺🇸 22:30〜翌5:00 <span style={{fontSize:9,color:"#2a6090"}}>[夏]</span></span>
+          <span style={{fontSize:10,fontWeight:700,color:usOpen?"#22d3a0":"#f43f5e",background:usOpen?"#052e16":"#1f0010",border:"1px solid "+(usOpen?"#22d3a0":"#f43f5e"),borderRadius:3,padding:"1px 5px"}}>{usLabel}</span>
+        </div>
+        <div style={{fontSize:11,color:"#4a7090"}}>🇺🇸 23:30〜翌6:00 <span style={{fontSize:9,color:"#2a6090"}}>[冬]</span></div>
       </div>
     </div>
   );
