@@ -1027,6 +1027,55 @@ function HelpModal(p){
   );
 }
 
+
+// ── MarketHours ───────────────────────────────────────────────────────────────
+function MarketHours(){
+  var nowS=useState(new Date());var now=nowS[0],setNow=nowS[1];
+  useEffect(function(){
+    var t=setInterval(function(){setNow(new Date());},60000);
+    return function(){clearInterval(t);};
+  },[]);
+
+  // JSTで現在時刻を計算
+  var jst=new Date(now.getTime()+9*60*60*1000);
+  var h=jst.getUTCHours(),m=jst.getUTCMinutes(),dow=jst.getUTCDay();
+  var isWeekday=dow>=1&&dow<=5;
+  var timeMin=h*60+m;
+
+  // 日本株: 平日 9:00-11:30 / 12:30-15:30
+  var jpOpen=isWeekday&&((timeMin>=540&&timeMin<690)||(timeMin>=750&&timeMin<930));
+  var jpLabel=jpOpen?"開場中":"閉場";
+
+  // 米国株(JST): 平日 23:30-6:00(夏時間) / 0:30-7:00(冬時間)
+  // 夏時間: 3月第2日曜〜11月第1日曜（概算）
+  var month=jst.getUTCMonth()+1;
+  var isSummer=month>=4&&month<=10;
+  var usStartMin=isSummer?22*60+30:23*60+30;
+  var usEndMin=isSummer?5*60:6*60;
+  // 日付をまたぐので判定
+  var usOpen=isWeekday&&(timeMin>=usStartMin||timeMin<usEndMin);
+  // 土曜早朝は金曜の延長なので対応
+  if(dow===6&&timeMin<usEndMin) usOpen=true;
+  if(dow===0&&timeMin>=usStartMin) usOpen=false;
+  var usLabel=usOpen?"開場中":"閉場";
+  var usTime=isSummer?"22:30〜翌5:00":"23:30〜翌6:00";
+
+  return(
+    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2}}>
+        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+          <span style={{fontSize:8,color:"#4a7090"}}>🇯🇵 9:00〜15:30</span>
+          <span style={{fontSize:8,fontWeight:700,color:jpOpen?"#22d3a0":"#f43f5e",background:jpOpen?"#052e16":"#1f0010",border:"1px solid "+(jpOpen?"#22d3a0":"#f43f5e"),borderRadius:3,padding:"1px 4px"}}>{jpLabel}</span>
+        </div>
+        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+          <span style={{fontSize:8,color:"#4a7090"}}>🇺🇸 {usTime}</span>
+          <span style={{fontSize:8,fontWeight:700,color:usOpen?"#22d3a0":"#f43f5e",background:usOpen?"#052e16":"#1f0010",border:"1px solid "+(usOpen?"#22d3a0":"#f43f5e"),borderRadius:3,padding:"1px 4px"}}>{usLabel}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App(){
   var a=useState([]);var stocks=a[0],setStocks=a[1];
   var b=useState(false);var loading=b[0],setLoading=b[1];
@@ -1104,8 +1153,11 @@ export default function App(){
       </div>
       <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
         <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",position:"sticky",top:0,zIndex:10}}>
-          <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>
-            DaySimulator <span style={{fontSize:10,color:"#4a7090",fontWeight:400}}>/ {TAB_LABELS[activeTab]}</span>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>
+              DaySimulator <span style={{fontSize:10,color:"#4a7090",fontWeight:400}}>/ {TAB_LABELS[activeTab]}</span>
+            </div>
+            <MarketHours/>
           </div>
           {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
         </div>
