@@ -458,20 +458,9 @@ function StockCard(p){
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var tvUrl="https://www.tradingview.com/chart/?symbol="+encodeURIComponent(s.tvSymbol)+"&interval=D";
   var showModalS=useState(false); var showModal=showModalS[0],setShowModal=showModalS[1];
-  var addFormS=useState(false); var showAdd=addFormS[0],setShowAdd=addFormS[1];
-  var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):""); var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
-  var sharesS=useState(""); var shares=sharesS[0],setShares=sharesS[1];
-  function submitAdd(){
-    if(!buyPrice||!shares) return;
-    var portfolio=(function(){try{var v=localStorage.getItem("portfolio_v1");return v?JSON.parse(v):[];}catch(e){return[];}})();
-    var pos={id:Date.now(),ticker:s.ticker,name:s.name,market:s.market,buyPrice:parseFloat(buyPrice),shares:parseFloat(shares),stopLoss:null,target:null,addedAt:new Date().toLocaleDateString("ja-JP")};
-    try{localStorage.setItem("portfolio_v1",JSON.stringify(portfolio.concat([pos])));}catch(e){}
-    setShowAdd(false); setShares("");
-  }
-  var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"5px 7px",fontSize:11,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+
   return(
     <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"10px 10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}} onClick={function(e){
-      if(showAdd) return;
       var t=e.target;
       if(t.tagName==="BUTTON"||t.tagName==="A"||t.tagName==="INPUT") return;
       if(t.closest("button")||t.closest("a")||t.closest("input")) return;
@@ -513,27 +502,12 @@ function StockCard(p){
             <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
           </div>
         </div>
-        <div style={{display:"flex",flexDirection:"row",gap:4,alignItems:"stretch"}}>
-          <button onClick={function(){setShowAdd(!showAdd);}} style={{background:showAdd?"#052e16":"#071428",border:"1px solid "+(showAdd?"#22d3a0":"#1e5030"),borderRadius:6,color:showAdd?"#22d3a0":"#3a8060",padding:"5px 8px",fontSize:10,fontWeight:700,fontFamily:"monospace",cursor:"pointer",textAlign:"center",whiteSpace:"nowrap",display:"flex",alignItems:"center",justifyContent:"center"}}>💼</button>
-          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        <div style={{display:"flex",flexDirection:"column",gap:4}}>
             <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #1e6090",borderRadius:6,color:"#4a90c0",padding:"5px 8px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block",whiteSpace:"nowrap"}}>📈 TV</a>
             <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:6,color:"#a5b4fc",padding:"5px 8px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block",whiteSpace:"nowrap"}}>🔗 Y!</a>
           </div>
-        </div>
       </div>
-      {showAdd&&(
-        <div style={{background:"#040c18",border:"1px solid #22d3a030",borderRadius:8,padding:"10px 10px",display:"flex",flexDirection:"column",gap:7}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#22d3a0"}}>💼 ポートフォリオに追加</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-            <div><div style={{fontSize:9,color:"#2a6090",marginBottom:3}}>買値</div><input style={inp} type="number" value={buyPrice} onChange={function(e){setBuyPrice(e.target.value);}} placeholder="150.00"/></div>
-            <div><div style={{fontSize:9,color:"#2a6090",marginBottom:3}}>株数</div><input style={inp} type="number" value={shares} onChange={function(e){setShares(e.target.value);}} placeholder="100"/></div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-            <button onClick={function(){setShowAdd(false);}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:6,color:"#4a7090",padding:"7px",fontSize:10,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
-            <button onClick={submitAdd} disabled={!buyPrice||!shares} style={{background:buyPrice&&shares?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:6,color:"#fff",padding:"7px",fontSize:10,fontWeight:700,cursor:buyPrice&&shares?"pointer":"not-allowed",fontFamily:"monospace"}}>追加</button>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }
