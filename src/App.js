@@ -479,8 +479,15 @@ function StockCard(p){
   var tvUrl="https://www.tradingview.com/chart/?symbol="+encodeURIComponent(s.tvSymbol)+"&interval=D";
   var showModalS=useState(false); var showModal=showModalS[0],setShowModal=showModalS[1];
 
+  // ── [UI①] スコアに応じた枠色 ──────────────────────────────────────────
+  var borderColor=s.score>=68?"#22d3a040":s.score>=42?"#fbbf2430":"#f43f5e20";
+
+  // ── [UI③] 52週ポジション ─────────────────────────────────────────────
+  var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
+  var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
+
   return(
-    <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"10px 10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}} onClick={function(e){
+    <div style={{background:"#050e1c",border:"1px solid "+borderColor,borderRadius:10,padding:"10px 10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}} onClick={function(e){
       var t=e.target;
       if(t.tagName==="BUTTON"||t.tagName==="A"||t.tagName==="INPUT") return;
       if(t.closest("button")||t.closest("a")||t.closest("input")) return;
@@ -508,6 +515,20 @@ function StockCard(p){
           <span style={{fontSize:7,color:isUp?"#22d3a060":"#f43f5e60"}}>─ 価格</span>
         </div>
       </div>
+      {/* ── [UI③] 52週レンジミニバー ────────────────────────────────── */}
+      {pos52!=null&&(
+        <div style={{padding:"0 2px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:7,color:"#2a5070",marginBottom:2}}>
+            <span>52W安値</span>
+            <span style={{color:pos52Color,fontWeight:700}}>{pos52<=25?"安値圏":pos52<=75?"中間":"高値圏"}</span>
+            <span>52W高値</span>
+          </div>
+          <div style={{background:"#0a1828",borderRadius:3,height:4,position:"relative"}}>
+            <div style={{background:"linear-gradient(90deg,#22d3a0,#fbbf24,#f43f5e)",height:4,borderRadius:3,width:"100%",opacity:0.25}}/>
+            <div style={{position:"absolute",top:-2,left:"calc("+pos52+"% - 4px)",width:8,height:8,borderRadius:"50%",background:pos52Color,border:"1px solid #071428"}}/>
+          </div>
+        </div>
+      )}
       <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:6,alignItems:"center"}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,alignItems:"center"}}>
           <span style={{fontSize:13,color:"#d8eeff",fontWeight:800}}>{s.price}</span>
@@ -613,6 +634,21 @@ function CrossSection(sp){
 // ── CrossPanel ────────────────────────────────────────────────────────────────
 function CrossPanel(p){
   var stocks=p.stocks,loading=p.loading,onScan=p.onScan,toggleFav=p.toggleFav,favs=p.favs,ts=p.ts,progress=p.progress;
+
+  // ── [UI④] フィルター・ソート state ────────────────────────────────────
+  var filterS=useState("ALL");var filterMkt=filterS[0],setFilterMkt=filterS[1];
+  var sortS=useState("score");var sortBy=sortS[0],setSortBy=sortS[1];
+
+  function applyFilterSort(items){
+    var filtered=filterMkt==="ALL"?items:items.filter(function(item){return item.s.market===filterMkt;});
+    return filtered.slice().sort(function(a,b){
+      if(sortBy==="score") return b.s.score-a.s.score;
+      if(sortBy==="change") return Math.abs(parseFloat(b.s.change))-Math.abs(parseFloat(a.s.change));
+      return 0;
+    });
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
   var gcNow=[],dcNow=[],gcNear=[],dcNear=[],gcWatch=[];
   stocks.forEach(function(s){
     var c=classifyStockFn(s);if(!c||c.type==="NONE")return;
@@ -646,10 +682,21 @@ function CrossPanel(p){
   }
   var hasAny=gcNow.length+dcNow.length+gcNear.length+dcNear.length+gcWatch.length>0;
   var realCount=stocks.filter(function(s){return s.real;}).length;
+
+  // フィルターボタンスタイル
+  function fBtn(val,label,activeColor){
+    var active=filterMkt===val;
+    return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:9,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+  function sBtn(val,label){
+    var active=sortBy===val;
+    return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:9,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+
   return(
     <div>
       <MarketBar/>
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:8,display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
         <div style={{fontSize:10,color:"#4a7090"}}>
           <span style={{color:"#22d3a0",fontWeight:700}}>{realCount}</span>
           <span style={{color:"#4a7090"}}> / {stocks.length} 銘柄 リアルデータ</span>
@@ -657,12 +704,22 @@ function CrossPanel(p){
         {ts&&<span style={{fontSize:9,color:"#2a6090"}}>更新: {ts}</span>}
         <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
       </div>
+      {/* ── [UI④] フィルター・ソートバー ── */}
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+        <span style={{fontSize:9,color:"#2a6090",marginRight:2}}>市場:</span>
+        {fBtn("ALL","全て","#60a5fa")}
+        {fBtn("US","US","#3b82f6")}
+        {fBtn("JP","JP","#f87171")}
+        <span style={{fontSize:9,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
+        {sBtn("score","スコア順")}
+        {sBtn("change","騰落率順")}
+      </div>
       {!hasAny&&(<div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:12}}>現在クロス条件に該当する銘柄がありません</div>)}
-      <CrossSection title="⚡ GC接近中" items={gcNear} color="#fbbf24" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
-      <CrossSection title="🔥 GC発生中" items={gcNow} color="#22d3a0" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
-      <CrossSection title="👀 GC監視中" items={gcWatch} color="#60a5fa" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
-      <CrossSection title="⚠ DC接近中" items={dcNear} color="#fb923c" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
-      <CrossSection title="💀 DC発生中" items={dcNow} color="#f43f5e" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
+      <CrossSection title="⚡ GC接近中" items={applyFilterSort(gcNear)} color="#fbbf24" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
+      <CrossSection title="🔥 GC発生中" items={applyFilterSort(gcNow)} color="#22d3a0" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
+      <CrossSection title="👀 GC監視中" items={applyFilterSort(gcWatch)} color="#60a5fa" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
+      <CrossSection title="⚠ DC接近中" items={applyFilterSort(dcNear)} color="#fb923c" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
+      <CrossSection title="💀 DC発生中" items={applyFilterSort(dcNow)} color="#f43f5e" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
     </div>
   );
 }
@@ -674,8 +731,27 @@ function FavPanel(p){
   var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
+  // ── [UI④] フィルター・ソート state ────────────────────────────────────
+  var filterS=useState("ALL");var filterMkt=filterS[0],setFilterMkt=filterS[1];
+  var sortS=useState("score");var sortBy=sortS[0],setSortBy=sortS[1];
+  // ──────────────────────────────────────────────────────────────────────
   async function addByTicker(){var raw=searchTicker.trim().toUpperCase();if(!raw)return;var ticker=(raw.match(/^\d{4}$/)?raw+".T":raw);if(favs.indexOf(ticker)>=0){setSearchStatus("already");return;}setSearchStatus("loading");try{var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=2y",{signal:AbortSignal.timeout(15000)});if(!res.ok)throw new Error("not found");toggleFav(ticker);setSearchTicker("");setSearchStatus("ok");setTimeout(function(){setSearchStatus(null);},2000);}catch(e){setSearchStatus("error");setTimeout(function(){setSearchStatus(null);},2000);}}
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
+
+  var displayStocks=(filterMkt==="ALL"?favStocks:favStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){
+    if(sortBy==="score") return b.score-a.score;
+    if(sortBy==="change") return Math.abs(parseFloat(b.change))-Math.abs(parseFloat(a.change));
+    return 0;
+  });
+
+  function fBtn(val,label,activeColor){
+    var active=filterMkt===val;
+    return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:9,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+  function sBtn(val,label){
+    var active=sortBy===val;
+    return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:9,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
   return(
     <div>
       <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
@@ -685,10 +761,20 @@ function FavPanel(p){
         </div>
         {statusMsg&&<div style={{fontSize:10,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
       </div>
+      {favStocks.length>0&&(
+        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:9,color:"#2a6090",marginRight:2}}>市場:</span>
+          {fBtn("ALL","全て","#60a5fa")}
+          {fBtn("US","US","#3b82f6")}
+          {fBtn("JP","JP","#f87171")}
+          <span style={{fontSize:9,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
+          {sBtn("score","スコア順")}
+          {sBtn("change","騰落率順")}
+        </div>
+      )}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
-        {favStocks.map(function(s){
+        {displayStocks.map(function(s){
           var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-          // ── [FIX #2] vix を props から正しく渡す ──────────────────────
           return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix}/>;
         })}
       </div>
