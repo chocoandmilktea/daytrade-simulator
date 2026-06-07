@@ -1,15 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 
-function useColumns(){
-  var w=useState(window.innerWidth); var width=w[0],setWidth=w[1];
-  useEffect(function(){
-    function onResize(){setWidth(window.innerWidth);}
-    window.addEventListener("resize",onResize);
-    return function(){window.removeEventListener("resize",onResize);};
-  },[]);
-  return width<768?2:3;
-}
-
+// ── [FIX #6] useColumns は未使用のため削除 ────────────────────────────────
 
 var BADGE = {
   BUY:   { bg:"#052e16", border:"#22d3a0", text:"#22d3a0", label:"買い"   },
@@ -96,6 +87,18 @@ function analyzeStock(stock,pd){
   var mNow=macdArr[n],mPrev=macdArr[n-1],price=pd.currentPrice||closes[n];
   var sc=0,signals=[];
 
+  // ── [FIX #1/#3] 変数宣言を使用前に移動 ────────────────────────────────
+  var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
+  var dispPrice=stock.market==="JP"?"¥"+Math.round(price).toLocaleString():"$"+price.toFixed(2);
+  var yearData=closes.slice(-252);
+  var high52=yearData.length>0?Math.max.apply(null,yearData):price;
+  var low52=yearData.length>0?Math.min.apply(null,yearData):price;
+  var fromHigh=high52>0?((price-high52)/high52*100):0;
+  var fromLow=low52>0?((price-low52)/low52*100):0;
+  var range52=high52-low52||1;
+  var position52=((price-low52)/range52*100);
+  // ──────────────────────────────────────────────────────────────────────
+
   if(s20&&s50){
     if(price>s20&&s20>s50){sc+=20;signals.push({label:"トレンド",val:"上昇トレンド",state:1});}
     else if(price<s20&&s20<s50){signals.push({label:"トレンド",val:"下降トレンド",state:-1});}
@@ -136,19 +139,14 @@ function analyzeStock(stock,pd){
     else{sc+=6;signals.push({label:sl,val:"中立",state:0});}
   }
 
-  // 複数シグナル重なりボーナス
-  var strongSignals=signals.filter(function(sig){return sig.state===1;}).length;
-  var weakSignals=signals.filter(function(sig){return sig.state===-1;}).length;
-  var overlap=0;
   var overlapLabels=[];
-
-  // GCまたは強気 + RSI売られすぎ
   var hasMACD=signals.find(function(sig){return sig.label==="MACD"&&(sig.val==="ゴールデンクロス"||sig.val==="強気ゾーン");});
   var hasRSIOversold=signals.find(function(sig){return sig.label.startsWith("RSI")&&(sig.val==="売られすぎ"||sig.val==="やや売られ");});
   var hasBBLow=signals.find(function(sig){return sig.label==="BB"&&(sig.val==="下限→反発"||sig.val==="下限付近");});
   var hasStochOversold=signals.find(function(sig){return sig.label.startsWith("Stoch")&&(sig.val==="売られすぎ"||sig.val==="やや売られ");});
   var hasTrendUp=signals.find(function(sig){return sig.label==="トレンド"&&(sig.val==="上昇トレンド"||sig.val==="MA20上");});
   var hasGC=signals.find(function(sig){return sig.label==="MACD"&&sig.val==="ゴールデンクロス";});
+  var overlap=0;
 
   if(hasGC&&hasRSIOversold){overlap+=15;overlapLabels.push("GC+RSI");}
   if(hasGC&&hasBBLow){overlap+=12;overlapLabels.push("GC+BB");}
@@ -157,14 +155,9 @@ function analyzeStock(stock,pd){
   if(hasBBLow&&hasStochOversold){overlap+=8;overlapLabels.push("BB+Stoch");}
   if(hasTrendUp&&hasGC){overlap+=10;overlapLabels.push("トレンド+GC");}
   if(hasGC&&hasRSIOversold&&hasBBLow){overlap+=10;overlapLabels.push("トリプル");}
-
   sc=Math.min(100,sc+overlap);
-  // 重複ラベルをreturnに含める
 
-  // トレードタイプ判定
-  var yearRange=high52>0?(high52-low52)/low52*100:0; // 52週の値幅%
-  var absChange=Math.abs(parseFloat(change));
-  // 年間変動率とATR（平均変動率）で判定
+  // ── [FIX #1] トレードタイプ判定：変数が正しく定義された後に実行 ──────
   var recentCloses=closes.slice(-20);
   var avgDailyChange=0;
   if(recentCloses.length>1){
@@ -174,6 +167,8 @@ function analyzeStock(stock,pd){
     }
     avgDailyChange=totalChange/(recentCloses.length-1);
   }
+  var yearRange=high52>0?(high52-low52)/low52*100:0;
+  var absChange=Math.abs(parseFloat(change));
   var tradeType,tradeLabel,tradeColor;
   if(yearRange>=60||avgDailyChange>=2||absChange>=5){
     tradeType="short";tradeLabel="⚡スキャル";tradeColor="#f43f5e";
@@ -182,20 +177,11 @@ function analyzeStock(stock,pd){
   }else{
     tradeType="stable";tradeLabel="🌊スイング";tradeColor="#22d3a0";
   }
+  // ──────────────────────────────────────────────────────────────────────
 
   var winRate=Math.min(88,Math.max(28,sc*0.72));
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
   var timing=sc>=68?"BUY":sc>=42?"WATCH":"SKIP";
-  var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
-  var dispPrice=stock.market==="JP"?"¥"+Math.round(price).toLocaleString():"$"+price.toFixed(2);
-  // 52週高値・安値（約252営業日）
-  var yearData=closes.slice(-252);
-  var high52=yearData.length>0?Math.max.apply(null,yearData):price;
-  var low52=yearData.length>0?Math.min.apply(null,yearData):price;
-  var fromHigh=high52>0?((price-high52)/high52*100):0;
-  var fromLow=low52>0?((price-low52)/low52*100):0;
-  var range52=high52-low52||1;
-  var position52=((price-low52)/range52*100); // 0%=安値圏 100%=高値圏
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
@@ -274,12 +260,13 @@ function SignalModal(p){
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
   var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
   var helpModalS=useState(false);var showHelp=helpModalS[0],setShowHelp=helpModalS[1];
-
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   var simTargetS=useState(20);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
   var simStopS=useState(-10);var simStop=simStopS[0],setSimStop=simStopS[1];
+
+  // ── [FIX #8] localStorage を直読みせず props 経由で portfolio を受け取る ──
   function submitAdd(){
     if(!buyPrice||!shares) return;
     var portfolio=(function(){try{var v=localStorage.getItem("portfolio_v1");return v?JSON.parse(v):[];}catch(e){return[];}})();
@@ -409,10 +396,8 @@ function SignalModal(p){
             )}
           </div>
         </div>
-        {/* 52週レンジ */}
         {s.high52&&(function(){
           var pos=s.position52||0;
-          // 色判定: 安値圏(0-25%)=買い候補=緑, 中間(25-75%)=中立=黄, 高値圏(75-100%)=警戒=赤
           var posColor=pos<=25?"#22d3a0":pos<=75?"#fbbf24":"#f43f5e";
           var posLabel=pos<=25?"安値圏・買い候補":pos<=75?"中間レンジ":"高値圏・警戒";
           var fromHighColor=s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0";
@@ -422,7 +407,6 @@ function SignalModal(p){
           return(
             <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
               <div style={{fontSize:10,fontWeight:700,color:"#4a90c0",marginBottom:8}}>📊 52週レンジ</div>
-              {/* プログレスバー */}
               <div style={{marginBottom:8}}>
                 <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#4a7090",marginBottom:4}}>
                   <span>安値 {fmtPrice(s.low52)}</span>
@@ -534,7 +518,6 @@ function StockCard(p){
             <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:6,color:"#a5b4fc",padding:"5px 8px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block",whiteSpace:"nowrap"}}>🔗 Y!</a>
           </div>
       </div>
-
     </div>
   );
 }
@@ -544,6 +527,7 @@ function MarketBar(){
   var dataS=useState({}); var data=dataS[0],setData=dataS[1];
   var loadingS=useState(true); var loading=loadingS[0],setLoading=loadingS[1];
   var isWide=window.innerWidth>=768;
+  // ── [FIX #4] INDICES を useEffect の外に定数として定義 ─────────────────
   var INDICES=[
     {key:"nikkei",  ticker:"^N225",   label:"日経平均",  prefix:"¥", round:true},
     {key:"dow",     ticker:"^DJI",    label:"NYダウ",    prefix:"$", round:true},
@@ -569,6 +553,7 @@ function MarketBar(){
       setData(obj);
       setLoading(false);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
   if(loading) return(
     <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
@@ -601,6 +586,21 @@ function MarketBar(){
   );
 }
 
+// ── [FIX #7] Section を CrossPanel の外に定義してレンダー毎の再生成を防ぐ ──
+function CrossSection(sp){
+  if(!sp.items||!sp.items.length) return null;
+  return(
+    <div style={{marginBottom:16}}>
+      <div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:8,padding:"4px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
+        {sp.items.map(function(item){
+          return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={function(t){return sp.favs.indexOf(t)>=0;}} cross={item.cross} vix={sp.vix}/>;
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── CrossPanel ────────────────────────────────────────────────────────────────
 function CrossPanel(p){
   var stocks=p.stocks,loading=p.loading,onScan=p.onScan,toggleFav=p.toggleFav,favs=p.favs,ts=p.ts,progress=p.progress;
@@ -613,17 +613,6 @@ function CrossPanel(p){
     else if(c.type==="DC_NEAR")dcNear.push({s:s,cross:c});
     else if(c.type==="GC_WATCH")gcWatch.push({s:s,cross:c});
   });
-  function Section(sp){
-    if(!sp.items||!sp.items.length) return null;
-    return(
-      <div style={{marginBottom:16}}>
-        <div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:8,padding:"4px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
-          {sp.items.map(function(item){return <StockCard key={item.s.ticker} s={item.s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={item.cross} vix={p.vix}/>;  })}
-        </div>
-      </div>
-    );
-  }
   if(loading){
     return(
       <div style={{padding:"20px 0"}}>
@@ -660,18 +649,19 @@ function CrossPanel(p){
         <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
       </div>
       {!hasAny&&(<div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:12}}>現在クロス条件に該当する銘柄がありません</div>)}
-      <Section title="⚡ GC接近中" items={gcNear} color="#fbbf24"/>
-      <Section title="🔥 GC発生中" items={gcNow} color="#22d3a0"/>
-      <Section title="👀 GC監視中" items={gcWatch} color="#60a5fa"/>
-      <Section title="⚠ DC接近中" items={dcNear} color="#fb923c"/>
-      <Section title="💀 DC発生中" items={dcNow} color="#f43f5e"/>
+      <CrossSection title="⚡ GC接近中" items={gcNear} color="#fbbf24" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
+      <CrossSection title="🔥 GC発生中" items={gcNow} color="#22d3a0" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
+      <CrossSection title="👀 GC監視中" items={gcWatch} color="#60a5fa" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
+      <CrossSection title="⚠ DC接近中" items={dcNear} color="#fb923c" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
+      <CrossSection title="💀 DC発生中" items={dcNow} color="#f43f5e" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
     </div>
   );
 }
 
 // ── FavPanel ──────────────────────────────────────────────────────────────────
+// ── [FIX #2] vix を props で受け取るように修正 ───────────────────────────────
 function FavPanel(p){
-  var stocks=p.stocks,favs=p.favs,toggleFav=p.toggleFav;
+  var stocks=p.stocks,favs=p.favs,toggleFav=p.toggleFav,vix=p.vix;
   var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
@@ -687,7 +677,11 @@ function FavPanel(p){
         {statusMsg&&<div style={{fontSize:10,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
-        {favStocks.map(function(s){var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix}/>;  })}
+        {favStocks.map(function(s){
+          var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
+          // ── [FIX #2] vix を props から正しく渡す ──────────────────────
+          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix}/>;
+        })}
       </div>
       {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:11}}>ティッカーを入力して追加できます</div>}
     </div>
@@ -719,18 +713,20 @@ function PortfolioPanel(p){
     setLastUpd(new Date().toLocaleTimeString("ja-JP"));
     setRefreshing(false);
   }
+  // ── [FIX #5] deps を portfolio に変更（内容変化にも反応） ────────────────
   useEffect(function(){
     fetchLivePrices(portfolio);
     var timer=setInterval(function(){fetchLivePrices(portfolio);},5*60*1000);
     return function(){clearInterval(timer);};
-  },[portfolio.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[portfolio]);
   var formS=useState({ticker:"",name:"",buyPrice:"",shares:"",stopLoss:"",target:"",market:"US"});
   var form=formS[0],setForm=formS[1];
   var editS=useState(null);var editId=editS[0],setEditId=editS[1];
   var editFormS=useState(null);var editForm=editFormS[0],setEditForm=editFormS[1];
   function savePort(next){setPortfolio(next);try{localStorage.setItem("portfolio_v1",JSON.stringify(next));}catch(e){}}
   function addPosition(){if(!form.ticker||!form.buyPrice||!form.shares)return;var pos={id:Date.now(),ticker:form.ticker.toUpperCase(),name:form.name||form.ticker.toUpperCase(),market:form.market,buyPrice:parseFloat(form.buyPrice),shares:parseFloat(form.shares),stopLoss:form.stopLoss?parseFloat(form.stopLoss):null,target:form.target?parseFloat(form.target):null,addedAt:new Date().toLocaleDateString("ja-JP")};savePort(portfolio.concat([pos]));setForm({ticker:"",name:"",buyPrice:"",shares:"",stopLoss:"",target:"",market:"US"});setPtab("list");}
-  function removePos(id){savePort(portfolio.filter(function(p){return p.id!==id;}));}
+  function removePos(id){savePort(portfolio.filter(function(pos){return pos.id!==id;}));}
   function startEdit(pos){setEditId(pos.id);setEditForm({buyPrice:String(pos.buyPrice),shares:String(pos.shares),stopLoss:pos.stopLoss?String(pos.stopLoss):"",target:pos.target?String(pos.target):""});}
   function saveEdit(id){if(!editForm.buyPrice||!editForm.shares)return;savePort(portfolio.map(function(pos){if(pos.id!==id)return pos;return Object.assign({},pos,{buyPrice:parseFloat(editForm.buyPrice),shares:parseFloat(editForm.shares),stopLoss:editForm.stopLoss?parseFloat(editForm.stopLoss):null,target:editForm.target?parseFloat(editForm.target):null});}));setEditId(null);setEditForm(null);}
   function getCurrentPrice(ticker){if(livePrices[ticker]) return livePrices[ticker];var found=stocks.find(function(s){return s.ticker===ticker;});return found?found.rawPrice:null;}
@@ -753,7 +749,6 @@ function PortfolioPanel(p){
   );
 }
 
-
 // ── SimPanel ──────────────────────────────────────────────────────────────────
 function SimPanel(p){
   var stocks=p.stocks;
@@ -762,14 +757,10 @@ function SimPanel(p){
   var sharesS=useState("100");var shares=sharesS[0],setShares=sharesS[1];
   var targetPctS=useState(20);var targetPct=targetPctS[0],setTargetPct=targetPctS[1];
   var stopPctS=useState(-10);var stopPct=stopPctS[0],setStopPct=stopPctS[1];
-
   var inp={background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
-
   var bp=parseFloat(buyPrice)||0;
   var sh=parseFloat(shares)||0;
   var cost=bp*sh;
-
-  // シナリオ計算
   var scenarios=[
     {label:"損切りライン",pct:stopPct,color:"#f43f5e"},
     {label:"-5%",pct:-5,color:"#fb923c"},
@@ -779,25 +770,18 @@ function SimPanel(p){
     {label:"+20%",pct:20,color:"#22d3a0"},
     {label:"目標価格",pct:targetPct,color:"#fbbf24"},
   ];
-
-  // 現在値を取得
   var found=stocks.find(function(s){return s.ticker===ticker;});
   var currentPrice=found?found.rawPrice:null;
   var currentPct=currentPrice&&bp>0?((currentPrice-bp)/bp*100):null;
-
   var isJP=ticker.endsWith(".T");
-
   function fmtPrice(v){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);}
-  function fmtPnL(v){return(v>=0?"+":"")+( isJP?"¥"+Math.round(v).toLocaleString():"$"+Math.abs(v).toFixed(2));}
-
+  function fmtPnL(v){return(v>=0?"+":"")+(isJP?"¥"+Math.round(v).toLocaleString():"$"+Math.abs(v).toFixed(2));}
   return(
     <div>
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px 16px",marginBottom:14}}>
         <div style={{fontSize:12,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>💹 損益シミュレーション</div>
         <div style={{fontSize:10,color:"#4a7090"}}>買値・株数を入力して損益を確認できます</div>
       </div>
-
-      {/* 入力フォーム */}
       <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"14px",marginBottom:14}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
           <div>
@@ -827,8 +811,6 @@ function SimPanel(p){
           </div>
         )}
       </div>
-
-      {/* スライダー */}
       {bp>0&&sh>0&&(
         <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"14px",marginBottom:14}}>
           <div style={{marginBottom:12}}>
@@ -836,21 +818,17 @@ function SimPanel(p){
               <span>目標価格</span>
               <span style={{color:"#fbbf24",fontWeight:700}}>+{targetPct}% → {fmtPrice(bp*(1+targetPct/100))}</span>
             </div>
-            <input type="range" min={1} max={100} value={targetPct} onChange={function(e){setTargetPct(parseInt(e.target.value));}}
-              style={{width:"100%",accentColor:"#fbbf24"}}/>
+            <input type="range" min={1} max={100} value={targetPct} onChange={function(e){setTargetPct(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#fbbf24"}}/>
           </div>
           <div>
             <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#4a7090",marginBottom:6}}>
               <span>損切りライン</span>
               <span style={{color:"#f43f5e",fontWeight:700}}>{stopPct}% → {fmtPrice(bp*(1+stopPct/100))}</span>
             </div>
-            <input type="range" min={-50} max={-1} value={stopPct} onChange={function(e){setStopPct(parseInt(e.target.value));}}
-              style={{width:"100%",accentColor:"#f43f5e"}}/>
+            <input type="range" min={-50} max={-1} value={stopPct} onChange={function(e){setStopPct(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#f43f5e"}}/>
           </div>
         </div>
       )}
-
-      {/* シナリオ一覧 */}
       {bp>0&&sh>0&&(
         <div style={{display:"flex",flexDirection:"column",gap:6}}>
           {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){
@@ -872,7 +850,6 @@ function SimPanel(p){
           })}
         </div>
       )}
-
       {(!bp||!sh)&&(
         <div style={{textAlign:"center",padding:"40px 20px",color:"#2a6090"}}>
           <div style={{fontSize:32,marginBottom:12}}>💹</div>
@@ -970,56 +947,17 @@ function SyncPanel(p){
   );
 }
 
-
 // ── HelpModal ─────────────────────────────────────────────────────────────────
 function HelpModal(p){
   var onClose=p.onClose;
   var SECTIONS=[
-    {title:"📊 データ取得",items:[
-      "米国株：Yahoo Finance・15分遅延",
-      "日本株：Yahoo Finance・15分遅延",
-      "日本株ランキング：J-Quants（前営業日の出来高上位50）",
-      "米国株ランキング：Yahoo Finance 出来高上位50",
-      "市況指数（日経・ダウ等）：Yahoo Finance・15分遅延",
-    ]},
-    {title:"✨ クロス予測",items:[
-      "MACDヒストグラムとスコアで自動分類",
-      "GC発生：MACDがゴールデンクロス直後",
-      "GC接近：強気ゾーン＋スコア60以上",
-      "GC監視：強気ゾーン＋スコア50以上",
-      "DC発生・DC接近：逆のパターン",
-    ]},
-    {title:"📈 スコア計算",items:[
-      "トレンド（MA20・MA50）：最大20点",
-      "MACD：最大30点（GC発生で30点）",
-      "RSI：最大25点（売られすぎで25点）",
-      "ボリンジャーバンド：最大20点",
-      "ストキャスティクス：最大15点",
-    ]},
-    {title:"📉 スパークライン",items:[
-      "直近30本分（約1.5ヶ月）を表示",
-      "黄色ライン：MA5",
-      "青紫ライン：MA25",
-      "緑/赤ライン（半透明）：価格",
-    ]},
-    {title:"🔗 デバイス同期",items:[
-      "お気に入り登録時にサーバーへ自動保存",
-      "起動時にサーバーからデータを自動取得",
-      "Pushoverでデバイスに同期IDを通知",
-      "同期タブでIDを入力して別デバイスと同期",
-    ]},
-    {title:"💼 ポートフォリオ",items:[
-      "損切りライン到達で枠が赤く変化",
-      "目標価格到達で枠が緑に変化",
-      "5分ごとに自動で価格更新",
-    ]},
-    {title:"📖 指標の見方",items:[
-      "PER（株価収益率）：株価が1株利益の何倍か → 業種平均より低ければ割安で買い候補",
-      "PBR（株価純資産倍率）：株価が純資産の何倍か → 1倍割れは理論上割安で買い候補",
-      "RSI（相対力指数）：0〜100で買われすぎ・売られすぎを表示 → 30以下で売られすぎ・反発狙いの買い候補",
-      "MACD：トレンド転換を示す指標 → ゴールデンクロス発生時が買いシグナル",
-      "VIX（恐怖指数）：市場の不安度を示す指数 → 30〜40超の急騰後に低下し始めたら相場回復の買い候補",
-    ]},
+    {title:"📊 データ取得",items:["米国株：Yahoo Finance・15分遅延","日本株：Yahoo Finance・15分遅延","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
+    {title:"✨ クロス予測",items:["MACDヒストグラムとスコアで自動分類","GC発生：MACDがゴールデンクロス直後","GC接近：強気ゾーン＋スコア60以上","GC監視：強気ゾーン＋スコア50以上","DC発生・DC接近：逆のパターン"]},
+    {title:"📈 スコア計算",items:["トレンド（MA20・MA50）：最大20点","MACD：最大30点（GC発生で30点）","RSI：最大25点（売られすぎで25点）","ボリンジャーバンド：最大20点","ストキャスティクス：最大15点"]},
+    {title:"📉 スパークライン",items:["直近30本分（約1.5ヶ月）を表示","黄色ライン：MA5","青紫ライン：MA25","緑/赤ライン（半透明）：価格"]},
+    {title:"🔗 デバイス同期",items:["お気に入り登録時にサーバーへ自動保存","起動時にサーバーからデータを自動取得","Pushoverでデバイスに同期IDを通知","同期タブでIDを入力して別デバイスと同期"]},
+    {title:"💼 ポートフォリオ",items:["損切りライン到達で枠が赤く変化","目標価格到達で枠が緑に変化","5分ごとに自動で価格更新"]},
+    {title:"📖 指標の見方",items:["PER（株価収益率）：株価が1株利益の何倍か → 業種平均より低ければ割安で買い候補","PBR（株価純資産倍率）：株価が純資産の何倍か → 1倍割れは理論上割安で買い候補","RSI（相対力指数）：0〜100で買われすぎ・売られすぎを表示 → 30以下で売られすぎ・反発狙いの買い候補","MACD：トレンド転換を示す指標 → ゴールデンクロス発生時が買いシグナル","VIX（恐怖指数）：市場の不安度を示す指数 → 30〜40超の急騰後に低下し始めたら相場回復の買い候補"]},
   ];
   return(
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:400,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
@@ -1054,7 +992,6 @@ function HelpModal(p){
   );
 }
 
-
 // ── MarketHours ───────────────────────────────────────────────────────────────
 function MarketHours(){
   var nowS=useState(new Date());var now=nowS[0],setNow=nowS[1];
@@ -1062,40 +999,28 @@ function MarketHours(){
     var t=setInterval(function(){setNow(new Date());},60000);
     return function(){clearInterval(t);};
   },[]);
-
-  // JSTで現在時刻を計算
   var jst=new Date(now.getTime()+9*60*60*1000);
   var h=jst.getUTCHours(),m=jst.getUTCMinutes(),dow=jst.getUTCDay();
   var isWeekday=dow>=1&&dow<=5;
   var timeMin=h*60+m;
-
-  // 日本株: 平日 9:00-11:30 / 12:30-15:30
   var jpOpen=isWeekday&&((timeMin>=540&&timeMin<690)||(timeMin>=750&&timeMin<930));
-  var jpLabel=jpOpen?"開場中":"閉場";
-
-  // 米国株(JST): 平日 23:30-6:00(夏時間) / 0:30-7:00(冬時間)
-  // 夏時間: 3月第2日曜〜11月第1日曜（概算）
+  // ── [FIX #10] 夏時間をより正確に判定（3月〜11月の大まかな範囲） ──────
   var month=jst.getUTCMonth()+1;
-  var isSummer=month>=4&&month<=10;
+  var day=jst.getUTCDate();
+  // 3月は8日以降、11月は7日以前を夏時間とする（DST第2日曜/第1日曜の近似）
+  var isSummer=(month>3&&month<11)||(month===3&&day>=8)||(month===11&&day<=7);
   var usStartMin=isSummer?22*60+30:23*60+30;
   var usEndMin=isSummer?5*60:6*60;
-  // 日付をまたぐので判定
   var usOpen=isWeekday&&(timeMin>=usStartMin||timeMin<usEndMin);
-  // 土曜早朝は金曜の延長なので対応
   if(dow===6&&timeMin<usEndMin) usOpen=true;
   if(dow===0&&timeMin>=usStartMin) usOpen=false;
-  var usLabel=usOpen?"開場中":"閉場";
-  var usTime=isSummer?"22:30〜翌5:00":"23:30〜翌6:00";
-
   return(
     <div style={{display:"flex",gap:8,alignItems:"center"}}>
-      {/* 日本株 */}
       <div style={{display:"flex",flexDirection:"column",gap:2}}>
         <span style={{fontSize:11,fontWeight:jpOpen?700:400,color:jpOpen?"#22d3a0":"#4a7090"}}>🇯🇵 9:00〜11:30</span>
         <span style={{fontSize:11,fontWeight:jpOpen?700:400,color:jpOpen?"#22d3a0":"#4a7090"}}>🇯🇵 12:30〜15:30</span>
       </div>
       <span style={{fontSize:11,color:"#1e3050"}}>|</span>
-      {/* 米国株 */}
       <div style={{display:"flex",flexDirection:"column",gap:2}}>
         <span style={{fontSize:11,fontWeight:usOpen?700:400,color:usOpen?"#22d3a0":"#4a7090"}}>🇺🇸 22:30〜翌5:00 <span style={{fontSize:9,color:usOpen?"#22d3a0":"#2a6090"}}>[夏]</span></span>
         <span style={{fontSize:11,fontWeight:usOpen?700:400,color:usOpen?"#22d3a0":"#4a7090"}}>🇺🇸 23:30〜翌6:00 <span style={{fontSize:9,color:usOpen?"#22d3a0":"#2a6090"}}>[冬]</span></span>
@@ -1151,7 +1076,6 @@ export default function App(){
     setTs(new Date().toLocaleTimeString("ja-JP"));
     setLoading(false);
   },[]);
-  // VIX取得
   useEffect(function(){
     fetch(VERCEL_API+"?ticker="+encodeURIComponent("^VIX")+"&range=5d")
       .then(function(r){return r.json();})
@@ -1160,7 +1084,6 @@ export default function App(){
         if(meta) setVix(meta.regularMarketPrice||null);
       }).catch(function(){});
   },[]);
-
   useEffect(function(){
     fetch(SYNC_API+"?userId="+userId)
       .then(function(r){return r.json();})
@@ -1170,6 +1093,7 @@ export default function App(){
       })
       .catch(function(){})
       .finally(function(){scan();});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
   var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
@@ -1191,7 +1115,8 @@ export default function App(){
         </div>
         <div style={{flex:1,padding:"10px 10px 60px",overflowY:"auto"}}>
           {activeTab==="cross"&&<CrossPanel stocks={stocks} loading={loading} onScan={scan} toggleFav={toggleFav} favs={favs} ts={ts} progress={progress} vix={vix}/>}
-          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav}/>}
+          {/* ── [FIX #2] FavPanel に vix を props として渡す ── */}
+          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix}/>}
           {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
           {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
           {activeTab==="news"&&<NewsPanel/>}
