@@ -553,7 +553,7 @@ function MarketBar(){
       setData(obj);
       setLoading(false);
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  
   },[]);
   if(loading) return(
     <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
@@ -718,7 +718,7 @@ function PortfolioPanel(p){
     fetchLivePrices(portfolio);
     var timer=setInterval(function(){fetchLivePrices(portfolio);},5*60*1000);
     return function(){clearInterval(timer);};
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  
   },[portfolio]);
   var formS=useState({ticker:"",name:"",buyPrice:"",shares:"",stopLoss:"",target:"",market:"US"});
   var form=formS[0],setForm=formS[1];
@@ -1093,7 +1093,7 @@ export default function App(){
       })
       .catch(function(){})
       .finally(function(){scan();});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
   var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
