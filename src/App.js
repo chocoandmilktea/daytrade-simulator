@@ -553,9 +553,6 @@ function MarketBar(){
       setData(obj);
       setLoading(false);
     });
-
-},[]);
-
   },[]);
   if(loading) return(
     <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
