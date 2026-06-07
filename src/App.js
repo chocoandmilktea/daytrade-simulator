@@ -175,13 +175,17 @@ function analyzeStock(stock,pd){
   if(hasTrendUp&&hasGC){overlap+=10;overlapLabels.push("トレンド+GC");}
   if(hasGC&&hasRSIOversold&&hasBBLow){overlap+=10;overlapLabels.push("トリプル");}
 
-  // ── DC/下降トレンド時のペナルティ（スコア上限を下げる）─────────────────
-  var scoreCap=100;
-  if(hasDC&&hasBearTrend){scoreCap=25;}
-  else if(hasDC){scoreCap=35;}
-  else if(hasBearTrend){scoreCap=40;}
+  // overlapを加算してからキャップ適用
+  sc=sc+overlap;
 
-  sc=Math.min(scoreCap,sc+overlap);
+  // ── DC/下降トレンド時のスコア上限 ─────────────────────────────────────
+  var scoreCap=100;
+  if(hasDC&&hasBearTrend){scoreCap=20;}
+  else if(hasDC){scoreCap=30;}
+  else if(hasBearTrend){scoreCap=35;}
+
+  // 最終クランプ（0〜scoreCap）
+  sc=Math.min(scoreCap,Math.max(0,sc));
 
   // ── [FIX #1] トレードタイプ判定：変数が正しく定義された後に実行 ──────
   var recentCloses=closes.slice(-20);
