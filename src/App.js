@@ -170,9 +170,9 @@ function analyzeStock(stock,pd){
   var yearRange=high52>0?(high52-low52)/low52*100:0;
   var absChange=Math.abs(parseFloat(change));
   var tradeType,tradeLabel,tradeColor;
-    if(yearRange>=150||avgDailyChange>=3||absChange>=8){
+  if(yearRange>=60||avgDailyChange>=2||absChange>=5){
     tradeType="short";tradeLabel="⚡スキャル";tradeColor="#f43f5e";
-  }else if(yearRange>=60||avgDailyChange>=1.5||absChange>=3){
+  }else if(yearRange>=25||avgDailyChange>=1||absChange>=2){
     tradeType="mid";tradeLabel="📈デイトレ";tradeColor="#fbbf24";
   }else{
     tradeType="stable";tradeLabel="🌊スイング";tradeColor="#22d3a0";
@@ -553,6 +553,7 @@ function MarketBar(){
       setData(obj);
       setLoading(false);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
   if(loading) return(
     <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
@@ -717,7 +718,7 @@ function PortfolioPanel(p){
     fetchLivePrices(portfolio);
     var timer=setInterval(function(){fetchLivePrices(portfolio);},5*60*1000);
     return function(){clearInterval(timer);};
-  
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[portfolio]);
   var formS=useState({ticker:"",name:"",buyPrice:"",shares:"",stopLoss:"",target:"",market:"US"});
   var form=formS[0],setForm=formS[1];
@@ -1092,7 +1093,7 @@ export default function App(){
       })
       .catch(function(){})
       .finally(function(){scan();});
- 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
   var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
