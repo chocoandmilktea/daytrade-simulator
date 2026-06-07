@@ -30,6 +30,34 @@ export default async function handler(req, res) {
 
     const data = await response.json();
 
+    // ── [FIX] previousClose を終値配列の最後から2番目で正確に計算 ────────
+    const result = data?.chart?.result?.[0];
+    if (result) {
+      const closes = result.indicators?.quote?.[0]?.close || [];
+      const meta = result.meta || {};
+
+      // 有効な終値（null/undefined除外）を取得
+      const validCloses = closes.filter(v => v != null && !isNaN(v));
+
+      // previousClose の優先順位:
+      // 1. 終値配列の最後から2番目（最も正確）
+      // 2. meta.chartPreviousClose（フォールバック）
+      // 3. meta.regularMarketPreviousClose（さらなるフォールバック）
+      const prevFromCloses = validCloses.length >= 2
+        ? validCloses[validCloses.length - 2]
+        : null;
+
+      const previousClose =
+        prevFromCloses ||
+        meta.chartPreviousClose ||
+        meta.regularMarketPreviousClose ||
+        0;
+
+      // metaに正確なpreviousCloseを上書き
+      result.meta.chartPreviousClose = previousClose;
+    }
+    // ────────────────────────────────────────────────────────────────────
+
     // PER・PBRをquoteSummaryから取得
     let per = null, pbr = null;
     try {
