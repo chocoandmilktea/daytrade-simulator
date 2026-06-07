@@ -155,9 +155,6 @@ function analyzeStock(stock,pd){
     else{sc+=6;signals.push({label:sl,val:"中立",state:0});}
   }
 
-  // scが負にならないようにクランプ（0〜100）
-  sc=Math.max(0,sc);
-
   var overlapLabels=[];
   var hasMACD=signals.find(function(sig){return sig.label==="MACD"&&(sig.val==="ゴールデンクロス"||sig.val==="強気ゾーン");});
   var hasRSIOversold=signals.find(function(sig){return sig.label.startsWith("RSI")&&(sig.val==="売られすぎ"||sig.val==="やや売られ");});
