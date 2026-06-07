@@ -1163,6 +1163,9 @@ export default function App(){
     setLoading(true);
     setProgress({done:0,total:0,msg:"出来高ランキング取得中..."});
     var universe=(await buildStockUniverse()).slice();
+    var usCount=universe.filter(function(s){return s.market==="US";}).length;
+    var jpCount=universe.filter(function(s){return s.market==="JP";}).length;
+    setProgress({done:0,total:0,msg:"US:"+usCount+"銘柄 JP:"+jpCount+"銘柄 取得完了 分析開始..."});
     var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
     var uTickers=universe.map(function(s){return s.ticker;});
     favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
