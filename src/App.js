@@ -301,7 +301,6 @@ function SignalModal(p){
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:26,height:26,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</button>
-            {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
             <button onClick={function(){setShowSim(!showSim);}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:8,color:showSim?"#a78bfa":"#4a7090",padding:"4px 8px",fontSize:12,cursor:"pointer"}}>💹</button>
             <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:isFav(s.ticker)?"#fbbf24":"#4a7090",padding:"4px 10px",fontSize:16,cursor:"pointer"}}>
               {isFav(s.ticker)?"★":"☆"}
@@ -467,6 +466,8 @@ function SignalModal(p){
         </div>
       </div>
     </div>
+    {/* HelpModalをSignalModalの外（zIndex:500）でレンダリング */}
+    {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
   );
 }
 
@@ -967,7 +968,7 @@ function HelpModal(p){
     {title:"⚡ トレードタイプの見方",items:["⚡ スキャル（スキャルピング）：数秒〜数分で決済。細かい値動きで何度も売買する短期手法","📈 デイトレ（デイトレード）：当日中に決済。翌日に持ち越さないのが基本ルール","🌊 スイング（スイングトレード）：数日〜2週間保有。トレンドに乗って利益を狙う中期手法","判定基準：年間値幅・直近の日次変動率・当日騰落率をもとに自動分類"]},
   ];
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:400,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:500,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
       <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:520,maxHeight:"92vh",overflowY:"scroll",WebkitOverflowScrolling:"touch"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
