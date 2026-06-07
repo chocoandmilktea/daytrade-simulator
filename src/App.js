@@ -295,6 +295,50 @@ function SignalModal(p){
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   var simTargetS=useState(20);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
   var simStopS=useState(-10);var simStop=simStopS[0],setSimStop=simStopS[1];
+  // ── AI分析 state ──────────────────────────────────────────────────────
+  var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
+  var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
+  var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
+
+  async function runAiAnalysis(){
+    if(aiLoading) return;
+    setShowAi(true);
+    setAiLoading(true);
+    setAiText("");
+    var prompt="あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
+      "銘柄: "+s.ticker+" ("+s.name+")\n"+
+      "市場: "+s.market+"\n"+
+      "現在値: "+s.price+"\n"+
+      "前日比: "+s.change+"%\n"+
+      "総合スコア: "+s.score+"/100\n"+
+      "トレードタイプ: "+s.tradeLabel+"\n"+
+      "52週高値比: "+s.fromHigh.toFixed(1)+"%\n"+
+      "52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
+      "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
+      "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
+      "以下の3点を各2〜3文で答えてください:\n"+
+      "1. 現在の相場状況と注目ポイント\n"+
+      "2. このスコアになった主な理由\n"+
+      "3. 今後の注目ポイントと注意事項";
+    try{
+      var res=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:1000,
+          messages:[{role:"user",content:prompt}]
+        })
+      });
+      var data=await res.json();
+      var text=data.content&&data.content[0]&&data.content[0].text||"分析できませんでした。";
+      setAiText(text);
+    }catch(e){
+      setAiText("エラーが発生しました: "+e.message);
+    }
+    setAiLoading(false);
+  }
+  // ─────────────────────────────────────────────────────────────────────
 
   // ── [FIX #8] localStorage を直読みせず props 経由で portfolio を受け取る ──
   function submitAdd(){
@@ -324,6 +368,7 @@ function SignalModal(p){
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:26,height:26,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>?</button>
+            <button onClick={runAiAnalysis} style={{background:showAi?"#0a1a0a":"transparent",border:"1px solid "+(showAi?"#22d3a0":"#2a4060"),borderRadius:8,color:showAi?"#22d3a0":"#4a7090",padding:"4px 8px",fontSize:12,cursor:"pointer"}}>🤖</button>
             <button onClick={function(){setShowSim(!showSim);}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:8,color:showSim?"#a78bfa":"#4a7090",padding:"4px 8px",fontSize:12,cursor:"pointer"}}>💹</button>
             <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:isFav(s.ticker)?"#fbbf24":"#4a7090",padding:"4px 10px",fontSize:16,cursor:"pointer"}}>
               {isFav(s.ticker)?"★":"☆"}
@@ -465,6 +510,26 @@ function SignalModal(p){
             </div>
           );
         })()}
+        {/* ── AI分析パネル ── */}
+        {showAi&&(
+          <div style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"14px",marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#22d3a0"}}>🤖 AI分析</div>
+              <button onClick={function(){setShowAi(false);setAiText("");}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:11,cursor:"pointer"}}>✕</button>
+            </div>
+            {aiLoading?(
+              <div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"center",padding:"16px 0"}}>
+                <div style={{fontSize:20}}>⏳</div>
+                <div style={{fontSize:11,color:"#4a90c0"}}>AIが分析中...</div>
+              </div>
+            ):(
+              <div style={{fontSize:11,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}</div>
+            )}
+            {!aiLoading&&aiText&&(
+              <button onClick={runAiAnalysis} style={{marginTop:10,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:10,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>
+            )}
+          </div>
+        )}
         <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
         <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:10}}>
           {s.signals.map(function(sig,i){
