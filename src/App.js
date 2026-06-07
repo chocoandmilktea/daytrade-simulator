@@ -165,16 +165,26 @@ function analyzeStock(stock,pd){
   var hasStochOversold=signals.find(function(sig){return sig.label.startsWith("Stoch")&&(sig.val==="売られすぎ"||sig.val==="やや売られ");});
   var hasTrendUp=signals.find(function(sig){return sig.label==="トレンド"&&(sig.val==="上昇トレンド"||sig.val==="MA20上");});
   var hasGC=signals.find(function(sig){return sig.label==="MACD"&&sig.val==="ゴールデンクロス";});
+  var hasDC=signals.find(function(sig){return sig.label==="MACD"&&sig.val==="デッドクロス";});
+  var hasBearTrend=signals.find(function(sig){return sig.label==="トレンド"&&(sig.val==="下降トレンド"||sig.val==="MA20下");});
   var overlap=0;
 
+  // ── 買いシグナル重複ボーナス（GC/強気ゾーンのときのみ有効）──────────────
   if(hasGC&&hasRSIOversold){overlap+=15;overlapLabels.push("GC+RSI");}
   if(hasGC&&hasBBLow){overlap+=12;overlapLabels.push("GC+BB");}
-  if(hasRSIOversold&&hasBBLow){overlap+=10;overlapLabels.push("RSI+BB");}
-  if(hasRSIOversold&&hasStochOversold){overlap+=8;overlapLabels.push("RSI+Stoch");}
-  if(hasBBLow&&hasStochOversold){overlap+=8;overlapLabels.push("BB+Stoch");}
+  if(hasRSIOversold&&hasBBLow&&!hasDC&&!hasBearTrend){overlap+=10;overlapLabels.push("RSI+BB");}
+  if(hasRSIOversold&&hasStochOversold&&!hasDC&&!hasBearTrend){overlap+=8;overlapLabels.push("RSI+Stoch");}
+  if(hasBBLow&&hasStochOversold&&!hasDC&&!hasBearTrend){overlap+=8;overlapLabels.push("BB+Stoch");}
   if(hasTrendUp&&hasGC){overlap+=10;overlapLabels.push("トレンド+GC");}
   if(hasGC&&hasRSIOversold&&hasBBLow){overlap+=10;overlapLabels.push("トリプル");}
-  sc=Math.min(100,sc+overlap);
+
+  // ── DC/下降トレンド時のペナルティ（スコア上限を下げる）─────────────────
+  var scoreCap=100;
+  if(hasDC&&hasBearTrend){scoreCap=25;}
+  else if(hasDC){scoreCap=35;}
+  else if(hasBearTrend){scoreCap=40;}
+
+  sc=Math.min(scoreCap,sc+overlap);
 
   // ── [FIX #1] トレードタイプ判定：変数が正しく定義された後に実行 ──────
   var recentCloses=closes.slice(-20);
