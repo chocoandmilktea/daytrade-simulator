@@ -33,6 +33,17 @@ async function buildStockUniverse(){
   var results=await Promise.all([fetchRanking("us"),fetchRanking("jp")]);
   var us=results[0]||[];
   var jp=results[1]||[];
+
+  // どちらかが空の場合、リトライを1回行う
+  if(us.length===0){
+    var retry=await fetchRanking("us");
+    us=retry||[];
+  }
+  if(jp.length===0){
+    var retry2=await fetchRanking("jp");
+    jp=retry2||[];
+  }
+
   var seen={},out=[];
   us.slice(0,50).concat(jp.slice(0,50)).forEach(function(s){if(!seen[s.ticker]){seen[s.ticker]=true;out.push(s);}});
   return out;
@@ -480,7 +491,7 @@ function StockCard(p){
   var showModalS=useState(false); var showModal=showModalS[0],setShowModal=showModalS[1];
 
   // ── [UI①] スコアに応じた枠色 ──────────────────────────────────────────
-  var borderColor=s.score>=68?"#22d3a040":s.score>=42?"#fbbf2430":"#f43f5e20";
+  var borderColor=s.score>=68?"#22d3a0":s.score>=42?"#fbbf24":"#f43f5e";
 
   // ── [UI③] 52週ポジション ─────────────────────────────────────────────
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
