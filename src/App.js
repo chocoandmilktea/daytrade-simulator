@@ -170,9 +170,9 @@ function analyzeStock(stock,pd){
   var yearRange=high52>0?(high52-low52)/low52*100:0;
   var absChange=Math.abs(parseFloat(change));
   var tradeType,tradeLabel,tradeColor;
-  if(yearRange>=60||avgDailyChange>=2||absChange>=5){
+    if(yearRange>=150||avgDailyChange>=3||absChange>=8){
     tradeType="short";tradeLabel="⚡スキャル";tradeColor="#f43f5e";
-  }else if(yearRange>=25||avgDailyChange>=1||absChange>=2){
+  }else if(yearRange>=60||avgDailyChange>=1.5||absChange>=3){
     tradeType="mid";tradeLabel="📈デイトレ";tradeColor="#fbbf24";
   }else{
     tradeType="stable";tradeLabel="🌊スイング";tradeColor="#22d3a0";
