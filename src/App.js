@@ -99,45 +99,53 @@ function analyzeStock(stock,pd){
   var position52=((price-low52)/range52*100);
   // ──────────────────────────────────────────────────────────────────────
 
+  // ── トレンド（最大+20 / 最小-15） ──────────────────────────────────────
   if(s20&&s50){
     if(price>s20&&s20>s50){sc+=20;signals.push({label:"トレンド",val:"上昇トレンド",state:1});}
-    else if(price<s20&&s20<s50){signals.push({label:"トレンド",val:"下降トレンド",state:-1});}
+    else if(price<s20&&s20<s50){sc-=15;signals.push({label:"トレンド",val:"下降トレンド",state:-1});}
     else{sc+=5;signals.push({label:"トレンド",val:"横ばい",state:0});}
   }else if(s20){
     if(price>s20){sc+=10;signals.push({label:"トレンド",val:"MA20上",state:1});}
-    else{signals.push({label:"トレンド",val:"MA20下",state:-1});}
+    else{sc-=8;signals.push({label:"トレンド",val:"MA20下",state:-1});}
   }
 
+  // ── MACD（最大+30 / 最小-25） ────────────────────────────────────────
   if(mNow.hist>0&&mPrev&&mPrev.hist<=0){sc+=30;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});}
   else if(mNow.hist>0){sc+=10;signals.push({label:"MACD",val:"強気ゾーン",state:1});}
-  else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){signals.push({label:"MACD",val:"デッドクロス",state:-1});}
-  else{signals.push({label:"MACD",val:"弱気ゾーン",state:-1});}
+  else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){sc-=25;signals.push({label:"MACD",val:"デッドクロス",state:-1});}
+  else{sc-=8;signals.push({label:"MACD",val:"弱気ゾーン",state:-1});}
 
+  // ── RSI（最大+25 / 最小-12） ─────────────────────────────────────────
   var rl="RSI("+rsiVal.toFixed(1)+")";
   if(rsiVal<30){sc+=25;signals.push({label:rl,val:"売られすぎ",state:1});}
   else if(rsiVal<40){sc+=18;signals.push({label:rl,val:"やや売られ",state:1});}
   else if(rsiVal<50){sc+=12;signals.push({label:rl,val:"やや弱め",state:0});}
   else if(rsiVal<60){sc+=8;signals.push({label:rl,val:"中立",state:0});}
   else if(rsiVal<70){sc+=5;signals.push({label:rl,val:"やや強め",state:0});}
-  else{signals.push({label:rl,val:"買われすぎ",state:-1});}
+  else{sc-=12;signals.push({label:rl,val:"買われすぎ",state:-1});}
 
+  // ── ボリンジャーバンド（最大+20 / 最小-15） ───────────────────────────
   if(bollVal){
     var bbPos=(closes[n]-bollVal.lower)/(bollVal.upper-bollVal.lower||1);
     if(price<=bollVal.lower){sc+=20;signals.push({label:"BB",val:"下限→反発",state:1});}
     else if(bbPos<0.2){sc+=15;signals.push({label:"BB",val:"下限付近",state:1});}
-    else if(price>=bollVal.upper){signals.push({label:"BB",val:"上限→過熱",state:-1});}
+    else if(price>=bollVal.upper){sc-=15;signals.push({label:"BB",val:"上限→過熱",state:-1});}
     else if(bbPos>0.8){sc+=3;signals.push({label:"BB",val:"上限付近",state:0});}
     else{sc+=8;signals.push({label:"BB",val:"バンド内",state:0});}
   }
 
+  // ── ストキャスティクス（最大+15 / 最小-10） ───────────────────────────
   if(stochVal!==null){
     var sl="Stoch("+stochVal.toFixed(1)+")";
     if(stochVal<20){sc+=15;signals.push({label:sl,val:"売られすぎ",state:1});}
     else if(stochVal<35){sc+=10;signals.push({label:sl,val:"やや売られ",state:1});}
-    else if(stochVal>80){signals.push({label:sl,val:"買われすぎ",state:-1});}
+    else if(stochVal>80){sc-=10;signals.push({label:sl,val:"買われすぎ",state:-1});}
     else if(stochVal>65){sc+=3;signals.push({label:sl,val:"やや強め",state:0});}
     else{sc+=6;signals.push({label:sl,val:"中立",state:0});}
   }
+
+  // scが負にならないようにクランプ（0〜100）
+  sc=Math.max(0,sc);
 
   var overlapLabels=[];
   var hasMACD=signals.find(function(sig){return sig.label==="MACD"&&(sig.val==="ゴールデンクロス"||sig.val==="強気ゾーン");});
@@ -553,7 +561,7 @@ function MarketBar(){
       setData(obj);
       setLoading(false);
     });
-  
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
   if(loading) return(
     <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
@@ -718,7 +726,7 @@ function PortfolioPanel(p){
     fetchLivePrices(portfolio);
     var timer=setInterval(function(){fetchLivePrices(portfolio);},5*60*1000);
     return function(){clearInterval(timer);};
-  
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[portfolio]);
   var formS=useState({ticker:"",name:"",buyPrice:"",shares:"",stopLoss:"",target:"",market:"US"});
   var form=formS[0],setForm=formS[1];
@@ -1093,7 +1101,7 @@ export default function App(){
       })
       .catch(function(){})
       .finally(function(){scan();});
-  
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
   var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
