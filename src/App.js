@@ -321,18 +321,15 @@ function SignalModal(p){
       "2. このスコアになった主な理由\n"+
       "3. 今後の注目ポイントと注意事項";
     try{
-      var res=await fetch("https://api.anthropic.com/v1/messages",{
+      var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"claude-sonnet-4-20250514",
-          max_tokens:1000,
-          messages:[{role:"user",content:prompt}]
-        })
+        body:JSON.stringify({prompt:prompt}),
+        signal:AbortSignal.timeout(30000)
       });
       var data=await res.json();
-      var text=data.content&&data.content[0]&&data.content[0].text||"分析できませんでした。";
-      setAiText(text);
+      if(data.error) throw new Error(data.error);
+      setAiText(data.text||"分析できませんでした。");
     }catch(e){
       setAiText("エラーが発生しました: "+e.message);
     }
