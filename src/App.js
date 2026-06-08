@@ -447,7 +447,12 @@ function SignalModal(p){
           );
         })()}
         <div style={{background:"#050e1c",borderRadius:10,padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontSize:22,fontWeight:800,color:"#e0f0ff"}}>{s.price}</span>
+          <div>
+            <span style={{fontSize:22,fontWeight:800,color:"#e0f0ff"}}>{s.price}</span>
+            {s.market==="US"&&p.usdJpy&&(
+              <div style={{fontSize:10,color:"#4a7090",marginTop:2}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()} (¥{Math.round(p.usdJpy)})</div>
+            )}
+          </div>
           <span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
         </div>
         <div style={{background:"#030b14",borderRadius:8,padding:"4px",marginBottom:8}}>
@@ -579,7 +584,7 @@ function StockCard(p){
       if(t.closest("button")||t.closest("a")||t.closest("input")) return;
       setShowModal(true);
     }}>
-      {showModal&&<SignalModal s={s} onClose={function(){setShowModal(false);}} toggleFav={toggleFav} isFav={isFav} vix={p.vix}/>}
+      {showModal&&<SignalModal s={s} onClose={function(){setShowModal(false);}} toggleFav={toggleFav} isFav={isFav} vix={p.vix} usdJpy={p.usdJpy}/>}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <ScoreRing score={s.score}/>
         <div style={{flex:1,minWidth:0}}>
@@ -617,7 +622,12 @@ function StockCard(p){
       )}
       <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:6,alignItems:"center"}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,alignItems:"center"}}>
-          <span style={{fontSize:13,color:"#d8eeff",fontWeight:800}}>{s.price}</span>
+          <div>
+            <span style={{fontSize:13,color:"#d8eeff",fontWeight:800}}>{s.price}</span>
+            {s.market==="US"&&p.usdJpy&&(
+              <div style={{fontSize:9,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>
+            )}
+          </div>
           <div style={{textAlign:"right"}}>
             {cross&&cross.type!=="NONE"
               ? <span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>
@@ -723,7 +733,7 @@ function CrossSection(sp){
       <div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:8,padding:"4px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
         {sp.items.map(function(item){
-          return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={function(t){return sp.favs.indexOf(t)>=0;}} cross={item.cross} vix={sp.vix}/>;
+          return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={function(t){return sp.favs.indexOf(t)>=0;}} cross={item.cross} vix={sp.vix} usdJpy={sp.usdJpy}/>;
         })}
       </div>
     </div>
@@ -814,11 +824,11 @@ function CrossPanel(p){
         {sBtn("change","騰落率順")}
       </div>
       {!hasAny&&(<div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:12}}>現在クロス条件に該当する銘柄がありません</div>)}
-      <CrossSection title="⚡ GC接近中" items={applyFilterSort(gcNear)} color="#fbbf24" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
-      <CrossSection title="🔥 GC発生中" items={applyFilterSort(gcNow)} color="#22d3a0" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
-      <CrossSection title="👀 GC監視中" items={applyFilterSort(gcWatch)} color="#60a5fa" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
-      <CrossSection title="⚠ DC接近中" items={applyFilterSort(dcNear)} color="#fb923c" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
-      <CrossSection title="💀 DC発生中" items={applyFilterSort(dcNow)} color="#f43f5e" toggleFav={toggleFav} favs={favs} vix={p.vix}/>
+      <CrossSection title="⚡ GC接近中" items={applyFilterSort(gcNear)} color="#fbbf24" toggleFav={toggleFav} favs={favs} vix={p.vix} usdJpy={p.usdJpy}/>
+      <CrossSection title="🔥 GC発生中" items={applyFilterSort(gcNow)} color="#22d3a0" toggleFav={toggleFav} favs={favs} vix={p.vix} usdJpy={p.usdJpy}/>
+      <CrossSection title="👀 GC監視中" items={applyFilterSort(gcWatch)} color="#60a5fa" toggleFav={toggleFav} favs={favs} vix={p.vix} usdJpy={p.usdJpy}/>
+      <CrossSection title="⚠ DC接近中" items={applyFilterSort(dcNear)} color="#fb923c" toggleFav={toggleFav} favs={favs} vix={p.vix} usdJpy={p.usdJpy}/>
+      <CrossSection title="💀 DC発生中" items={applyFilterSort(dcNow)} color="#f43f5e" toggleFav={toggleFav} favs={favs} vix={p.vix} usdJpy={p.usdJpy}/>
     </div>
   );
 }
@@ -870,7 +880,7 @@ function FavPanel(p){
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
         {displayStocks.map(function(s){
           var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix}/>;
+          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
         })}
       </div>
       {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:11}}>ティッカーを入力して追加できます</div>}
@@ -941,7 +951,7 @@ function AllStocksPanel(p){
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
         {displayStocks.map(function(s){
           var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix}/>;
+          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
         })}
       </div>
       {displayStocks.length===0&&(
@@ -1298,6 +1308,7 @@ export default function App(){
   var c=useState({done:0,total:0,msg:null});var progress=c[0],setProgress=c[1];
   var g=useState(null);var ts=g[0],setTs=g[1];
   var vixS=useState(null);var vix=vixS[0],setVix=vixS[1];
+  var usdJpyS=useState(null);var usdJpy=usdJpyS[0],setUsdJpy=usdJpyS[1];
   var k=useState("cross");var activeTab=k[0],setActiveTab=k[1];
   var userId=(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}})();
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
@@ -1351,6 +1362,14 @@ export default function App(){
       }).catch(function(){});
   },[]);
   useEffect(function(){
+    fetch(VERCEL_API+"?ticker="+encodeURIComponent("USDJPY=X")+"&range=5d")
+      .then(function(r){return r.json();})
+      .then(function(json){
+        var meta=json&&json.chart&&json.chart.result&&json.chart.result[0]&&json.chart.result[0].meta;
+        if(meta) setUsdJpy(meta.regularMarketPrice||null);
+      }).catch(function(){});
+  },[]);
+  useEffect(function(){
     fetch(SYNC_API+"?userId="+userId)
       .then(function(r){return r.json();})
       .then(function(data){
@@ -1379,10 +1398,10 @@ export default function App(){
           {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
         </div>
         <div style={{flex:1,padding:"10px 10px 60px",overflowY:"auto"}}>
-          {activeTab==="cross"&&<CrossPanel stocks={stocks} loading={loading} onScan={scan} toggleFav={toggleFav} favs={favs} ts={ts} progress={progress} vix={vix}/>}
-          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix}/>}
+          {activeTab==="cross"&&<CrossPanel stocks={stocks} loading={loading} onScan={scan} toggleFav={toggleFav} favs={favs} ts={ts} progress={progress} vix={vix} usdJpy={usdJpy}/>}
+          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy}/>}
           {/* ── [FIX #2] FavPanel に vix を props として渡す ── */}
-          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix}/>}
+          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy}/>}
           {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
           {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
           {activeTab==="news"&&<NewsPanel/>}
