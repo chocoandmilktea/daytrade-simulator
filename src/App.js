@@ -350,8 +350,10 @@ function SignalModal(p){
   return(
     <>
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:300,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:"8px 16px"}}
-      onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
-      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"95vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+      onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}
+      onTouchMove={function(e){e.preventDefault();}}>
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"95vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}
+        onTouchStart={function(e){e.stopPropagation();}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
           <div>
             <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
@@ -490,7 +492,7 @@ function SignalModal(p){
                   <div style={{position:"absolute",top:-2,left:"calc("+Math.min(98,Math.max(2,pos))+"% - 5px)",width:10,height:10,borderRadius:"50%",background:posColor,border:"2px solid #071428"}}/>
                 </div>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:6}}>
                 <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
                   <div style={{fontSize:9,color:"#2a6090"}}>高値比</div>
                   <div style={{fontSize:12,fontWeight:700,color:fromHighColor}}>{s.fromHigh.toFixed(1)}%</div>
@@ -502,6 +504,14 @@ function SignalModal(p){
                 <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
                   <div style={{fontSize:9,color:"#2a6090"}}>VIX</div>
                   <div style={{fontSize:12,fontWeight:700,color:p.vix&&parseFloat(p.vix)>=20?"#f43f5e":"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div>
+                </div>
+                <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
+                  <div style={{fontSize:9,color:"#2a6090"}}>PER</div>
+                  <div style={{fontSize:12,fontWeight:700,color:s.per&&s.per<=15?"#22d3a0":"#d8eeff"}}>{s.per?s.per.toFixed(1):"─"}</div>
+                </div>
+                <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
+                  <div style={{fontSize:9,color:"#2a6090"}}>PBR</div>
+                  <div style={{fontSize:12,fontWeight:700,color:s.pbr&&s.pbr<1?"#22d3a0":"#d8eeff"}}>{s.pbr?s.pbr.toFixed(2):"─"}</div>
                 </div>
               </div>
             </div>
@@ -633,6 +643,19 @@ function StockCard(p){
             <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:6,color:"#a5b4fc",padding:"5px 8px",fontSize:9,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block",whiteSpace:"nowrap"}}>🔗 Y!</a>
           </div>
       </div>
+      {/* ── PER/PBR ── */}
+      {(s.per||s.pbr)&&(
+        <div style={{display:"flex",gap:6}}>
+          <div style={{background:"#071428",borderRadius:6,padding:"4px 8px",flex:1}}>
+            <span style={{fontSize:8,color:"#2a6090"}}>PER </span>
+            <span style={{fontSize:10,fontWeight:700,color:s.per&&s.per<=15?"#22d3a0":"#b8cce0"}}>{s.per?s.per.toFixed(1):"─"}</span>
+          </div>
+          <div style={{background:"#071428",borderRadius:6,padding:"4px 8px",flex:1}}>
+            <span style={{fontSize:8,color:"#2a6090"}}>PBR </span>
+            <span style={{fontSize:10,fontWeight:700,color:s.pbr&&s.pbr<1?"#22d3a0":"#b8cce0"}}>{s.pbr?s.pbr.toFixed(2):"─"}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
