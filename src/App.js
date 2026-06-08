@@ -492,7 +492,7 @@ function SignalModal(p){
                   <div style={{position:"absolute",top:-2,left:"calc("+Math.min(98,Math.max(2,pos))+"% - 5px)",width:10,height:10,borderRadius:"50%",background:posColor,border:"2px solid #071428"}}/>
                 </div>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:6}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
                 <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
                   <div style={{fontSize:9,color:"#2a6090"}}>高値比</div>
                   <div style={{fontSize:12,fontWeight:700,color:fromHighColor}}>{s.fromHigh.toFixed(1)}%</div>
@@ -504,14 +504,6 @@ function SignalModal(p){
                 <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
                   <div style={{fontSize:9,color:"#2a6090"}}>VIX</div>
                   <div style={{fontSize:12,fontWeight:700,color:p.vix&&parseFloat(p.vix)>=20?"#f43f5e":"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div>
-                </div>
-                <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
-                  <div style={{fontSize:9,color:"#2a6090"}}>PER</div>
-                  <div style={{fontSize:12,fontWeight:700,color:s.per&&s.per<=15?"#22d3a0":"#d8eeff"}}>{s.per?s.per.toFixed(1):"─"}</div>
-                </div>
-                <div style={{background:"#071428",borderRadius:6,padding:"6px 8px"}}>
-                  <div style={{fontSize:9,color:"#2a6090"}}>PBR</div>
-                  <div style={{fontSize:12,fontWeight:700,color:s.pbr&&s.pbr<1?"#22d3a0":"#d8eeff"}}>{s.pbr?s.pbr.toFixed(2):"─"}</div>
                 </div>
               </div>
             </div>
