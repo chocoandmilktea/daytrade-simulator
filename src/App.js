@@ -825,145 +825,6 @@ function CrossPanel(p){
 
 // ── FavPanel ──────────────────────────────────────────────────────────────────
 // ── [FIX #2] vix を props で受け取るように修正 ───────────────────────────────
-// ── セクタープリセットデータ ──────────────────────────────────────────────────
-var SECTOR_PRESETS=[
-  {
-    key:"finance",label:"🏦 金融",color:"#3b82f6",
-    stocks:[
-      {ticker:"JPM",name:"JPMorgan Chase"},
-      {ticker:"GS",name:"Goldman Sachs"},
-      {ticker:"8306.T",name:"三菱UFJ"},
-      {ticker:"8316.T",name:"三井住友FG"},
-      {ticker:"8411.T",name:"みずほFG"},
-    ]
-  },
-  {
-    key:"health",label:"💊 ヘルスケア・医薬品",color:"#22d3a0",
-    stocks:[
-      {ticker:"JNJ",name:"Johnson & Johnson"},
-      {ticker:"PFE",name:"Pfizer"},
-      {ticker:"4502.T",name:"武田薬品工業"},
-      {ticker:"4503.T",name:"アステラス製薬"},
-      {ticker:"4568.T",name:"第一三共"},
-    ]
-  },
-  {
-    key:"consumer",label:"🛍 消費・小売",color:"#fbbf24",
-    stocks:[
-      {ticker:"MCD",name:"McDonald's"},
-      {ticker:"WMT",name:"Walmart"},
-      {ticker:"8267.T",name:"イオン"},
-      {ticker:"3382.T",name:"セブン&アイ"},
-    ]
-  },
-  {
-    key:"energy",label:"⚡ エネルギー・素材",color:"#fb923c",
-    stocks:[
-      {ticker:"XOM",name:"ExxonMobil"},
-      {ticker:"CVX",name:"Chevron"},
-      {ticker:"1605.T",name:"INPEX"},
-      {ticker:"5411.T",name:"JFEホールディングス"},
-    ]
-  },
-];
-
-function SectorPreset(p){
-  var favs=p.favs,toggleFav=p.toggleFav;
-  var openS=useState(null);var openKey=openS[0],setOpenKey=openS[1];
-  var selectedS=useState({});var selected=selectedS[0],setSelected=selectedS[1];
-  var addingS=useState(false);var adding=addingS[0],setAdding=addingS[1];
-  var doneS=useState(null);var done=doneS[0],setDone=doneS[1];
-
-  function toggleOpen(key){
-    if(openKey===key){setOpenKey(null);setSelected({});}
-    else{
-      setOpenKey(key);
-      // 未登録の銘柄をデフォルト選択
-      var sec=SECTOR_PRESETS.find(function(s){return s.key===key;});
-      var init={};
-      sec.stocks.forEach(function(s){
-        if(favs.indexOf(s.ticker)<0) init[s.ticker]=true;
-      });
-      setSelected(init);
-    }
-  }
-
-  function toggleSelect(ticker){
-    setSelected(function(prev){
-      var next=Object.assign({},prev);
-      next[ticker]=!next[ticker];
-      return next;
-    });
-  }
-
-  async function addSelected(){
-    var tickers=Object.keys(selected).filter(function(t){return selected[t]&&favs.indexOf(t)<0;});
-    if(!tickers.length) return;
-    setAdding(true);
-    for(var i=0;i<tickers.length;i++){
-      toggleFav(tickers[i]);
-      await new Promise(function(r){setTimeout(r,100);});
-    }
-    setAdding(false);
-    setDone(tickers.length);
-    setTimeout(function(){setDone(null);setOpenKey(null);setSelected({});},2000);
-  }
-
-  var selectedCount=Object.keys(selected).filter(function(t){return selected[t]&&favs.indexOf(t)<0;}).length;
-
-  return(
-    <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
-      <div style={{fontSize:10,fontWeight:700,color:"#4a7090",marginBottom:10}}>📂 セクター別プリセット</div>
-      <div style={{display:"flex",flexDirection:"column",gap:6}}>
-        {SECTOR_PRESETS.map(function(sec){
-          var isOpen=openKey===sec.key;
-          var registeredCount=sec.stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;}).length;
-          return(
-            <div key={sec.key} style={{borderRadius:8,overflow:"hidden",border:"1px solid "+(isOpen?sec.color+"50":"#0f2040")}}>
-              {/* セクターヘッダー */}
-              <div onClick={function(){toggleOpen(sec.key);}} style={{background:isOpen?sec.color+"15":"#071428",padding:"9px 12px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:11,fontWeight:700,color:isOpen?sec.color:"#b8cce0"}}>{sec.label}</span>
-                <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  {registeredCount>0&&<span style={{fontSize:9,color:sec.color,background:sec.color+"20",padding:"1px 6px",borderRadius:10}}>{registeredCount}/{sec.stocks.length}登録済</span>}
-                  <span style={{fontSize:10,color:"#4a7090"}}>{isOpen?"▲":"▼"}</span>
-                </div>
-              </div>
-              {/* 銘柄リスト */}
-              {isOpen&&(
-                <div style={{background:"#040c18",padding:"10px 12px"}}>
-                  <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
-                    {sec.stocks.map(function(s){
-                      var isRegistered=favs.indexOf(s.ticker)>=0;
-                      var isChecked=isRegistered||selected[s.ticker];
-                      var tickerDisplay=s.ticker.replace(".T","");
-                      return(
-                        <div key={s.ticker} onClick={function(){if(!isRegistered)toggleSelect(s.ticker);}} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 8px",borderRadius:6,background:isRegistered?"#071428":"#050e1c",cursor:isRegistered?"default":"pointer",opacity:isRegistered?0.7:1}}>
-                          <div style={{width:16,height:16,borderRadius:4,border:"1px solid "+(isChecked?sec.color:"#2a4060"),background:isChecked?sec.color+"30":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                            {isChecked&&<span style={{fontSize:10,color:sec.color}}>✓</span>}
-                          </div>
-                          <span style={{fontSize:11,fontWeight:700,color:"#d8eeff",width:52,flexShrink:0}}>{tickerDisplay}</span>
-                          <span style={{fontSize:10,color:"#4a7090",flex:1}}>{s.name}</span>
-                          {isRegistered&&<span style={{fontSize:9,color:sec.color}}>登録済</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <button
-                    onClick={addSelected}
-                    disabled={adding||selectedCount===0}
-                    style={{width:"100%",background:selectedCount>0&&!adding?"linear-gradient(135deg,"+sec.color+","+sec.color+"99)":"#0a1828",border:"none",borderRadius:6,color:selectedCount>0&&!adding?"#fff":"#4a7090",padding:"8px",fontSize:11,fontWeight:700,cursor:selectedCount>0&&!adding?"pointer":"not-allowed",fontFamily:"monospace"}}>
-                    {adding?"追加中...":(done?"✅ "+done+"銘柄追加しました":(selectedCount>0?"選択中 "+selectedCount+"銘柄を追加":"追加する銘柄を選択してください"))}
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function FavPanel(p){
   var stocks=p.stocks,favs=p.favs,toggleFav=p.toggleFav,vix=p.vix;
   var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
@@ -973,13 +834,11 @@ function FavPanel(p){
   var sortS=useState("score");var sortBy=sortS[0],setSortBy=sortS[1];
   async function addByTicker(){var raw=searchTicker.trim().toUpperCase();if(!raw)return;var ticker=(raw.match(/^\d{4}$/)?raw+".T":raw);if(favs.indexOf(ticker)>=0){setSearchStatus("already");return;}setSearchStatus("loading");try{var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=2y",{signal:AbortSignal.timeout(15000)});if(!res.ok)throw new Error("not found");toggleFav(ticker);setSearchTicker("");setSearchStatus("ok");setTimeout(function(){setSearchStatus(null);},2000);}catch(e){setSearchStatus("error");setTimeout(function(){setSearchStatus(null);},2000);}}
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
-
   var displayStocks=(filterMkt==="ALL"?favStocks:favStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){
     if(sortBy==="score") return b.score-a.score;
     if(sortBy==="change") return Math.abs(parseFloat(b.change))-Math.abs(parseFloat(a.change));
     return 0;
   });
-
   function fBtn(val,label,activeColor){
     var active=filterMkt===val;
     return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:9,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
@@ -997,8 +856,6 @@ function FavPanel(p){
         </div>
         {statusMsg&&<div style={{fontSize:10,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
       </div>
-      {/* ── セクタープリセット ── */}
-      <SectorPreset favs={favs} toggleFav={toggleFav}/>
       {favStocks.length>0&&(
         <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
           <span style={{fontSize:9,color:"#2a6090",marginRight:2}}>市場:</span>
@@ -1017,6 +874,79 @@ function FavPanel(p){
         })}
       </div>
       {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:11}}>ティッカーを入力して追加できます</div>}
+    </div>
+  );
+}
+
+// ── AllStocksPanel ────────────────────────────────────────────────────────────
+function AllStocksPanel(p){
+  var stocks=p.stocks,loading=p.loading,toggleFav=p.toggleFav,favs=p.favs,vix=p.vix;
+  var filterMktS=useState("ALL");var filterMkt=filterMktS[0],setFilterMkt=filterMktS[1];
+  var sortByS=useState("score");var sortBy=sortByS[0],setSortBy=sortByS[1];
+  var filterTradeS=useState("ALL");var filterTrade=filterTradeS[0],setFilterTrade=filterTradeS[1];
+
+  var displayStocks=stocks.filter(function(s){
+    if(filterMkt!=="ALL"&&s.market!==filterMkt) return false;
+    if(filterTrade==="short"&&s.tradeType!=="short") return false;
+    if(filterTrade==="mid"&&s.tradeType!=="mid") return false;
+    if(filterTrade==="stable"&&s.tradeType!=="stable") return false;
+    return true;
+  }).slice().sort(function(a,b){
+    if(sortBy==="score") return b.score-a.score;
+    if(sortBy==="change") return Math.abs(parseFloat(b.change))-Math.abs(parseFloat(a.change));
+    return 0;
+  });
+
+  function fBtn(val,label,activeColor){
+    var active=filterMkt===val;
+    return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:9,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+  function sBtn(val,label){
+    var active=sortBy===val;
+    return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:9,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+  function tBtn(val,label,color){
+    var active=filterTrade===val;
+    return(<button onClick={function(){setFilterTrade(val);}} style={{background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"3px 8px",fontSize:9,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+
+  if(loading){
+    return(
+      <div style={{textAlign:"center",padding:"60px 20px",color:"#4a7090"}}>
+        <div style={{fontSize:28,marginBottom:12}}>📡</div>
+        <div style={{fontSize:13,color:"#4a90c0"}}>分析中...</div>
+      </div>
+    );
+  }
+
+  return(
+    <div>
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+        <span style={{fontSize:9,color:"#2a6090",marginRight:2}}>市場:</span>
+        {fBtn("ALL","全て","#60a5fa")}
+        {fBtn("US","US","#3b82f6")}
+        {fBtn("JP","JP","#f87171")}
+        <span style={{fontSize:9,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
+        {sBtn("score","スコア順")}
+        {sBtn("change","騰落率順")}
+      </div>
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+        <span style={{fontSize:9,color:"#2a6090",marginRight:2}}>タイプ:</span>
+        {tBtn("ALL","全て","#60a5fa")}
+        {tBtn("short","⚡スキャル","#f43f5e")}
+        {tBtn("mid","📈デイトレ","#fbbf24")}
+        {tBtn("stable","🌊スイング","#22d3a0")}
+        <span style={{fontSize:9,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
+        {displayStocks.map(function(s){
+          var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
+          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix}/>;
+        })}
+      </div>
+      {displayStocks.length===0&&(
+        <div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:12}}>該当する銘柄がありません</div>
+      )}
     </div>
   );
 }
@@ -1431,8 +1361,8 @@ export default function App(){
       .finally(function(){scan();});
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
-  var TABS=[["cross","✨"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
-  var TAB_LABELS={"cross":"クロス予測","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
+  var TABS=[["cross","✨"],["all","📋"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
+  var TAB_LABELS={"cross":"クロス予測","all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
   return(
     <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex"}}>
       <div style={{width:50,background:"#050f20",borderRight:"1px solid #0f2040",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:10,gap:4,flexShrink:0,position:"sticky",top:0,height:"100vh",overflowY:"auto"}}>
@@ -1450,6 +1380,7 @@ export default function App(){
         </div>
         <div style={{flex:1,padding:"10px 10px 60px",overflowY:"auto"}}>
           {activeTab==="cross"&&<CrossPanel stocks={stocks} loading={loading} onScan={scan} toggleFav={toggleFav} favs={favs} ts={ts} progress={progress} vix={vix}/>}
+          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix}/>}
           {/* ── [FIX #2] FavPanel に vix を props として渡す ── */}
           {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix}/>}
           {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
