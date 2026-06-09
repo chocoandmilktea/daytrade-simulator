@@ -213,6 +213,19 @@ function analyzeStock(stock,pd){
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
   var timing=sc>=68?"BUY":sc>=42?"WATCH":"SKIP";
 
+  // ── 適性スコア計算 ────────────────────────────────────────────────────
+  var aptScore=0;
+  if(sc>=68) aptScore+=30;
+  else if(sc>=42) aptScore+=15;
+  var hasTrendUpApt=signals.find(function(sig){return sig.label==="トレンド"&&(sig.val==="上昇トレンド"||sig.val==="MA20上");});
+  if(hasTrendUpApt) aptScore+=25;
+  if(position52<=25) aptScore+=25;
+  else if(position52<=50) aptScore+=15;
+  if(tradeType==="mid") aptScore+=20;
+  else if(tradeType==="stable") aptScore+=10;
+  aptScore=Math.min(100,Math.max(0,aptScore));
+  // ─────────────────────────────────────────────────────────────────────
+
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
@@ -220,6 +233,7 @@ function analyzeStock(stock,pd){
     high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
+    aptScore:aptScore,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
 }
 
@@ -904,6 +918,7 @@ function AllStocksPanel(p){
   }).slice().sort(function(a,b){
     if(sortBy==="score") return b.score-a.score;
     if(sortBy==="change") return Math.abs(parseFloat(b.change))-Math.abs(parseFloat(a.change));
+    if(sortBy==="apt") return (b.aptScore||0)-(a.aptScore||0);
     return 0;
   });
 
@@ -939,6 +954,7 @@ function AllStocksPanel(p){
         <span style={{fontSize:9,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
         {sBtn("score","スコア順")}
         {sBtn("change","騰落率順")}
+        {sBtn("apt","適性順")}
       </div>
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
         <span style={{fontSize:9,color:"#2a6090",marginRight:2}}>タイプ:</span>
