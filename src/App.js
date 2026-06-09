@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 
 // ── [FIX #6] useColumns は未使用のため削除 ────────────────────────────────
 
-var BADGE = {
+var BADGE = 
   BUY:   { bg:"#052e16", border:"#22d3a0", text:"#22d3a0", label:"買い"   },
   WATCH: { bg:"#1c1400", border:"#fbbf24", text:"#fbbf24", label:"様子見" },
   SKIP:  { bg:"#1f0010", border:"#f43f5e", text:"#f43f5e", label:"見送り" },
