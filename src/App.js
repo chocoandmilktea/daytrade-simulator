@@ -215,15 +215,17 @@ function analyzeStock(stock,pd){
 
   // ── 適性スコア計算 ────────────────────────────────────────────────────
   var aptScore=0;
-  if(sc>=68) aptScore+=30;
-  else if(sc>=42) aptScore+=15;
-  var hasTrendUpApt=signals.find(function(sig){return sig.label==="トレンド"&&(sig.val==="上昇トレンド"||sig.val==="MA20上");});
-  if(hasTrendUpApt) aptScore+=25;
-  if(position52<=25) aptScore+=25;
-  else if(position52<=50) aptScore+=15;
-  if(tradeType==="mid") aptScore+=20;
-  else if(tradeType==="stable") aptScore+=10;
-  aptScore=Math.min(100,Math.max(0,aptScore));
+  try{
+    if(sc>=68) aptScore+=30;
+    else if(sc>=42) aptScore+=15;
+    var hasTrendUpApt=signals&&signals.find(function(sig){return sig&&sig.label==="トレンド"&&(sig.val==="上昇トレンド"||sig.val==="MA20上");});
+    if(hasTrendUpApt) aptScore+=25;
+    if(position52!=null&&position52<=25) aptScore+=25;
+    else if(position52!=null&&position52<=50) aptScore+=15;
+    if(tradeType==="mid") aptScore+=20;
+    else if(tradeType==="stable") aptScore+=10;
+    aptScore=Math.min(100,Math.max(0,aptScore));
+  }catch(e){aptScore=0;}
   // ─────────────────────────────────────────────────────────────────────
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
@@ -1346,28 +1348,34 @@ export default function App(){
   var scan=useCallback(async function(){
     setLoading(true);
     setProgress({done:0,total:0,msg:"出来高ランキング取得中..."});
-    var universe=(await buildStockUniverse()).slice();
-    var usCount=universe.filter(function(s){return s.market==="US";}).length;
-    var jpCount=universe.filter(function(s){return s.market==="JP";}).length;
-    setProgress({done:0,total:0,msg:"US:"+usCount+"銘柄 JP:"+jpCount+"銘柄 取得完了 分析開始..."});
-    var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
-    var uTickers=universe.map(function(s){return s.ticker;});
-    favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
-    setProgress({done:0,total:universe.length,msg:null});
-    var results=[],BATCH=6;
-    for(var i=0;i<universe.length;i+=BATCH){
-      var batch=universe.slice(i,i+BATCH);
-      await Promise.all(batch.map(async function(stock){
-        var pd;try{pd=await fetchYahoo(stock.ticker);}catch(err){pd=genSim(stock.ticker);}
-        results.push(analyzeStock(stock,pd));
-        setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
-      }));
-      if(i+BATCH<universe.length)await new Promise(function(r){setTimeout(r,300);});
+    try{
+      var universe=(await buildStockUniverse()).slice();
+      var usCount=universe.filter(function(s){return s.market==="US";}).length;
+      var jpCount=universe.filter(function(s){return s.market==="JP";}).length;
+      setProgress({done:0,total:0,msg:"US:"+usCount+"銘柄 JP:"+jpCount+"銘柄 取得完了 分析開始..."});
+      var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
+      var uTickers=universe.map(function(s){return s.ticker;});
+      favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
+      setProgress({done:0,total:universe.length,msg:null});
+      var results=[],BATCH=6;
+      for(var i=0;i<universe.length;i+=BATCH){
+        var batch=universe.slice(i,i+BATCH);
+        await Promise.all(batch.map(async function(stock){
+          var pd;
+          try{pd=await fetchYahoo(stock.ticker);}catch(err){pd=genSim(stock.ticker);}
+          try{results.push(analyzeStock(stock,pd));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+          setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+        }));
+        if(i+BATCH<universe.length)await new Promise(function(r){setTimeout(r,300);});
+      }
+      results.sort(function(x,y){return y.score-x.score;});
+      setStocks(results);
+      setTs(new Date().toLocaleTimeString("ja-JP"));
+    }catch(err){
+      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
+    }finally{
+      setLoading(false);
     }
-    results.sort(function(x,y){return y.score-x.score;});
-    setStocks(results);
-    setTs(new Date().toLocaleTimeString("ja-JP"));
-    setLoading(false);
   },[]);
   useEffect(function(){
     fetch(VERCEL_API+"?ticker="+encodeURIComponent("^VIX")+"&range=5d")
