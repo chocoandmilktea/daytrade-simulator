@@ -345,10 +345,11 @@ function StockCard(p){
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({prompt:prompt}),signal:AbortSignal.timeout(30000)
       });
-      var data=await res.json();
-      if(data.error) throw new Error(data.error);
-      setAiText(data.text||"分析できませんでした。");
-    }catch(e){setAiText("エラーが発生しました: "+e.message);}
+      var aiData=await res.json();
+      if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
+      var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
+      setAiText(aiText2||"分析できませんでした。");
+    }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
     setAiLoading(false);
   }
 
@@ -1153,11 +1154,12 @@ function MarketPredictionPanel(p){
         signal:AbortSignal.timeout(60000)
       });
       var data=await res.json();
-      if(data.error) throw new Error(data.error);
-      setPredictionResult(data.text||"分析できませんでした。");
+      if(data.error) throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+      var text=typeof data.text==="string"?data.text:JSON.stringify(data.text)||"";
+      setPredictionResult(text||"分析できませんでした。");
       setLastUpd(new Date().toLocaleTimeString("ja-JP"));
     }catch(e){
-      setPredictionResult("エラーが発生しました: "+e.message);
+      setPredictionResult("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));
     }
     setPredictionLoading(false);
   }
