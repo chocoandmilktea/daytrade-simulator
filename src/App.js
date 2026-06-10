@@ -1559,7 +1559,7 @@ export default function App(){
         )}
         {/* コンテンツ */}
         <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
-          <div style={{flex:1,padding:"10px 10px 120px",overflowY:"auto"}}>
+          <div style={{padding:"10px 10px 120px"}}>
             {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress}/>}
             {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy}/>}
             {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
