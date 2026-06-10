@@ -1523,7 +1523,7 @@ export default function App(){
   var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","portfolio":"PF","backtest":"BT","index":"指数","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"同期"};
   var isMobile=window.innerWidth<768;
   return(
-    <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex",flexDirection:"column"}}>
+    <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0"}}>
       {/* ── ヘッダー ── */}
       <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",position:"sticky",top:0,zIndex:20}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -1550,7 +1550,7 @@ export default function App(){
         {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
       </div>
       {/* ── メインレイアウト ── */}
-      <div style={{flex:1,display:"flex",minWidth:0}}>
+      <div style={{display:"flex",minWidth:0}}>
         {/* PC用サイドバー */}
         {!isMobile&&(
           <div style={{width:50,background:"#050f20",borderRight:"1px solid #0f2040",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:10,gap:4,flexShrink:0,position:"sticky",top:0,height:"100vh",overflowY:"auto"}}>
@@ -1558,18 +1558,16 @@ export default function App(){
           </div>
         )}
         {/* コンテンツ */}
-        <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
-          <div style={{padding:"10px 10px 120px"}}>
-            {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress}/>}
-            {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy}/>}
-            {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
-            {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
-            {activeTab==="index"&&<IndexPanel/>}
-            {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading}/>}
-            {activeTab==="news"&&<NewsPanel/>}
-            {activeTab==="trend"&&<TrendPanel/>}
-            {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
-          </div>
+        <div style={{flex:1,minWidth:0,padding:"10px 10px 120px"}}>
+          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress}/>}
+          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy}/>}
+          {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
+          {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
+          {activeTab==="index"&&<IndexPanel/>}
+          {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading}/>}
+          {activeTab==="news"&&<NewsPanel/>}
+          {activeTab==="trend"&&<TrendPanel/>}
+          {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
         </div>
       </div>
     </div>
