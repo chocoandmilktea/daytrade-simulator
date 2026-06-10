@@ -627,7 +627,7 @@ function MarketBar(){
         var isVix=idx.key==="vix";
         var vixAlert=isVix&&d.price>=20;
         return(
-          <div key={idx.key} style={{background:vixAlert?"#1f0010":"#050e1c",borderRadius:8,padding:"10px 12px",border:vixAlert?"1px solid #f43f5e50":"1px solid transparent"}}>
+          <div key={idx.key} style={{background:vixAlert?"#1f0010":"#050e1c",borderRadius:8,padding:"10px 12px",border:vixAlert?"1px solid #f43f5e50":"1px solid transparent",gridColumn:(!isWide&&isVix)?"1 / -1":undefined}}>
             <div style={{fontSize:13,color:vixAlert?"#f43f5e":"#4a7090",fontWeight:700,marginBottom:4}}>{idx.label}{vixAlert?" ⚠ 警戒":""}</div>
             <div style={{fontSize:20,fontWeight:800,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
             <div style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e",marginTop:2}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
@@ -1210,16 +1210,17 @@ function MarketHours(){
   var usOpen=isWeekday&&(timeMin>=usStartMin||timeMin<usEndMin);
   if(dow===6&&timeMin<usEndMin) usOpen=true;
   if(dow===0&&timeMin>=usStartMin) usOpen=false;
+  var isMobile=window.innerWidth<768;
   return(
-    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+    <div style={{display:"flex",gap:isMobile?4:8,alignItems:isMobile?"flex-start":"center",flexDirection:isMobile?"column":"row"}}>
       <div style={{display:"flex",flexDirection:"column",gap:2}}>
-        <span style={{fontSize:13,fontWeight:jpOpen?700:400,color:jpOpen?"#22d3a0":"#4a7090"}}>🇯🇵 9:00〜11:30</span>
-        <span style={{fontSize:13,fontWeight:jpOpen?700:400,color:jpOpen?"#22d3a0":"#4a7090"}}>🇯🇵 12:30〜15:30</span>
+        <span style={{fontSize:isMobile?11:13,fontWeight:jpOpen?700:400,color:jpOpen?"#22d3a0":"#4a7090"}}>🇯🇵 9:00〜11:30</span>
+        <span style={{fontSize:isMobile?11:13,fontWeight:jpOpen?700:400,color:jpOpen?"#22d3a0":"#4a7090"}}>🇯🇵 12:30〜15:30</span>
       </div>
-      <span style={{fontSize:13,color:"#1e3050"}}>|</span>
+      {!isMobile&&<span style={{fontSize:13,color:"#1e3050"}}>|</span>}
       <div style={{display:"flex",flexDirection:"column",gap:2}}>
-        <span style={{fontSize:13,fontWeight:usOpen?700:400,color:usOpen?"#22d3a0":"#4a7090"}}>🇺🇸 22:30〜翌5:00 <span style={{fontSize:11,color:usOpen?"#22d3a0":"#2a6090"}}>[夏]</span></span>
-        <span style={{fontSize:13,fontWeight:usOpen?700:400,color:usOpen?"#22d3a0":"#4a7090"}}>🇺🇸 23:30〜翌6:00 <span style={{fontSize:11,color:usOpen?"#22d3a0":"#2a6090"}}>[冬]</span></span>
+        <span style={{fontSize:isMobile?11:13,fontWeight:usOpen?700:400,color:usOpen?"#22d3a0":"#4a7090"}}>🇺🇸 22:30〜翌5:00 <span style={{fontSize:isMobile?9:11,color:usOpen?"#22d3a0":"#2a6090"}}>[夏]</span></span>
+        <span style={{fontSize:isMobile?11:13,fontWeight:usOpen?700:400,color:usOpen?"#22d3a0":"#4a7090"}}>🇺🇸 23:30〜翌6:00 <span style={{fontSize:isMobile?9:11,color:usOpen?"#22d3a0":"#2a6090"}}>[冬]</span></span>
       </div>
     </div>
   );
@@ -1311,31 +1312,55 @@ export default function App(){
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
   var TABS=[["all","📋"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["index","🌍"],["news","📰"],["trend","🔥"],["sync","🔗"]];
   var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","index":"インデックス","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
+  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","portfolio":"PF","backtest":"BT","index":"指数","news":"ニュース","trend":"トレンド","sync":"同期"};
+  var isMobile=window.innerWidth<768;
   return(
-    <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex"}}>
-      <div style={{width:50,background:"#050f20",borderRight:"1px solid #0f2040",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:10,gap:4,flexShrink:0,position:"sticky",top:0,height:"100vh",overflowY:"auto"}}>
-        {TABS.map(function(tab){var active=activeTab===tab[0];return(<button key={tab[0]} onClick={function(){setActiveTab(tab[0]);}} title={TAB_LABELS[tab[0]]} style={{width:40,height:40,background:active?"#0ea5e9":"transparent",border:"1px solid "+(active?"#0ea5e9":"transparent"),borderRadius:8,color:active?"#fff":"#4a6080",fontSize:17,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{tab[1]}</button>);})}
-      </div>
-      <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
-        <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",position:"sticky",top:0,zIndex:10}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>
-              DaySimulator <span style={{fontSize:12,color:"#4a7090",fontWeight:400}}>/ {TAB_LABELS[activeTab]}</span>
-            </div>
-            <MarketHours/>
+    <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex",flexDirection:"column"}}>
+      {/* ── ヘッダー ── */}
+      <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",position:"sticky",top:0,zIndex:20}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>
+            DaySimulator <span style={{fontSize:12,color:"#4a7090",fontWeight:400}}>/ {TAB_LABELS[activeTab]}</span>
           </div>
-          {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
+          <MarketHours/>
         </div>
-        <div style={{flex:1,padding:"10px 10px 60px",overflowY:"auto"}}>
-          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress}/>}
-          {/* ── [FIX #2] FavPanel に vix を props として渡す ── */}
-          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy}/>}
-          {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
-          {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
-          {activeTab==="index"&&<IndexPanel/>}
-          {activeTab==="news"&&<NewsPanel/>}
-          {activeTab==="trend"&&<TrendPanel/>}
-          {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
+        {/* スマホ用横スクロールタブバー */}
+        {isMobile&&(
+          <div style={{display:"flex",gap:4,marginTop:8,overflowX:"auto",WebkitOverflowScrolling:"touch",paddingBottom:2}}>
+            {TABS.map(function(tab){
+              var active=activeTab===tab[0];
+              return(
+                <button key={tab[0]} onClick={function(){setActiveTab(tab[0]);}}
+                  style={{background:active?"#0ea5e9":"#050f20",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:8,color:active?"#fff":"#4a6080",padding:"4px 8px",fontSize:10,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:1,flexShrink:0,minWidth:44}}>
+                  <span style={{fontSize:16}}>{tab[1]}</span>
+                  <span style={{fontSize:9,whiteSpace:"nowrap"}}>{TAB_SHORT[tab[0]]}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
+      </div>
+      {/* ── メインレイアウト ── */}
+      <div style={{flex:1,display:"flex",minWidth:0}}>
+        {/* PC用サイドバー */}
+        {!isMobile&&(
+          <div style={{width:50,background:"#050f20",borderRight:"1px solid #0f2040",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:10,gap:4,flexShrink:0,position:"sticky",top:0,height:"100vh",overflowY:"auto"}}>
+            {TABS.map(function(tab){var active=activeTab===tab[0];return(<button key={tab[0]} onClick={function(){setActiveTab(tab[0]);}} title={TAB_LABELS[tab[0]]} style={{width:40,height:40,background:active?"#0ea5e9":"transparent",border:"1px solid "+(active?"#0ea5e9":"transparent"),borderRadius:8,color:active?"#fff":"#4a6080",fontSize:17,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>{tab[1]}</button>);})}
+          </div>
+        )}
+        {/* コンテンツ */}
+        <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
+          <div style={{flex:1,padding:"10px 10px 60px",overflowY:"auto"}}>
+            {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress}/>}
+            {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy}/>}
+            {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
+            {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
+            {activeTab==="index"&&<IndexPanel/>}
+            {activeTab==="news"&&<NewsPanel/>}
+            {activeTab==="trend"&&<TrendPanel/>}
+            {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
+          </div>
         </div>
       </div>
     </div>
