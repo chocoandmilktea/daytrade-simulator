@@ -382,19 +382,13 @@ function StockCard(p){
         <button onClick={function(e){stopProp(e);toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:13,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060",flexShrink:0}}>{isFav(s.ticker)?"★":"☆"}</button>
       </div>
 
-      {/* ── 中段: 価格・円換算 / ボタン群 ── */}
+      {/* ── 中段: 価格・円換算 ── */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
         <div>
           <span style={{fontSize:14,color:"#d8eeff",fontWeight:800}}>{s.price}</span>
           {s.market==="US"&&p.usdJpy&&(
             <div style={{fontSize:9,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>
           )}
-        </div>
-        <div style={{display:"flex",gap:4,alignItems:"center"}} onClick={stopProp}>
-          <button onClick={function(e){stopProp(e);setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:24,height:24,fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
-          <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"3px 7px",fontSize:12,cursor:"pointer"}}>🤖</button>
-          <button onClick={function(e){stopProp(e);setShowAdd(function(v){return !v;});}} style={{background:showAdd?"#052e16":"transparent",border:"1px solid "+(showAdd?"#22d3a0":added?"#22d3a0":"#2a4060"),borderRadius:6,color:showAdd?"#22d3a0":added?"#22d3a0":"#4a7090",padding:"3px 7px",fontSize:12,cursor:"pointer"}}>{added?"✅":"💼"}</button>
-          <button onClick={function(e){stopProp(e);setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"3px 7px",fontSize:12,cursor:"pointer"}}>💹</button>
         </div>
       </div>
 
@@ -449,6 +443,14 @@ function StockCard(p){
       {/* ── 展開部分 ── */}
       {expanded&&(
         <div onClick={stopProp} style={{borderTop:"1px solid #0f2040",paddingTop:10,display:"flex",flexDirection:"column",gap:10}}>
+
+          {/* ボタン群（展開後に表示） */}
+          <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"flex-end"}}>
+            <button onClick={function(e){stopProp(e);setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:28,height:28,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
+            <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:12,cursor:"pointer"}}>🤖</button>
+            <button onClick={function(e){stopProp(e);setShowAdd(function(v){return !v;});}} style={{background:showAdd?"#052e16":"transparent",border:"1px solid "+(showAdd?"#22d3a0":added?"#22d3a0":"#2a4060"),borderRadius:6,color:showAdd?"#22d3a0":added?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:12,cursor:"pointer"}}>{added?"✅":"💼"}</button>
+            <button onClick={function(e){stopProp(e);setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:12,cursor:"pointer"}}>💹</button>
+          </div>
 
           {/* シグナル詳細 */}
           <div>
@@ -643,7 +645,7 @@ function CrossSection(sp){
   return(
     <div style={{marginBottom:16}}>
       <div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:8,padding:"4px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
         {sp.items.map(function(item){
           return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={isFavFn} cross={item.cross} vix={sp.vix} usdJpy={sp.usdJpy}/>;
         })}
@@ -769,6 +771,7 @@ function FavPanel(p){
     var active=sortBy===val;
     return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:9,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
   }
+  function isFavRef(t){return favs.indexOf(t)>=0;}
   return(
     <div>
       <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
@@ -789,10 +792,10 @@ function FavPanel(p){
           {sBtn("change","騰落率順")}
         </div>
       )}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
         {displayStocks.map(function(s){
           var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
+          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
         })}
       </div>
       {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:11}}>ティッカーを入力して追加できます</div>}
@@ -832,6 +835,7 @@ function AllStocksPanel(p){
     var active=filterTrade===val;
     return(<button onClick={function(){setFilterTrade(val);}} style={{background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"3px 8px",fontSize:9,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
   }
+  function isFavRef(t){return favs.indexOf(t)>=0;}
 
   if(loading){
     return(
@@ -862,10 +866,10 @@ function AllStocksPanel(p){
         {tBtn("stable","🌊スイング","#22d3a0")}
         <span style={{fontSize:9,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
         {displayStocks.map(function(s){
           var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={function(t){return favs.indexOf(t)>=0;}} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
+          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
         })}
       </div>
       {displayStocks.length===0&&(
