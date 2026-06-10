@@ -665,6 +665,58 @@ function AllStocksPanel(p){
   var sortByS=useState("score");var sortBy=sortByS[0],setSortBy=sortByS[1];
   var filterTradeS=useState("ALL");var filterTrade=filterTradeS[0],setFilterTrade=filterTradeS[1];
 
+  // ── 市場予測 state ─────────────────────────────────────────────────────
+  var mfTextS=useState("");var mfText=mfTextS[0],setMfText=mfTextS[1];
+  var mfLoadingS=useState(false);var mfLoading=mfLoadingS[0],setMfLoading=mfLoadingS[1];
+  var mfShowS=useState(false);var mfShow=mfShowS[0],setMfShow=mfShowS[1];
+
+  async function runMarketForecast(){
+    if(mfLoading) return;
+    setMfLoading(true);
+    setMfShow(true);
+    setMfText("");
+    var top5=stocks.slice().sort(function(a,b){return b.score-a.score;}).slice(0,5);
+    var gcList=stocks.filter(function(s){var c=classifyStockFn(s);return c&&c.type==="GC_NOW";}).slice(0,5);
+    var usStocks=stocks.filter(function(s){return s.market==="US";});
+    var jpStocks=stocks.filter(function(s){return s.market==="JP";});
+    var usUp=usStocks.filter(function(s){return parseFloat(s.change)>=0;}).length;
+    var jpUp=jpStocks.filter(function(s){return parseFloat(s.change)>=0;}).length;
+    var usUpPct=usStocks.length>0?Math.round(usUp/usStocks.length*100):0;
+    var jpUpPct=jpStocks.length>0?Math.round(jpUp/jpStocks.length*100):0;
+    var userMsg=
+      "【現在の市場データ】\n"+
+      "VIX: "+(vix?parseFloat(vix).toFixed(2):"不明")+"\n"+
+      "US市場 騰落率: 上昇銘柄 "+usUpPct+"% ("+usUp+"/"+usStocks.length+"銘柄)\n"+
+      "JP市場 騰落率: 上昇銘柄 "+jpUpPct+"% ("+jpUp+"/"+jpStocks.length+"銘柄)\n\n"+
+      "【スコア上位5銘柄】\n"+
+      top5.map(function(s){return s.ticker+" スコア:"+s.score+" "+s.tradeLabel;}).join("\n")+"\n\n"+
+      "【GC発生中銘柄】\n"+
+      (gcList.length>0?gcList.map(function(s){return s.ticker+" ("+s.market+")";}).join(", "):"なし")+"\n\n"+
+      "上記データをもとに以下の3セクションで出力してください:\n"+
+      "📈 注目市場（2〜3行）\n"+
+      "🔥 注目銘柄（2〜3行）\n"+
+      "⚠️ リスク要因（2〜3行）";
+    try{
+      var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          prompt:userMsg,
+          system:"あなたは株式市場のアナリストです。最新のニュースと提供された市場データをもとに、今週の注目市場・注目銘柄・リスク要因を日本語で簡潔にまとめてください。必ず日本語で回答してください。",
+          useWebSearch:true
+        }),
+        signal:AbortSignal.timeout(45000)
+      });
+      var data=await res.json();
+      if(data.error) throw new Error(data.error);
+      setMfText(data.text||"分析できませんでした。");
+    }catch(e){
+      setMfText("エラーが発生しました: "+e.message);
+    }
+    setMfLoading(false);
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
   function isFavRef(t){return favs.indexOf(t)>=0;}
 
   // ── フィルター適用（全銘柄モード用） ───────────────────────────────────
@@ -744,8 +796,32 @@ function AllStocksPanel(p){
           <span> / {stocks.length} 銘柄 リアルデータ</span>
         </div>
         {ts&&<span style={{fontSize:11,color:"#2a6090"}}>更新: {ts}</span>}
-        <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
+        <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+          <button onClick={runMarketForecast} disabled={mfLoading||stocks.length===0} style={{background:mfShow?"#0a1a0a":"transparent",border:"1px solid "+(mfShow?"#22d3a0":"#2a4060"),borderRadius:6,color:mfShow?"#22d3a0":"#4a7090",padding:"5px 12px",fontSize:12,fontWeight:700,cursor:stocks.length>0?"pointer":"not-allowed",fontFamily:"monospace"}}>🔍 市場予測</button>
+          <button onClick={onScan} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
+        </div>
       </div>
+
+      {/* ── 市場予測結果カード ── */}
+      {mfShow&&(
+        <div style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"14px",marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#22d3a0"}}>🔍 市場予測</div>
+            <button onClick={function(){setMfShow(false);setMfText("");}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:13,cursor:"pointer"}}>✕</button>
+          </div>
+          {mfLoading?(
+            <div style={{textAlign:"center",padding:"16px 0"}}>
+              <div style={{fontSize:20,marginBottom:6}}>⏳</div>
+              <div style={{fontSize:12,color:"#4a90c0"}}>分析中...</div>
+            </div>
+          ):(
+            <div style={{fontSize:12,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{mfText}</div>
+          )}
+          {!mfLoading&&mfText&&(
+            <button onClick={runMarketForecast} style={{marginTop:10,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>
+          )}
+        </div>
+      )}
 
       {/* ── 表示モード切替 ── */}
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:8,display:"flex",gap:6,alignItems:"center"}}>
