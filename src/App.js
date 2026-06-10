@@ -654,26 +654,42 @@ function CrossSection(sp){
   );
 }
 
-// ── CrossPanel ────────────────────────────────────────────────────────────────
-function CrossPanel(p){
-  var stocks=p.stocks,loading=p.loading,onScan=p.onScan,toggleFav=p.toggleFav,favs=p.favs,ts=p.ts,progress=p.progress;
+// ── AllStocksPanel ────────────────────────────────────────────────────────────
+function AllStocksPanel(p){
+  var stocks=p.stocks,loading=p.loading,toggleFav=p.toggleFav,favs=p.favs,vix=p.vix,onScan=p.onScan,ts=p.ts,progress=p.progress;
 
-  // ── [UI④] フィルター・ソート state ────────────────────────────────────
-  var filterS=useState("ALL");var filterMkt=filterS[0],setFilterMkt=filterS[1];
-  var sortS=useState("score");var sortBy=sortS[0],setSortBy=sortS[1];
+  // ── state ──────────────────────────────────────────────────────────────
+  var viewModeS=useState("all");var viewMode=viewModeS[0],setViewMode=viewModeS[1];
+  var filterMktS=useState("ALL");var filterMkt=filterMktS[0],setFilterMkt=filterMktS[1];
+  var sortByS=useState("score");var sortBy=sortByS[0],setSortBy=sortByS[1];
+  var filterTradeS=useState("ALL");var filterTrade=filterTradeS[0],setFilterTrade=filterTradeS[1];
 
-  function applyFilterSort(items){
-    var filtered=filterMkt==="ALL"?items:items.filter(function(item){return item.s.market===filterMkt;});
-    return filtered.slice().sort(function(a,b){
-      if(sortBy==="score") return b.s.score-a.s.score;
-      if(sortBy==="change") return Math.abs(parseFloat(b.s.change))-Math.abs(parseFloat(a.s.change));
-      return 0;
-    });
-  }
-  // ──────────────────────────────────────────────────────────────────────
+  function isFavRef(t){return favs.indexOf(t)>=0;}
 
+  // ── フィルター適用（全銘柄モード用） ───────────────────────────────────
+  var displayStocks=stocks.filter(function(s){
+    if(filterMkt!=="ALL"&&s.market!==filterMkt) return false;
+    if(filterTrade==="short"&&s.tradeType!=="short") return false;
+    if(filterTrade==="mid"&&s.tradeType!=="mid") return false;
+    if(filterTrade==="stable"&&s.tradeType!=="stable") return false;
+    return true;
+  }).slice().sort(function(a,b){
+    if(sortBy==="score") return b.score-a.score;
+    if(sortBy==="change") return Math.abs(parseFloat(b.change))-Math.abs(parseFloat(a.change));
+    if(sortBy==="apt") return (b.aptScore||0)-(a.aptScore||0);
+    return 0;
+  });
+
+  // ── クロス予測モード用（フィルター適用） ──────────────────────────────
+  var filteredForCross=stocks.filter(function(s){
+    if(filterMkt!=="ALL"&&s.market!==filterMkt) return false;
+    if(filterTrade==="short"&&s.tradeType!=="short") return false;
+    if(filterTrade==="mid"&&s.tradeType!=="mid") return false;
+    if(filterTrade==="stable"&&s.tradeType!=="stable") return false;
+    return true;
+  });
   var gcNow=[],dcNow=[],gcNear=[],dcNear=[],gcWatch=[];
-  stocks.forEach(function(s){
+  filteredForCross.forEach(function(s){
     var c=classifyStockFn(s);if(!c||c.type==="NONE")return;
     if(c.type==="GC_NOW")gcNow.push({s:s,cross:c});
     else if(c.type==="DC_NOW")dcNow.push({s:s,cross:c});
@@ -681,6 +697,27 @@ function CrossPanel(p){
     else if(c.type==="DC_NEAR")dcNear.push({s:s,cross:c});
     else if(c.type==="GC_WATCH")gcWatch.push({s:s,cross:c});
   });
+  var hasAny=gcNow.length+dcNow.length+gcNear.length+dcNear.length+gcWatch.length>0;
+
+  // ── ボタンヘルパー ─────────────────────────────────────────────────────
+  function fBtn(val,label,activeColor){
+    var active=filterMkt===val;
+    return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+  function sBtn(val,label){
+    var active=sortBy===val;
+    return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+  function tBtn(val,label,color){
+    var active=filterTrade===val;
+    return(<button onClick={function(){setFilterTrade(val);}} style={{background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+  function mBtn(val,label){
+    var active=viewMode===val;
+    return(<button onClick={function(){setViewMode(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+
+  // ── ローディング表示 ───────────────────────────────────────────────────
   if(loading){
     return(
       <div style={{padding:"20px 0"}}>
@@ -695,60 +732,81 @@ function CrossPanel(p){
       </div>
     );
   }
-  if(stocks.length===0){
-    return(
-      <div style={{textAlign:"center",padding:"80px 20px",color:"#2a6090"}}>
-        <div style={{fontSize:40,marginBottom:16}}>✨</div>
-        <div style={{fontSize:14,color:"#4a90c0",marginBottom:8}}>データを読み込んでいます...</div>
-      </div>
-    );
-  }
-  var hasAny=gcNow.length+dcNow.length+gcNear.length+dcNear.length+gcWatch.length>0;
-  var realCount=stocks.filter(function(s){return s.real;}).length;
-
-  // フィルターボタンスタイル
-  function fBtn(val,label,activeColor){
-    var active=filterMkt===val;
-    return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
-  function sBtn(val,label){
-    var active=sortBy===val;
-    return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
 
   return(
     <div>
       <MarketBar/>
+      {/* ── ステータス・再スキャン ── */}
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:8,display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
         <div style={{fontSize:12,color:"#4a7090"}}>
-          <span style={{color:"#22d3a0",fontWeight:700}}>{realCount}</span>
-          <span style={{color:"#4a7090"}}> / {stocks.length} 銘柄 リアルデータ</span>
+          <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
+          <span> / {stocks.length} 銘柄 リアルデータ</span>
         </div>
         {ts&&<span style={{fontSize:11,color:"#2a6090"}}>更新: {ts}</span>}
         <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
       </div>
-      {/* ── [UI④] フィルター・ソートバー ── */}
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+
+      {/* ── 表示モード切替 ── */}
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:8,display:"flex",gap:6,alignItems:"center"}}>
+        <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>モード:</span>
+        {mBtn("all","📋 全銘柄")}
+        {mBtn("cross","✨ クロス予測")}
+      </div>
+
+      {/* ── 市場・トレードタイプフィルター（共通） ── */}
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:8,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
         <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
         {fBtn("ALL","全て","#60a5fa")}
         {fBtn("US","US","#3b82f6")}
         {fBtn("JP","JP","#f87171")}
-        <span style={{fontSize:11,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
-        {sBtn("score","スコア順")}
-        {sBtn("change","騰落率順")}
+        <span style={{fontSize:11,color:"#2a6090",marginLeft:8,marginRight:2}}>タイプ:</span>
+        {tBtn("ALL","全て","#60a5fa")}
+        {tBtn("short","⚡スキャル","#f43f5e")}
+        {tBtn("mid","📈デイトレ","#fbbf24")}
+        {tBtn("stable","🌊スイング","#22d3a0")}
       </div>
-      {!hasAny&&(<div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>現在クロス条件に該当する銘柄がありません</div>)}
-      <CrossSection title="⚡ GC接近中" items={applyFilterSort(gcNear)} color="#fbbf24" toggleFav={toggleFav} favs={favs} vix={p.vix} usdJpy={p.usdJpy}/>
-      <CrossSection title="🔥 GC発生中" items={applyFilterSort(gcNow)} color="#22d3a0" toggleFav={toggleFav} favs={favs} vix={p.vix} usdJpy={p.usdJpy}/>
-      <CrossSection title="👀 GC監視中" items={applyFilterSort(gcWatch)} color="#60a5fa" toggleFav={toggleFav} favs={favs} vix={p.vix} usdJpy={p.usdJpy}/>
-      <CrossSection title="⚠ DC接近中" items={applyFilterSort(dcNear)} color="#fb923c" toggleFav={toggleFav} favs={favs} vix={p.vix} usdJpy={p.usdJpy}/>
-      <CrossSection title="💀 DC発生中" items={applyFilterSort(dcNow)} color="#f43f5e" toggleFav={toggleFav} favs={favs} vix={p.vix} usdJpy={p.usdJpy}/>
+
+      {/* ── ソート（全銘柄モードのみ） ── */}
+      {viewMode==="all"&&(
+        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>並替:</span>
+          {sBtn("score","スコア順")}
+          {sBtn("change","騰落率順")}
+          {sBtn("apt","適性順")}
+          <span style={{fontSize:11,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
+        </div>
+      )}
+
+      {/* ── 全銘柄モード ── */}
+      {viewMode==="all"&&(
+        <>
+          <div style={{display:"grid",gridTemplateColumns:window.innerWidth<768?"repeat(1,1fr)":"repeat(4,1fr)",gap:8}}>
+            {displayStocks.map(function(s){
+              var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
+              return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
+            })}
+          </div>
+          {displayStocks.length===0&&(
+            <div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>該当する銘柄がありません</div>
+          )}
+        </>
+      )}
+
+      {/* ── クロス予測モード ── */}
+      {viewMode==="cross"&&(
+        <>
+          {!hasAny&&<div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>現在クロス条件に該当する銘柄がありません</div>}
+          <CrossSection title="⚡ GC接近中" items={gcNear} color="#fbbf24" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy}/>
+          <CrossSection title="🔥 GC発生中" items={gcNow} color="#22d3a0" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy}/>
+          <CrossSection title="👀 GC監視中" items={gcWatch} color="#60a5fa" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy}/>
+          <CrossSection title="⚠ DC接近中" items={dcNear} color="#fb923c" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy}/>
+          <CrossSection title="💀 DC発生中" items={dcNow} color="#f43f5e" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy}/>
+        </>
+      )}
     </div>
   );
 }
-
 // ── FavPanel ──────────────────────────────────────────────────────────────────
-// ── [FIX #2] vix を props で受け取るように修正 ───────────────────────────────
 function FavPanel(p){
   var stocks=p.stocks,favs=p.favs,toggleFav=p.toggleFav,vix=p.vix;
   var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
@@ -799,82 +857,6 @@ function FavPanel(p){
         })}
       </div>
       {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:13}}>ティッカーを入力して追加できます</div>}
-    </div>
-  );
-}
-
-// ── AllStocksPanel ────────────────────────────────────────────────────────────
-function AllStocksPanel(p){
-  var stocks=p.stocks,loading=p.loading,toggleFav=p.toggleFav,favs=p.favs,vix=p.vix;
-  var filterMktS=useState("ALL");var filterMkt=filterMktS[0],setFilterMkt=filterMktS[1];
-  var sortByS=useState("score");var sortBy=sortByS[0],setSortBy=sortByS[1];
-  var filterTradeS=useState("ALL");var filterTrade=filterTradeS[0],setFilterTrade=filterTradeS[1];
-
-  var displayStocks=stocks.filter(function(s){
-    if(filterMkt!=="ALL"&&s.market!==filterMkt) return false;
-    if(filterTrade==="short"&&s.tradeType!=="short") return false;
-    if(filterTrade==="mid"&&s.tradeType!=="mid") return false;
-    if(filterTrade==="stable"&&s.tradeType!=="stable") return false;
-    return true;
-  }).slice().sort(function(a,b){
-    if(sortBy==="score") return b.score-a.score;
-    if(sortBy==="change") return Math.abs(parseFloat(b.change))-Math.abs(parseFloat(a.change));
-    if(sortBy==="apt") return (b.aptScore||0)-(a.aptScore||0);
-    return 0;
-  });
-
-  function fBtn(val,label,activeColor){
-    var active=filterMkt===val;
-    return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
-  function sBtn(val,label){
-    var active=sortBy===val;
-    return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
-  function tBtn(val,label,color){
-    var active=filterTrade===val;
-    return(<button onClick={function(){setFilterTrade(val);}} style={{background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
-  function isFavRef(t){return favs.indexOf(t)>=0;}
-
-  if(loading){
-    return(
-      <div style={{textAlign:"center",padding:"60px 20px",color:"#4a7090"}}>
-        <div style={{fontSize:28,marginBottom:12}}>📡</div>
-        <div style={{fontSize:15,color:"#4a90c0"}}>分析中...</div>
-      </div>
-    );
-  }
-
-  return(
-    <div>
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-        <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
-        {fBtn("ALL","全て","#60a5fa")}
-        {fBtn("US","US","#3b82f6")}
-        {fBtn("JP","JP","#f87171")}
-        <span style={{fontSize:11,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
-        {sBtn("score","スコア順")}
-        {sBtn("change","騰落率順")}
-        {sBtn("apt","適性順")}
-      </div>
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-        <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>タイプ:</span>
-        {tBtn("ALL","全て","#60a5fa")}
-        {tBtn("short","⚡スキャル","#f43f5e")}
-        {tBtn("mid","📈デイトレ","#fbbf24")}
-        {tBtn("stable","🌊スイング","#22d3a0")}
-        <span style={{fontSize:11,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:window.innerWidth<768?"repeat(1,1fr)":"repeat(4,1fr)",gap:8}}>
-        {displayStocks.map(function(s){
-          var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
-        })}
-      </div>
-      {displayStocks.length===0&&(
-        <div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>該当する銘柄がありません</div>
-      )}
     </div>
   );
 }
@@ -1227,7 +1209,7 @@ export default function App(){
   var g=useState(null);var ts=g[0],setTs=g[1];
   var vixS=useState(null);var vix=vixS[0],setVix=vixS[1];
   var usdJpyS=useState(null);var usdJpy=usdJpyS[0],setUsdJpy=usdJpyS[1];
-  var k=useState("cross");var activeTab=k[0],setActiveTab=k[1];
+  var k=useState("all");var activeTab=k[0],setActiveTab=k[1];
   var userId=(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}})();
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
   var favInit=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
@@ -1304,8 +1286,8 @@ export default function App(){
       .finally(function(){scan();});
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
-  var TABS=[["cross","✨"],["all","📋"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
-  var TAB_LABELS={"cross":"クロス予測","all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
+  var TABS=[["all","📋"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["news","📰"],["trend","🔥"],["sync","🔗"]];
+  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
   return(
     <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex"}}>
       <div style={{width:50,background:"#050f20",borderRight:"1px solid #0f2040",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:10,gap:4,flexShrink:0,position:"sticky",top:0,height:"100vh",overflowY:"auto"}}>
@@ -1322,8 +1304,7 @@ export default function App(){
           {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
         </div>
         <div style={{flex:1,padding:"10px 10px 60px",overflowY:"auto"}}>
-          {activeTab==="cross"&&<CrossPanel stocks={stocks} loading={loading} onScan={scan} toggleFav={toggleFav} favs={favs} ts={ts} progress={progress} vix={vix} usdJpy={usdJpy}/>}
-          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy}/>}
+          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress}/>}
           {/* ── [FIX #2] FavPanel に vix を props として渡す ── */}
           {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy}/>}
           {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
