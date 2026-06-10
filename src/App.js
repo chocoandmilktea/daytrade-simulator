@@ -80,11 +80,12 @@ function calcRSI(arr){var p=14,out=[];for(var x=0;x<p;x++)out.push(null);var ag=
 function calcBoll(arr){var p=20,k=2;return arr.map(function(_,i){if(i<p-1)return null;var bl=arr.slice(i-p+1,i+1),m=bl.reduce(function(a,b){return a+b;})/p,sd=Math.sqrt(bl.reduce(function(a,b){return a+(b-m)*(b-m);},0)/p);return{upper:m+k*sd,lower:m-k*sd};});}
 function calcStoch(closes,highs,lows){var p=14;return closes.map(function(_,i){if(i<p-1)return null;var hi=Math.max.apply(null,highs.slice(i-p+1,i+1)),lo=Math.min.apply(null,lows.slice(i-p+1,i+1));if(lo===hi)return 50;return((closes[i]-lo)/(hi-lo))*100;});}
 
-function runBacktest(closes){
+function runBacktest(closes,sellDays){
+  var days=sellDays||5;
   var results=[],wins=0,total=0;
-  for(var i=26;i<closes.length-5;i++){
+  for(var i=26;i<closes.length-days;i++){
     var slice=closes.slice(0,i+1),macd=calcMACD(slice),mn=macd[i],mp=macd[i-1];
-    if(mn&&mp&&mn.hist>0&&mp.hist<=0){var buyPrice=closes[i],sellPrice=closes[Math.min(i+5,closes.length-1)],ret=(sellPrice-buyPrice)/buyPrice*100;total++;if(ret>0)wins++;results.push({buyPrice:buyPrice.toFixed(2),sellPrice:sellPrice.toFixed(2),ret:ret.toFixed(2),win:ret>0});}
+    if(mn&&mp&&mn.hist>0&&mp.hist<=0){var buyPrice=closes[i],sellPrice=closes[Math.min(i+days,closes.length-1)],ret=(sellPrice-buyPrice)/buyPrice*100;total++;if(ret>0)wins++;results.push({buyPrice:buyPrice.toFixed(2),sellPrice:sellPrice.toFixed(2),ret:ret.toFixed(2),win:ret>0});}
   }
   return{results:results.slice(-20),winRate:total>0?(wins/total*100).toFixed(1):"0",total:total};
 }
@@ -1036,14 +1037,66 @@ function BacktestPanel(p){
   var stocks=p.stocks,favs=p.favs||[];
   var selS=useState("");var sel=selS[0],setSel=selS[1];
   var resS=useState(null);var result=resS[0],setResult=resS[1];
+  var sellDaysS=useState(5);var sellDays=sellDaysS[0],setSellDays=sellDaysS[1];
   var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
   var otherStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)<0;});
-  function run(){var found=stocks.find(function(s){return s.ticker===sel;});if(!found||!found.closes)return;setResult(runBacktest(found.closes));}
+  function run(){var found=stocks.find(function(s){return s.ticker===sel;});if(!found||!found.closes)return;setResult(runBacktest(found.closes,sellDays));}
+  var SELL_DAYS=[1,3,5,10,20];
   return(
     <div>
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px 16px",marginBottom:14}}><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>バックテスト</div><div style={{fontSize:12,color:"#4a7090"}}>MACDゴールデンクロス → 5日後売却の過去勝率を検証します。</div></div>
-      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}><select value={sel} onChange={function(e){setSel(e.target.value);setResult(null);}} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:14,fontFamily:"monospace",width:"100%"}}><option value="">銘柄を選択</option>{favStocks.length>0&&<optgroup label="お気に入り">{favStocks.map(function(s){return(<option key={s.ticker} value={s.ticker}>{s.ticker.replace(".T","")} {s.name}</option>);})}</optgroup>}{otherStocks.length>0&&<optgroup label="その他">{otherStocks.map(function(s){return(<option key={s.ticker} value={s.ticker}>{s.ticker.replace(".T","")} {s.name}</option>);})}</optgroup>}</select><button onClick={run} disabled={!sel} style={{background:sel?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"12px",fontSize:14,fontWeight:700,cursor:sel?"pointer":"not-allowed",fontFamily:"monospace",width:"100%"}}>実行</button></div>
-      {result&&(<div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,marginBottom:14}}><div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:8,padding:"10px 12px"}}><div style={{fontSize:11,color:"#2a6090"}}>検証回数</div><div style={{fontSize:18,fontWeight:800,color:"#e0f0ff"}}>{result.total}回</div></div><div style={{background:parseFloat(result.winRate)>=50?"#052e16":"#1f0010",border:"1px solid "+(parseFloat(result.winRate)>=50?"#22d3a0":"#f43f5e"),borderRadius:8,padding:"10px 12px"}}><div style={{fontSize:11,color:"#2a6090"}}>勝率</div><div style={{fontSize:18,fontWeight:800,color:parseFloat(result.winRate)>=50?"#22d3a0":"#f43f5e"}}>{result.winRate}%</div></div><button onClick={function(){setResult(null);setSel("");}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:8,color:"#4a7090",padding:"8px 12px",fontSize:13,cursor:"pointer",fontFamily:"monospace"}}>戻る</button></div><div style={{display:"flex",flexDirection:"column",gap:6}}>{result.results.map(function(r,i){return(<div key={i} style={{background:"#050e1c",border:"1px solid "+(r.win?"#22d3a040":"#f43f5e40"),borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",gap:12}}><span style={{fontSize:13,color:"#4a7090"}}>買 <span style={{color:"#b8cce0"}}>{r.buyPrice}</span></span><span style={{fontSize:13,color:"#4a7090"}}>売 <span style={{color:"#b8cce0"}}>{r.sellPrice}</span></span></div><span style={{fontSize:14,fontWeight:700,color:r.win?"#22d3a0":"#f43f5e"}}>{r.win?"+":""}{r.ret}%</span></div>);})}</div></div>)}
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px 16px",marginBottom:14}}>
+        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>バックテスト</div>
+        <div style={{fontSize:12,color:"#4a7090"}}>MACDゴールデンクロス → {sellDays}日後売却の過去勝率を検証します。</div>
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+        <select value={sel} onChange={function(e){setSel(e.target.value);setResult(null);}} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:14,fontFamily:"monospace",width:"100%"}}>
+          <option value="">銘柄を選択</option>
+          {favStocks.length>0&&<optgroup label="お気に入り">{favStocks.map(function(s){return(<option key={s.ticker} value={s.ticker}>{s.ticker.replace(".T","")} {s.name}</option>);})}</optgroup>}
+          {otherStocks.length>0&&<optgroup label="その他">{otherStocks.map(function(s){return(<option key={s.ticker} value={s.ticker}>{s.ticker.replace(".T","")} {s.name}</option>);})}</optgroup>}
+        </select>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <span style={{fontSize:12,color:"#4a7090",flexShrink:0}}>売却日数:</span>
+          {SELL_DAYS.map(function(d){
+            var active=sellDays===d;
+            return(
+              <button key={d} onClick={function(){setSellDays(d);setResult(null);}}
+                style={{background:active?"#0ea5e918":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>
+                {d}日
+              </button>
+            );
+          })}
+        </div>
+        <button onClick={run} disabled={!sel} style={{background:sel?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"12px",fontSize:14,fontWeight:700,cursor:sel?"pointer":"not-allowed",fontFamily:"monospace",width:"100%"}}>実行</button>
+      </div>
+      {result&&(
+        <div>
+          <div style={{fontSize:12,color:"#4a7090",marginBottom:10}}>MACDゴールデンクロス → {sellDays}日後売却の過去勝率</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,marginBottom:14}}>
+            <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:8,padding:"10px 12px"}}>
+              <div style={{fontSize:11,color:"#2a6090"}}>検証回数</div>
+              <div style={{fontSize:18,fontWeight:800,color:"#e0f0ff"}}>{result.total}回</div>
+            </div>
+            <div style={{background:parseFloat(result.winRate)>=50?"#052e16":"#1f0010",border:"1px solid "+(parseFloat(result.winRate)>=50?"#22d3a0":"#f43f5e"),borderRadius:8,padding:"10px 12px"}}>
+              <div style={{fontSize:11,color:"#2a6090"}}>勝率</div>
+              <div style={{fontSize:18,fontWeight:800,color:parseFloat(result.winRate)>=50?"#22d3a0":"#f43f5e"}}>{result.winRate}%</div>
+            </div>
+            <button onClick={function(){setResult(null);setSel("");}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:8,color:"#4a7090",padding:"8px 12px",fontSize:13,cursor:"pointer",fontFamily:"monospace"}}>戻る</button>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {result.results.map(function(r,i){
+              return(
+                <div key={i} style={{background:"#050e1c",border:"1px solid "+(r.win?"#22d3a040":"#f43f5e40"),borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{display:"flex",gap:12}}>
+                    <span style={{fontSize:13,color:"#4a7090"}}>買 <span style={{color:"#b8cce0"}}>{r.buyPrice}</span></span>
+                    <span style={{fontSize:13,color:"#4a7090"}}>売 <span style={{color:"#b8cce0"}}>{r.sellPrice}</span></span>
+                  </div>
+                  <span style={{fontSize:14,fontWeight:700,color:r.win?"#22d3a0":"#f43f5e"}}>{r.win?"+":""}{r.ret}%</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
