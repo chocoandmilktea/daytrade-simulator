@@ -645,7 +645,7 @@ function CrossSection(sp){
   return(
     <div style={{marginBottom:16}}>
       <div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:8,padding:"4px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:window.innerWidth<768?"repeat(1,1fr)":"repeat(4,1fr)",gap:8}}>
         {sp.items.map(function(item){
           return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={isFavFn} cross={item.cross} vix={sp.vix} usdJpy={sp.usdJpy}/>;
         })}
@@ -792,7 +792,7 @@ function FavPanel(p){
           {sBtn("change","騰落率順")}
         </div>
       )}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:window.innerWidth<768?"repeat(1,1fr)":"repeat(4,1fr)",gap:8}}>
         {displayStocks.map(function(s){
           var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
           return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
@@ -866,7 +866,7 @@ function AllStocksPanel(p){
         {tBtn("stable","🌊スイング","#22d3a0")}
         <span style={{fontSize:9,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+      <div style={{display:"grid",gridTemplateColumns:window.innerWidth<768?"repeat(1,1fr)":"repeat(4,1fr)",gap:8}}>
         {displayStocks.map(function(s){
           var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
           return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
