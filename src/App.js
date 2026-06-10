@@ -364,10 +364,9 @@ function StockCard(p){
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:12,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
 
   return(
-    <>
     <div style={{background:"#050e1c",border:"1px solid "+borderColor,borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}}
       onClick={function(){setExpanded(function(v){return !v;});}}>
-
+      {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
       {/* ── 上段: スコアリング・市場・ティッカー・トレードタイプ・★ ── */}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <ScoreRing score={s.score}/>
@@ -571,8 +570,6 @@ function StockCard(p){
         </div>
       )}
     </div>
-    {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
-    </>
   );
 }
 
@@ -642,12 +639,13 @@ function MarketBar(){
 // ── [FIX #7] Section を CrossPanel の外に定義してレンダー毎の再生成を防ぐ ──
 function CrossSection(sp){
   if(!sp.items||!sp.items.length) return null;
+  function isFavFn(t){return sp.favs.indexOf(t)>=0;}
   return(
     <div style={{marginBottom:16}}>
       <div style={{fontSize:11,fontWeight:700,color:sp.color,marginBottom:8,padding:"4px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
         {sp.items.map(function(item){
-          return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={function(t){return sp.favs.indexOf(t)>=0;}} cross={item.cross} vix={sp.vix} usdJpy={sp.usdJpy}/>;
+          return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={isFavFn} cross={item.cross} vix={sp.vix} usdJpy={sp.usdJpy}/>;
         })}
       </div>
     </div>
