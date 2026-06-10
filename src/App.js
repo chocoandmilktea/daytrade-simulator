@@ -1237,7 +1237,7 @@ function MarketPredictionPanel(p){
 
       {/* ── 結果 ── */}
       {!predictionLoading&&predictionResult&&(
-        <div>
+        <div style={{paddingBottom:40}}>
           {renderSections(predictionResult)}
           <button onClick={runPrediction} style={{marginTop:12,width:"100%",background:"transparent",border:"1px solid #1e4070",borderRadius:8,color:"#4a7090",padding:"10px",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>🔄 再分析</button>
         </div>
@@ -1559,7 +1559,7 @@ export default function App(){
         )}
         {/* コンテンツ */}
         <div style={{flex:1,display:"flex",flexDirection:"column",minWidth:0}}>
-          <div style={{flex:1,padding:"10px 10px 60px",overflowY:"auto"}}>
+          <div style={{flex:1,padding:"10px 10px 120px",overflowY:"auto"}}>
             {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress}/>}
             {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy}/>}
             {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
