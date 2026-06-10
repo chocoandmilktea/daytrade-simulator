@@ -1162,52 +1162,6 @@ function MarketPredictionPanel(p){
     setPredictionLoading(false);
   }
 
-  var SECTIONS=[
-    {icon:"📊",label:"今日の相場環境"},
-    {icon:"📈",label:"注目市場・セクター"},
-    {icon:"🔥",label:"注目銘柄"},
-    {icon:"⚠️",label:"リスク要因"},
-    {icon:"🔭",label:"来週の見通し"},
-    {icon:"💡",label:"個人投資家へのアドバイス"},
-  ];
-
-  // テキストをセクションごとに分割して表示
-  function renderSections(text){
-    if(!text) return null;
-    var parts=[];
-    var remaining=text;
-    SECTIONS.forEach(function(sec,i){
-      var marker=sec.icon+" "+sec.label;
-      // 次のセクションマーカーを探す
-      var startIdx=remaining.indexOf(sec.icon);
-      if(startIdx===-1) return;
-      var nextIdx=-1;
-      for(var j=i+1;j<SECTIONS.length;j++){
-        var ni=remaining.indexOf(SECTIONS[j].icon,startIdx+1);
-        if(ni!==-1){nextIdx=ni;break;}
-      }
-      var content=nextIdx===-1?remaining.slice(startIdx):remaining.slice(startIdx,nextIdx);
-      var body=content.replace(marker,"").trim();
-      parts.push({label:sec.icon+" "+sec.label,body:body});
-    });
-    // セクション分割できなかった場合はそのまま表示
-    if(parts.length===0){
-      return(<div style={{fontSize:13,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{text}</div>);
-    }
-    return(
-      <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {parts.map(function(sec,i){
-          return(
-            <div key={i} style={{background:"#071428",borderRadius:8,padding:"12px 14px",border:"1px solid #0f2040"}}>
-              <div style={{fontSize:13,fontWeight:700,color:"#4a90c0",marginBottom:6}}>{sec.label}</div>
-              <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{sec.body}</div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-
   return(
     <div>
       {/* ── ヘッダー・実行ボタン ── */}
@@ -1237,9 +1191,11 @@ function MarketPredictionPanel(p){
 
       {/* ── 結果 ── */}
       {!predictionLoading&&predictionResult&&(
-        <div style={{paddingBottom:40}}>
-          {renderSections(predictionResult)}
-          <button onClick={runPrediction} style={{marginTop:12,width:"100%",background:"transparent",border:"1px solid #1e4070",borderRadius:8,color:"#4a7090",padding:"10px",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>🔄 再分析</button>
+        <div>
+          <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap",paddingBottom:40}}>
+            {predictionResult}
+          </div>
+          <button onClick={runPrediction} style={{width:"100%",background:"transparent",border:"1px solid #1e4070",borderRadius:8,color:"#4a7090",padding:"10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",marginBottom:40}}>🔄 再分析</button>
         </div>
       )}
 
