@@ -1505,6 +1505,16 @@ export default function App(){
         )}
         {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
       </div>
+      {/* ── 市場予測フルスクリーンオーバーレイ ── */}
+      {activeTab==="market"&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:100,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"10px 10px 80px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,padding:"8px 0",borderBottom:"1px solid #0f2040"}}>
+            <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>📡 市場予測</div>
+            <button onClick={function(){setActiveTab("all");}} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>✕ 閉じる</button>
+          </div>
+          <MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading}/>
+        </div>
+      )}
       {/* ── メインレイアウト ── */}
       <div>
         {/* PC用サイドバー */}
@@ -1520,7 +1530,6 @@ export default function App(){
           {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
           {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
           {activeTab==="index"&&<IndexPanel/>}
-          {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading}/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="trend"&&<TrendPanel/>}
           {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
