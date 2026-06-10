@@ -1134,13 +1134,13 @@ function MarketPredictionPanel(p){
       "【GC発生中】\n"+(gcNowList.length>0?gcNowList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n"+
       "【GC接近中】\n"+(gcNearList.length>0?gcNearList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n"+
       "【DC発生中】\n"+(dcNowList.length>0?dcNowList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n\n"+
-      "以下の6セクション形式で出力してください:\n\n"+
-      "📊 今日の相場環境\n（VIXの水準・市場の方向感・注意点を含めて3〜4行）\n\n"+
-      "📈 注目市場・セクター\n（なぜ今注目なのか理由と根拠を含めて3〜4行）\n\n"+
-      "🔥 注目銘柄（2〜3銘柄）\n（各銘柄について「なぜ注目か」「どんな値動きが期待できるか」「リスクは何か」を説明）\n\n"+
-      "⚠️ リスク要因\n（具体的なリスクを2〜3点挙げて、それぞれ影響と対処法を説明）\n\n"+
-      "🔭 来週の見通し\n（来週の相場展開の予想を3〜4行。注目イベント・経済指標があれば含める）\n\n"+
-      "💡 個人投資家へのアドバイス\n（今の相場環境でデイトレ・スイングをする際の具体的な注意点を2〜3行）";
+      "以下の6セクション形式で出力してください。各セクションは必ず [SEC:キー]内容[/SEC] の形式で出力してください。キーはenv・mkt・stock・risk・next・adviceを使用してください。\n\n"+
+      "[SEC:env]📊 今日の相場環境（VIXの水準・市場の方向感・注意点を含めて3〜4行）[/SEC]\n\n"+
+      "[SEC:mkt]📈 注目市場・セクター（なぜ今注目なのか理由と根拠を含めて3〜4行）[/SEC]\n\n"+
+      "[SEC:stock]🔥 注目銘柄（2〜3銘柄）（各銘柄について「なぜ注目か」「どんな値動きが期待できるか」「リスクは何か」を説明）[/SEC]\n\n"+
+      "[SEC:risk]⚠️ リスク要因（具体的なリスクを2〜3点挙げて、それぞれ影響と対処法を説明）[/SEC]\n\n"+
+      "[SEC:next]🔭 来週の見通し（来週の相場展開の予想を3〜4行。注目イベント・経済指標があれば含める）[/SEC]\n\n"+
+      "[SEC:advice]💡 個人投資家へのアドバイス（今の相場環境でデイトレ・スイングをする際の具体的な注意点を2〜3行）[/SEC]";
     try{
       var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{
         method:"POST",
@@ -1172,21 +1172,20 @@ function MarketPredictionPanel(p){
   ];
   var activeSectionS=useState("env");var activeSection=activeSectionS[0],setActiveSection=activeSectionS[1];
 
-  // テキストからセクションを抽出
-  function extractSection(text,sectionKey){
-    if(!text) return "";
-    var sec=SECTIONS.find(function(s){return s.key===sectionKey;});
-    if(!sec) return text;
-    var startIdx=text.indexOf(sec.icon);
-    if(startIdx===-1) return text;
-    var endIdx=-1;
-    for(var i=0;i<SECTIONS.length;i++){
-      if(SECTIONS[i].key===sectionKey) continue;
-      var ni=text.indexOf(SECTIONS[i].icon,startIdx+1);
-      if(ni!==-1&&(endIdx===-1||ni<endIdx)) endIdx=ni;
+  // [SEC:key]...[/SEC] 形式でテキストを分割
+  function buildSectionMap(text){
+    var sectionMap={};
+    if(!text) return sectionMap;
+    var matches=text.match(/\[SEC:(\w+)\]([\s\S]*?)\[\/SEC\]/g);
+    if(matches){
+      matches.forEach(function(m){
+        var key=m.match(/\[SEC:(\w+)\]/)[1];
+        var content=m.replace(/\[SEC:\w+\]/,"").replace(/\[\/SEC\]/,"").trim();
+        sectionMap[key]=content;
+      });
     }
-    var content=endIdx===-1?text.slice(startIdx):text.slice(startIdx,endIdx);
-    return content.trim();
+    if(Object.keys(sectionMap).length===0) sectionMap["env"]=text;
+    return sectionMap;
   }
 
   return(
@@ -1217,27 +1216,31 @@ function MarketPredictionPanel(p){
       )}
 
       {/* ── 結果（セクション別タブ） ── */}
-      {!predictionLoading&&predictionResult&&(
-        <div>
-          {/* セクションタブバー */}
-          <div style={{display:"flex",gap:6,overflowX:"auto",WebkitOverflowScrolling:"touch",marginBottom:12,paddingBottom:4}}>
-            {SECTIONS.map(function(sec){
-              var active=activeSection===sec.key;
-              return(
-                <button key={sec.key} onClick={function(){setActiveSection(sec.key);}}
-                  style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap",flexShrink:0}}>
-                  {sec.icon} {sec.label}
-                </button>
-              );
-            })}
+      {!predictionLoading&&predictionResult&&(function(){
+        var sectionMap=buildSectionMap(predictionResult);
+        var sectionText=sectionMap[activeSection]||sectionMap["env"]||predictionResult;
+        return(
+          <div>
+            {/* セクションタブバー */}
+            <div style={{display:"flex",gap:6,overflowX:"auto",WebkitOverflowScrolling:"touch",marginBottom:12,paddingBottom:4}}>
+              {SECTIONS.map(function(sec){
+                var active=activeSection===sec.key;
+                return(
+                  <button key={sec.key} onClick={function(){setActiveSection(sec.key);}}
+                    style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap",flexShrink:0}}>
+                    {sec.icon} {sec.label}
+                  </button>
+                );
+              })}
+            </div>
+            {/* セクション本文 */}
+            <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap"}}>
+              {sectionText}
+            </div>
+            <button onClick={runPrediction} style={{marginTop:20,width:"100%",background:"transparent",border:"1px solid #1e4070",borderRadius:8,color:"#4a7090",padding:"10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",marginBottom:40}}>🔄 再分析</button>
           </div>
-          {/* セクション本文 */}
-          <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap"}}>
-            {extractSection(predictionResult,activeSection)}
-          </div>
-          <button onClick={runPrediction} style={{marginTop:20,width:"100%",background:"transparent",border:"1px solid #1e4070",borderRadius:8,color:"#4a7090",padding:"10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",marginBottom:40}}>🔄 再分析</button>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── 初期状態 ── */}
       {!predictionLoading&&!predictionResult&&(
