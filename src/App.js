@@ -1141,7 +1141,8 @@ function MarketPredictionPanel(p){
       "[SEC:stock]🔥 注目銘柄（2〜3銘柄）（各銘柄について「なぜ注目か」「どんな値動きが期待できるか」「リスクは何か」を説明）[/SEC]\n\n"+
       "[SEC:risk]⚠️ リスク要因（具体的なリスクを2〜3点挙げて、それぞれ影響と対処法を説明）[/SEC]\n\n"+
       "[SEC:next]🔭 来週の見通し（来週の相場展開の予想を3〜4行。注目イベント・経済指標があれば含める）[/SEC]\n\n"+
-      "[SEC:advice]💡 個人投資家へのアドバイス（今の相場環境でデイトレ・スイングをする際の具体的な注意点を2〜3行）[/SEC]";
+      "[SEC:advice]💡 個人投資家へのアドバイス（今の相場環境でデイトレ・スイングをする際の具体的な注意点を2〜3行）[/SEC]\n\n"+
+      "必ず [SEC:env]・[SEC:mkt]・[SEC:stock]・[SEC:risk]・[SEC:next]・[SEC:advice] の6つ全てのセクションを出力してください。1つでも欠けると表示できません。";
     try{
       var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{
         method:"POST",
@@ -1220,7 +1221,7 @@ function MarketPredictionPanel(p){
       {/* ── 結果（セクション別タブ） ── */}
       {!predictionLoading&&predictionResult&&(function(){
         var sectionMap=buildSectionMap(predictionResult);
-        var sectionText=sectionMap[activeSection]||sectionMap["env"]||predictionResult;
+        var sectionText=sectionMap[activeSection]!==undefined?sectionMap[activeSection]:"このセクションのデータが取得できませんでした。再分析してください。";
         return(
           <div>
             {/* セクションタブバー */}
