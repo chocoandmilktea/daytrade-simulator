@@ -49,6 +49,7 @@ export default async function handler(req, res) {
       .filter(block => block.type === "text")
       .map(block => block.text)
       .join("\n") || "";
+    console.log("RAW_TEXT:", text);
     return res.status(200).json({ text });
   } catch (e) {
     return res.status(500).json({ error: e.message });
