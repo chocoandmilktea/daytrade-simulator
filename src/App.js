@@ -665,58 +665,6 @@ function AllStocksPanel(p){
   var sortByS=useState("score");var sortBy=sortByS[0],setSortBy=sortByS[1];
   var filterTradeS=useState("ALL");var filterTrade=filterTradeS[0],setFilterTrade=filterTradeS[1];
 
-  // ── 市場予測 state ─────────────────────────────────────────────────────
-  var mfTextS=useState("");var mfText=mfTextS[0],setMfText=mfTextS[1];
-  var mfLoadingS=useState(false);var mfLoading=mfLoadingS[0],setMfLoading=mfLoadingS[1];
-  var mfShowS=useState(false);var mfShow=mfShowS[0],setMfShow=mfShowS[1];
-
-  async function runMarketForecast(){
-    if(mfLoading) return;
-    setMfLoading(true);
-    setMfShow(true);
-    setMfText("");
-    var top5=stocks.slice().sort(function(a,b){return b.score-a.score;}).slice(0,5);
-    var gcList=stocks.filter(function(s){var c=classifyStockFn(s);return c&&c.type==="GC_NOW";}).slice(0,5);
-    var usStocks=stocks.filter(function(s){return s.market==="US";});
-    var jpStocks=stocks.filter(function(s){return s.market==="JP";});
-    var usUp=usStocks.filter(function(s){return parseFloat(s.change)>=0;}).length;
-    var jpUp=jpStocks.filter(function(s){return parseFloat(s.change)>=0;}).length;
-    var usUpPct=usStocks.length>0?Math.round(usUp/usStocks.length*100):0;
-    var jpUpPct=jpStocks.length>0?Math.round(jpUp/jpStocks.length*100):0;
-    var userMsg=
-      "【現在の市場データ】\n"+
-      "VIX: "+(vix?parseFloat(vix).toFixed(2):"不明")+"\n"+
-      "US市場 騰落率: 上昇銘柄 "+usUpPct+"% ("+usUp+"/"+usStocks.length+"銘柄)\n"+
-      "JP市場 騰落率: 上昇銘柄 "+jpUpPct+"% ("+jpUp+"/"+jpStocks.length+"銘柄)\n\n"+
-      "【スコア上位5銘柄】\n"+
-      top5.map(function(s){return s.ticker+" スコア:"+s.score+" "+s.tradeLabel;}).join("\n")+"\n\n"+
-      "【GC発生中銘柄】\n"+
-      (gcList.length>0?gcList.map(function(s){return s.ticker+" ("+s.market+")";}).join(", "):"なし")+"\n\n"+
-      "上記データをもとに以下の3セクションで出力してください:\n"+
-      "📈 注目市場（2〜3行）\n"+
-      "🔥 注目銘柄（2〜3行）\n"+
-      "⚠️ リスク要因（2〜3行）";
-    try{
-      var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          prompt:userMsg,
-          system:"あなたは株式市場のアナリストです。最新のニュースと提供された市場データをもとに、今週の注目市場・注目銘柄・リスク要因を日本語で簡潔にまとめてください。必ず日本語で回答してください。",
-          useWebSearch:true
-        }),
-        signal:AbortSignal.timeout(45000)
-      });
-      var data=await res.json();
-      if(data.error) throw new Error(data.error);
-      setMfText(data.text||"分析できませんでした。");
-    }catch(e){
-      setMfText("エラーが発生しました: "+e.message);
-    }
-    setMfLoading(false);
-  }
-  // ──────────────────────────────────────────────────────────────────────
-
   function isFavRef(t){return favs.indexOf(t)>=0;}
 
   // ── フィルター適用（全銘柄モード用） ───────────────────────────────────
@@ -796,32 +744,8 @@ function AllStocksPanel(p){
           <span> / {stocks.length} 銘柄 リアルデータ</span>
         </div>
         {ts&&<span style={{fontSize:11,color:"#2a6090"}}>更新: {ts}</span>}
-        <div style={{marginLeft:"auto",display:"flex",gap:6}}>
-          <button onClick={runMarketForecast} disabled={mfLoading||stocks.length===0} style={{background:mfShow?"#0a1a0a":"transparent",border:"1px solid "+(mfShow?"#22d3a0":"#2a4060"),borderRadius:6,color:mfShow?"#22d3a0":"#4a7090",padding:"5px 12px",fontSize:12,fontWeight:700,cursor:stocks.length>0?"pointer":"not-allowed",fontFamily:"monospace"}}>🔍 市場予測</button>
-          <button onClick={onScan} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
-        </div>
+        <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
       </div>
-
-      {/* ── 市場予測結果カード ── */}
-      {mfShow&&(
-        <div style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"14px",marginBottom:8}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div style={{fontSize:13,fontWeight:700,color:"#22d3a0"}}>🔍 市場予測</div>
-            <button onClick={function(){setMfShow(false);setMfText("");}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:13,cursor:"pointer"}}>✕</button>
-          </div>
-          {mfLoading?(
-            <div style={{textAlign:"center",padding:"16px 0"}}>
-              <div style={{fontSize:20,marginBottom:6}}>⏳</div>
-              <div style={{fontSize:12,color:"#4a90c0"}}>分析中...</div>
-            </div>
-          ):(
-            <div style={{fontSize:12,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{mfText}</div>
-          )}
-          {!mfLoading&&mfText&&(
-            <button onClick={runMarketForecast} style={{marginTop:10,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>
-          )}
-        </div>
-      )}
 
       {/* ── 表示モード切替 ── */}
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:8,display:"flex",gap:6,alignItems:"center"}}>
@@ -1179,6 +1103,158 @@ function BacktestPanel(p){
 
 var TREND_LINKS=[{category:"日本株ランキング",links:[{label:"値上がり率",url:"https://finance.yahoo.co.jp/stocks/ranking/up?market=all"},{label:"値下がり率",url:"https://finance.yahoo.co.jp/stocks/ranking/down?market=all"},{label:"出来高",url:"https://finance.yahoo.co.jp/stocks/ranking/volume?market=all"}]},{category:"米国株ランキング",links:[{label:"値上がり率",url:"https://finance.yahoo.co.jp/stocks/us/ranking/up?market=all"},{label:"値下がり率",url:"https://finance.yahoo.co.jp/stocks/us/ranking/down?market=all"},{label:"出来高",url:"https://finance.yahoo.co.jp/stocks/us/ranking/volume?market=all"}]},{category:"市況・指数",links:[{label:"日経平均",url:"https://finance.yahoo.co.jp/quote/998407.O"},{label:"NYダウ",url:"https://finance.yahoo.co.jp/quote/%5EDJI"},{label:"ドル円",url:"https://finance.yahoo.co.jp/quote/USDJPY=X"}]}];
 
+// ── MarketPredictionPanel ─────────────────────────────────────────────────────
+function MarketPredictionPanel(p){
+  var stocks=p.stocks,vix=p.vix,predictionResult=p.predictionResult,setPredictionResult=p.setPredictionResult,predictionLoading=p.predictionLoading,setPredictionLoading=p.setPredictionLoading;
+  var lastUpdS=useState(null);var lastUpd=lastUpdS[0],setLastUpd=lastUpdS[1];
+
+  async function runPrediction(){
+    if(predictionLoading||stocks.length===0) return;
+    setPredictionLoading(true);
+    setPredictionResult("");
+    var top5=stocks.slice().sort(function(a,b){return b.score-a.score;}).slice(0,5);
+    var gcNowList=stocks.filter(function(s){var c=classifyStockFn(s);return c&&c.type==="GC_NOW";}).slice(0,5);
+    var gcNearList=stocks.filter(function(s){var c=classifyStockFn(s);return c&&c.type==="GC_NEAR";}).slice(0,5);
+    var dcNowList=stocks.filter(function(s){var c=classifyStockFn(s);return c&&c.type==="DC_NOW";}).slice(0,5);
+    var usStocks=stocks.filter(function(s){return s.market==="US";});
+    var jpStocks=stocks.filter(function(s){return s.market==="JP";});
+    var usUp=usStocks.filter(function(s){return parseFloat(s.change)>=0;}).length;
+    var jpUp=jpStocks.filter(function(s){return parseFloat(s.change)>=0;}).length;
+    var usUpPct=usStocks.length>0?Math.round(usUp/usStocks.length*100):0;
+    var jpUpPct=jpStocks.length>0?Math.round(jpUp/jpStocks.length*100):0;
+    var vixNum=vix?parseFloat(vix):null;
+    var vixLevel=vixNum==null?"不明":vixNum>=30?"高（警戒）":vixNum>=20?"中（注意）":"低（落ち着き）";
+    var userMsg=
+      "【現在の市場データ】\n"+
+      "VIX: "+(vixNum?vixNum.toFixed(2):"不明")+" （警戒レベル: "+vixLevel+"）\n"+
+      "US市場: 上昇銘柄 "+usUpPct+"% ("+usUp+"/"+usStocks.length+"銘柄)\n"+
+      "JP市場: 上昇銘柄 "+jpUpPct+"% ("+jpUp+"/"+jpStocks.length+"銘柄)\n\n"+
+      "【スコア上位5銘柄】\n"+
+      top5.map(function(s){return s.ticker+" スコア:"+s.score+" "+s.tradeLabel+" 騰落:"+s.change+"%";}).join("\n")+"\n\n"+
+      "【GC発生中】\n"+(gcNowList.length>0?gcNowList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n"+
+      "【GC接近中】\n"+(gcNearList.length>0?gcNearList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n"+
+      "【DC発生中】\n"+(dcNowList.length>0?dcNowList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n\n"+
+      "以下の6セクション形式で出力してください:\n\n"+
+      "📊 今日の相場環境\n（VIXの水準・市場の方向感・注意点を含めて3〜4行）\n\n"+
+      "📈 注目市場・セクター\n（なぜ今注目なのか理由と根拠を含めて3〜4行）\n\n"+
+      "🔥 注目銘柄（2〜3銘柄）\n（各銘柄について「なぜ注目か」「どんな値動きが期待できるか」「リスクは何か」を説明）\n\n"+
+      "⚠️ リスク要因\n（具体的なリスクを2〜3点挙げて、それぞれ影響と対処法を説明）\n\n"+
+      "🔭 来週の見通し\n（来週の相場展開の予想を3〜4行。注目イベント・経済指標があれば含める）\n\n"+
+      "💡 個人投資家へのアドバイス\n（今の相場環境でデイトレ・スイングをする際の具体的な注意点を2〜3行）";
+    try{
+      var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          prompt:userMsg,
+          system:"あなたは経験豊富な株式市場アナリストです。\n最新ニュースとアプリの市場データをもとに、個人投資家にとって実用的な市場分析を日本語で提供してください。\n\n以下の点を必ず守ってください。\n- 専門用語には簡単な説明を添える\n- 数値や根拠を示して具体的に説明する\n- 良い面だけでなくリスクも正直に伝える\n- 個人投資家の目線で実践的なアドバイスをする\n- 必ず日本語で回答する",
+          useWebSearch:true
+        }),
+        signal:AbortSignal.timeout(60000)
+      });
+      var data=await res.json();
+      if(data.error) throw new Error(data.error);
+      setPredictionResult(data.text||"分析できませんでした。");
+      setLastUpd(new Date().toLocaleTimeString("ja-JP"));
+    }catch(e){
+      setPredictionResult("エラーが発生しました: "+e.message);
+    }
+    setPredictionLoading(false);
+  }
+
+  var SECTIONS=[
+    {icon:"📊",label:"今日の相場環境"},
+    {icon:"📈",label:"注目市場・セクター"},
+    {icon:"🔥",label:"注目銘柄"},
+    {icon:"⚠️",label:"リスク要因"},
+    {icon:"🔭",label:"来週の見通し"},
+    {icon:"💡",label:"個人投資家へのアドバイス"},
+  ];
+
+  // テキストをセクションごとに分割して表示
+  function renderSections(text){
+    if(!text) return null;
+    var parts=[];
+    var remaining=text;
+    SECTIONS.forEach(function(sec,i){
+      var marker=sec.icon+" "+sec.label;
+      // 次のセクションマーカーを探す
+      var startIdx=remaining.indexOf(sec.icon);
+      if(startIdx===-1) return;
+      var nextIdx=-1;
+      for(var j=i+1;j<SECTIONS.length;j++){
+        var ni=remaining.indexOf(SECTIONS[j].icon,startIdx+1);
+        if(ni!==-1){nextIdx=ni;break;}
+      }
+      var content=nextIdx===-1?remaining.slice(startIdx):remaining.slice(startIdx,nextIdx);
+      var body=content.replace(marker,"").trim();
+      parts.push({label:sec.icon+" "+sec.label,body:body});
+    });
+    // セクション分割できなかった場合はそのまま表示
+    if(parts.length===0){
+      return(<div style={{fontSize:13,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{text}</div>);
+    }
+    return(
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {parts.map(function(sec,i){
+          return(
+            <div key={i} style={{background:"#071428",borderRadius:8,padding:"12px 14px",border:"1px solid #0f2040"}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#4a90c0",marginBottom:6}}>{sec.label}</div>
+              <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{sec.body}</div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return(
+    <div>
+      {/* ── ヘッダー・実行ボタン ── */}
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>📡 市場予測</div>
+            <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>AIがニュースと市場データを分析します</div>
+          </div>
+          <button onClick={runPrediction} disabled={predictionLoading||stocks.length===0}
+            style={{background:predictionLoading?"#0a1828":"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"10px 16px",fontSize:13,fontWeight:700,cursor:predictionLoading||stocks.length===0?"not-allowed":"pointer",fontFamily:"monospace",flexShrink:0}}>
+            {predictionLoading?"分析中...":"📡 市場予測を分析する"}
+          </button>
+        </div>
+        {lastUpd&&<div style={{fontSize:11,color:"#2a6090"}}>最終更新: {lastUpd}</div>}
+        {stocks.length===0&&<div style={{fontSize:11,color:"#f43f5e",marginTop:4}}>※ 先にスキャンを実行してください</div>}
+      </div>
+
+      {/* ── ローディング ── */}
+      {predictionLoading&&(
+        <div style={{background:"#040c18",border:"1px solid #0ea5e940",borderRadius:10,padding:"32px",textAlign:"center"}}>
+          <div style={{fontSize:28,marginBottom:12}}>⏳</div>
+          <div style={{fontSize:14,color:"#4a90c0",marginBottom:6}}>AIがニュースを収集・分析中です...</div>
+          <div style={{fontSize:11,color:"#2a6090"}}>Web検索を含むため30〜60秒かかることがあります</div>
+        </div>
+      )}
+
+      {/* ── 結果 ── */}
+      {!predictionLoading&&predictionResult&&(
+        <div>
+          {renderSections(predictionResult)}
+          <button onClick={runPrediction} style={{marginTop:12,width:"100%",background:"transparent",border:"1px solid #1e4070",borderRadius:8,color:"#4a7090",padding:"10px",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>🔄 再分析</button>
+        </div>
+      )}
+
+      {/* ── 初期状態 ── */}
+      {!predictionLoading&&!predictionResult&&(
+        <div style={{textAlign:"center",padding:"60px 20px",color:"#2a6090"}}>
+          <div style={{fontSize:40,marginBottom:16}}>📡</div>
+          <div style={{fontSize:14,color:"#4a90c0",marginBottom:8}}>市場予測を実行してください</div>
+          <div style={{fontSize:11,color:"#2a6090"}}>AIが最新ニュースと市場データをもとに分析します</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NewsPanel(){var NEWS=[{label:"株式ニュース",url:"https://finance.yahoo.co.jp/news",desc:"国内外の最新株式ニュース"},{label:"日本株ニュース",url:"https://finance.yahoo.co.jp/news/stocks",desc:"日本株関連ニュース"},{label:"米国株ニュース",url:"https://finance.yahoo.co.jp/news/world",desc:"米国株最新情報"},{label:"マーケット概況",url:"https://finance.yahoo.co.jp/stocks",desc:"日本株式市場の概況"}];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px"}}><div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>ニュース</div></div><div style={{padding:"8px"}}>{NEWS.map(function(item,i){return(<a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}><span style={{fontSize:15,fontWeight:700,color:"#93c5fd"}}>{item.label}</span><span style={{fontSize:12,color:"#4a7090"}}>{item.desc}</span></a>);})}</div></div>);}
 function TrendPanel(){var cs=useState(0);var openCat=cs[0],setOpenCat=cs[1];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>トレンド・ランキング</div></div>{TREND_LINKS.map(function(cat,ci){var isOpen=openCat===ci;return(<div key={ci}><div onClick={function(){setOpenCat(isOpen?-1:ci);}} style={{padding:"10px 14px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #0a1828",background:isOpen?"#071a2e":"transparent"}}><span style={{fontSize:14,fontWeight:700,color:"#b8cce0"}}>{cat.category}</span><span style={{fontSize:12,color:"#2a6090"}}>{isOpen?"▲":"▼"}</span></div>{isOpen&&<div style={{background:"#040c18",borderBottom:"1px solid #0a1828"}}>{cat.links.map(function(link,li){return(<a key={li} href={link.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",padding:"9px 20px",borderBottom:"1px solid #0a1828",textDecoration:"none",gap:8}}><span style={{fontSize:12,color:"#22d3a0"}}>→</span><span style={{fontSize:14,color:"#93c5fd"}}>{link.label}</span></a>);})}</div>}</div>);})}</div>);}
 
@@ -1363,6 +1439,8 @@ export default function App(){
   var g=useState(null);var ts=g[0],setTs=g[1];
   var vixS=useState(null);var vix=vixS[0],setVix=vixS[1];
   var usdJpyS=useState(null);var usdJpy=usdJpyS[0],setUsdJpy=usdJpyS[1];
+  var predResS=useState("");var predictionResult=predResS[0],setPredictionResult=predResS[1];
+  var predLoadS=useState(false);var predictionLoading=predLoadS[0],setPredictionLoading=predLoadS[1];
   var k=useState("all");var activeTab=k[0],setActiveTab=k[1];
   var userId=(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}})();
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
@@ -1440,9 +1518,9 @@ export default function App(){
       .finally(function(){scan();});
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
-  var TABS=[["all","📋"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["index","🌍"],["news","📰"],["trend","🔥"],["sync","🔗"]];
-  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","index":"インデックス","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
-  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","portfolio":"PF","backtest":"BT","index":"指数","news":"ニュース","trend":"トレンド","sync":"同期"};
+  var TABS=[["all","📋"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["index","🌍"],["market","📡"],["news","📰"],["trend","🔥"],["sync","🔗"]];
+  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","index":"インデックス","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
+  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","portfolio":"PF","backtest":"BT","index":"指数","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"同期"};
   var isMobile=window.innerWidth<768;
   return(
     <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex",flexDirection:"column"}}>
@@ -1487,6 +1565,7 @@ export default function App(){
             {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
             {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
             {activeTab==="index"&&<IndexPanel/>}
+            {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading}/>}
             {activeTab==="news"&&<NewsPanel/>}
             {activeTab==="trend"&&<TrendPanel/>}
             {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
