@@ -1056,44 +1056,22 @@ function TrendPanel(){var cs=useState(0);var openCat=cs[0],setOpenCat=cs[1];retu
 function IndexPanel(){
   var INDEX_FUNDS=[
     {label:"eMAXIS Slim 全世界株式（オール・カントリー）",url:"https://www.rakuten-sec.co.jp/web/fund/detail/?ID=JP90C000H1T1",desc:"楽天証券 投資信託詳細ページ"},
-  ];
-  var RAKUTEN_LINKS=[
-    {label:"保有商品一覧",url:"https://member.rakuten-sec.co.jp/web/portfolio/",desc:"保有株式・投資信託の一覧と損益確認"},
-    {label:"投資信託取引履歴",url:"https://member.rakuten-sec.co.jp/ITS/qaAss0012.html",desc:"投資信託の取引履歴確認"},
-    {label:"米国株式取引履歴",url:"https://member.rakuten-sec.co.jp/ITS/qaAssTrad0002.html",desc:"米国株の約定履歴確認"},
-    {label:"資産の推移",url:"https://member.rakuten-sec.co.jp/ITS/qaM-401K000-03.html",desc:"資産全体の推移グラフ"},
+    {label:"楽天証券 ホーム",url:"https://member.rakuten-sec.co.jp/app/home.do",desc:"保有資産・取引状況の確認"},
   ];
   return(
-    <div style={{display:"flex",flexDirection:"column",gap:12}}>
-      <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}>
-        <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px"}}>
-          <div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>インデックスファンド</div>
-        </div>
-        <div style={{padding:"8px"}}>
-          {INDEX_FUNDS.map(function(item,i){
-            return(
-              <a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}>
-                <span style={{fontSize:15,fontWeight:700,color:"#93c5fd"}}>{item.label}</span>
-                <span style={{fontSize:12,color:"#4a7090"}}>{item.desc}</span>
-              </a>
-            );
-          })}
-        </div>
+    <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}>
+      <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px"}}>
+        <div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>インデックスファンド</div>
       </div>
-      <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}>
-        <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px"}}>
-          <div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>📊 楽天証券 マイページ</div>
-        </div>
-        <div style={{padding:"8px"}}>
-          {RAKUTEN_LINKS.map(function(item,i){
-            return(
-              <a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}>
-                <span style={{fontSize:15,fontWeight:700,color:"#93c5fd"}}>{item.label}</span>
-                <span style={{fontSize:12,color:"#4a7090"}}>{item.desc}</span>
-              </a>
-            );
-          })}
-        </div>
+      <div style={{padding:"8px"}}>
+        {INDEX_FUNDS.map(function(item,i){
+          return(
+            <a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}>
+              <span style={{fontSize:15,fontWeight:700,color:"#93c5fd"}}>{item.label}</span>
+              <span style={{fontSize:12,color:"#4a7090"}}>{item.desc}</span>
+            </a>
+          );
+        })}
       </div>
     </div>
   );
