@@ -1,5 +1,5 @@
 // api/ai.js
-// Anthropic APIへのサーバーサイドプロキシ
+// Anthropic APIへのサーバーサイドプロキシ（system prompt・web_search対応）
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -11,8 +11,20 @@ export default async function handler(req, res) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not set" });
 
-  const { prompt } = req.body;
+  const { prompt, system, useWebSearch } = req.body;
   if (!prompt) return res.status(400).json({ error: "prompt required" });
+
+  const body = {
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 1500,
+    messages: [{ role: "user", content: prompt }],
+  };
+
+  if (system) body.system = system;
+
+  if (useWebSearch) {
+    body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+  }
 
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -21,12 +33,9 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": "web-search-2025-03-05",
       },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1000,
-        messages: [{ role: "user", content: prompt }],
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -35,7 +44,11 @@ export default async function handler(req, res) {
     }
 
     const data = await response.json();
-    const text = data.content && data.content[0] && data.content[0].text || "";
+    // contentブロックからtextのみ結合（tool_use・tool_resultは除外）
+    const text = (data.content || [])
+      .filter(block => block.type === "text")
+      .map(block => block.text)
+      .join("\n") || "";
     return res.status(200).json({ text });
   } catch (e) {
     return res.status(500).json({ error: e.message });
