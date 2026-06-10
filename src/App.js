@@ -1162,6 +1162,33 @@ function MarketPredictionPanel(p){
     setPredictionLoading(false);
   }
 
+  var SECTIONS=[
+    {key:"env",   icon:"📊", label:"相場環境"},
+    {key:"mkt",   icon:"📈", label:"注目市場"},
+    {key:"stock", icon:"🔥", label:"注目銘柄"},
+    {key:"risk",  icon:"⚠️", label:"リスク"},
+    {key:"next",  icon:"🔭", label:"来週"},
+    {key:"advice",icon:"💡", label:"アドバイス"},
+  ];
+  var activeSectionS=useState("env");var activeSection=activeSectionS[0],setActiveSection=activeSectionS[1];
+
+  // テキストからセクションを抽出
+  function extractSection(text,sectionKey){
+    if(!text) return "";
+    var sec=SECTIONS.find(function(s){return s.key===sectionKey;});
+    if(!sec) return text;
+    var startIdx=text.indexOf(sec.icon);
+    if(startIdx===-1) return text;
+    var endIdx=-1;
+    for(var i=0;i<SECTIONS.length;i++){
+      if(SECTIONS[i].key===sectionKey) continue;
+      var ni=text.indexOf(SECTIONS[i].icon,startIdx+1);
+      if(ni!==-1&&(endIdx===-1||ni<endIdx)) endIdx=ni;
+    }
+    var content=endIdx===-1?text.slice(startIdx):text.slice(startIdx,endIdx);
+    return content.trim();
+  }
+
   return(
     <div>
       {/* ── ヘッダー・実行ボタン ── */}
@@ -1189,13 +1216,26 @@ function MarketPredictionPanel(p){
         </div>
       )}
 
-      {/* ── 結果 ── */}
+      {/* ── 結果（セクション別タブ） ── */}
       {!predictionLoading&&predictionResult&&(
         <div>
-          <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap",paddingBottom:40}}>
-            {predictionResult}
+          {/* セクションタブバー */}
+          <div style={{display:"flex",gap:6,overflowX:"auto",WebkitOverflowScrolling:"touch",marginBottom:12,paddingBottom:4}}>
+            {SECTIONS.map(function(sec){
+              var active=activeSection===sec.key;
+              return(
+                <button key={sec.key} onClick={function(){setActiveSection(sec.key);}}
+                  style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap",flexShrink:0}}>
+                  {sec.icon} {sec.label}
+                </button>
+              );
+            })}
           </div>
-          <button onClick={runPrediction} style={{width:"100%",background:"transparent",border:"1px solid #1e4070",borderRadius:8,color:"#4a7090",padding:"10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",marginBottom:40}}>🔄 再分析</button>
+          {/* セクション本文 */}
+          <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap"}}>
+            {extractSection(predictionResult,activeSection)}
+          </div>
+          <button onClick={runPrediction} style={{marginTop:20,width:"100%",background:"transparent",border:"1px solid #1e4070",borderRadius:8,color:"#4a7090",padding:"10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",marginBottom:40}}>🔄 再分析</button>
         </div>
       )}
 
