@@ -366,9 +366,11 @@ function StockCard(p){
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
 
   var isMobile=window.innerWidth<768;
+  var isSelected=!isMobile&&p.selectedStock&&p.selectedStock.ticker===s.ticker;
+  var cardBorder=isSelected?"#60a5fa":borderColor;
 
   return(
-    <div style={{background:"#050e1c",border:"1px solid "+borderColor,borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}}
+    <div style={{background:isSelected?"#071e38":"#050e1c",border:"2px solid "+cardBorder,borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}}
       onClick={function(){
         if(!isMobile){if(p.setSelectedStock)p.setSelectedStock(s);}
         else{setExpanded(function(v){return !v;});}
@@ -661,11 +663,11 @@ function StockDetailPanel(p){
               <span style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{s.ticker.replace(".T","")}</span>
               {s.tradeLabel&&<span style={bStyle("#0a0a1a","1px solid "+s.tradeColor,s.tradeColor)}>{s.tradeLabel}</span>}
             </div>
-            <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>{s.name}</div>
+            <div style={{fontSize:13,color:"#4a7090",marginTop:2}}>{s.name}</div>
           </div>
         </div>
         <div style={{display:"flex",gap:4,alignItems:"center"}}>
-          <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:26,height:26,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
+          <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:26,height:26,fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
           <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060"}}>{isFav(s.ticker)?"★":"☆"}</button>
         </div>
       </div>
@@ -673,7 +675,7 @@ function StockDetailPanel(p){
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:8,padding:"10px 14px"}}>
         <div>
           <span style={{fontSize:18,fontWeight:800,color:"#d8eeff"}}>{s.price}</span>
-          {s.market==="US"&&p.usdJpy&&<div style={{fontSize:11,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>}
+          {s.market==="US"&&p.usdJpy&&<div style={{fontSize:13,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>}
         </div>
         <div style={{textAlign:"right"}}>
           <span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
@@ -683,7 +685,7 @@ function StockDetailPanel(p){
       {/* 52週 */}
       {pos52!=null&&s.high52&&(
         <div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#4a7090",marginBottom:4}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:"#4a7090",marginBottom:4}}>
             <span>52W安値</span>
             <span style={{color:pos52Color,fontWeight:700}}>{pos52<=25?"安値圏":pos52<=75?"中間":"高値圏"}</span>
             <span>52W高値</span>
@@ -693,9 +695,9 @@ function StockDetailPanel(p){
             <div style={{position:"absolute",top:-2,left:"calc("+pos52+"% - 5px)",width:10,height:10,borderRadius:"50%",background:pos52Color,border:"1px solid #071428"}}/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:11,color:"#2a6090"}}>高値比</div><div style={{fontSize:13,fontWeight:700,color:fromHighColor}}>{s.fromHigh.toFixed(1)}%</div></div>
-            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:11,color:"#2a6090"}}>安値比</div><div style={{fontSize:13,fontWeight:700,color:fromLowColor}}>+{s.fromLow.toFixed(1)}%</div></div>
-            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:11,color:"#2a6090"}}>VIX</div><div style={{fontSize:13,fontWeight:700,color:p.vix&&parseFloat(p.vix)>=20?"#f43f5e":"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div></div>
+            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>高値比</div><div style={{fontSize:15,fontWeight:700,color:fromHighColor}}>{s.fromHigh.toFixed(1)}%</div></div>
+            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>安値比</div><div style={{fontSize:15,fontWeight:700,color:fromLowColor}}>+{s.fromLow.toFixed(1)}%</div></div>
+            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>VIX</div><div style={{fontSize:15,fontWeight:700,color:p.vix&&parseFloat(p.vix)>=20?"#f43f5e":"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div></div>
           </div>
         </div>
       )}
@@ -707,15 +709,15 @@ function StockDetailPanel(p){
       </div>
       {/* シグナル詳細 */}
       <div>
-        <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
+        <div style={{fontSize:14,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
         <div style={{display:"flex",flexDirection:"column",gap:4}}>
           {s.signals.map(function(sig,i){
             return(
               <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
-                <span style={{fontSize:12,color:"#4a7090"}}>{sig.label}</span>
+                <span style={{fontSize:14,color:"#4a7090"}}>{sig.label}</span>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                  <span style={{fontSize:12,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
-                  <span style={{fontSize:10,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
+                  <span style={{fontSize:14,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
+                  <span style={{fontSize:12,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
                 </div>
               </div>
             );
@@ -732,18 +734,18 @@ function StockDetailPanel(p){
         var scenarios=[{label:"損切りライン",pct:simStop,color:"#f43f5e"},{label:"-5%",pct:-5,color:"#fb923c"},{label:"+5%",pct:5,color:"#22d3a0"},{label:"+10%",pct:10,color:"#22d3a0"},{label:"+20%",pct:20,color:"#22d3a0"},{label:"目標価格",pct:simTarget,color:"#fbbf24"}];
         return(
           <div style={{background:"#040c18",border:"1px solid #a78bfa30",borderRadius:10,padding:"12px"}}>
-            <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",marginBottom:8}}>💹 損益シミュレーション</div>
+            <div style={{fontSize:14,fontWeight:700,color:"#a78bfa",marginBottom:8}}>💹 損益シミュレーション</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-              <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>買値</div><input style={inpSim} type="number" value={simBuy} onChange={function(e){setSimBuy(e.target.value);}}/></div>
-              <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>株数</div><input style={inpSim} type="number" value={simShares} onChange={function(e){setSimShares(e.target.value);}}/></div>
+              <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>買値</div><input style={inpSim} type="number" value={simBuy} onChange={function(e){setSimBuy(e.target.value);}}/></div>
+              <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>株数</div><input style={inpSim} type="number" value={simShares} onChange={function(e){setSimShares(e.target.value);}}/></div>
             </div>
             {bp>0&&sh>0&&(
               <div>
-                <div style={{background:"#071428",borderRadius:6,padding:"6px 10px",fontSize:12,color:"#4a7090",marginBottom:8}}>投資総額: <span style={{color:"#d8eeff",fontWeight:700}}>{fmtP(bp*sh)}</span></div>
-                <div style={{marginBottom:6}}><div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#4a7090",marginBottom:3}}><span>目標 +{simTarget}%</span><span style={{color:"#fbbf24"}}>{fmtP(bp*(1+simTarget/100))}</span></div><input type="range" min={1} max={100} value={simTarget} onChange={function(e){setSimTarget(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#fbbf24"}}/></div>
-                <div style={{marginBottom:8}}><div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#4a7090",marginBottom:3}}><span>損切り {simStop}%</span><span style={{color:"#f43f5e"}}>{fmtP(bp*(1+simStop/100))}</span></div><input type="range" min={-50} max={-1} value={simStop} onChange={function(e){setSimStop(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#f43f5e"}}/></div>
+                <div style={{background:"#071428",borderRadius:6,padding:"6px 10px",fontSize:14,color:"#4a7090",marginBottom:8}}>投資総額: <span style={{color:"#d8eeff",fontWeight:700}}>{fmtP(bp*sh)}</span></div>
+                <div style={{marginBottom:6}}><div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:"#4a7090",marginBottom:3}}><span>目標 +{simTarget}%</span><span style={{color:"#fbbf24"}}>{fmtP(bp*(1+simTarget/100))}</span></div><input type="range" min={1} max={100} value={simTarget} onChange={function(e){setSimTarget(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#fbbf24"}}/></div>
+                <div style={{marginBottom:8}}><div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:"#4a7090",marginBottom:3}}><span>損切り {simStop}%</span><span style={{color:"#f43f5e"}}>{fmtP(bp*(1+simStop/100))}</span></div><input type="range" min={-50} max={-1} value={simStop} onChange={function(e){setSimStop(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#f43f5e"}}/></div>
                 <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                  {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){var pnl=(bp*(1+sc.pct/100)-bp)*sh;return(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"5px 8px"}}><div><span style={{fontSize:12,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:11,color:"#4a7090",marginLeft:4}}>{sc.pct>=0?"+":""}{sc.pct}%</span></div><span style={{fontSize:13,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span></div>);})}
+                  {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){var pnl=(bp*(1+sc.pct/100)-bp)*sh;return(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"5px 8px"}}><div><span style={{fontSize:14,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:13,color:"#4a7090",marginLeft:4}}>{sc.pct>=0?"+":""}{sc.pct}%</span></div><span style={{fontSize:15,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span></div>);})}
                 </div>
               </div>
             )}
@@ -753,14 +755,14 @@ function StockDetailPanel(p){
       {/* ポートフォリオ追加 */}
       {showAdd&&(
         <div style={{background:"#040c18",border:"1px solid #22d3a030",borderRadius:8,padding:"12px"}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#22d3a0",marginBottom:8}}>💼 ポートフォリオに追加</div>
+          <div style={{fontSize:14,fontWeight:700,color:"#22d3a0",marginBottom:8}}>💼 ポートフォリオに追加</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-            <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>買値</div><input style={inp} type="number" value={buyPrice} onChange={function(e){setBuyPrice(e.target.value);}} placeholder="150.00"/></div>
-            <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>株数</div><input style={inp} type="number" value={shares} onChange={function(e){setShares(e.target.value);}} placeholder="100"/></div>
+            <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>買値</div><input style={inp} type="number" value={buyPrice} onChange={function(e){setBuyPrice(e.target.value);}} placeholder="150.00"/></div>
+            <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>株数</div><input style={inp} type="number" value={shares} onChange={function(e){setShares(e.target.value);}} placeholder="100"/></div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            <button onClick={function(){setShowAdd(false);}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:6,color:"#4a7090",padding:"7px",fontSize:13,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
-            <button onClick={submitAdd} disabled={!buyPrice||!shares} style={{background:buyPrice&&shares?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:6,color:"#fff",padding:"7px",fontSize:13,fontWeight:700,cursor:buyPrice&&shares?"pointer":"not-allowed",fontFamily:"monospace"}}>追加</button>
+            <button onClick={function(){setShowAdd(false);}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:6,color:"#4a7090",padding:"7px",fontSize:15,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
+            <button onClick={submitAdd} disabled={!buyPrice||!shares} style={{background:buyPrice&&shares?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:6,color:"#fff",padding:"7px",fontSize:15,fontWeight:700,cursor:buyPrice&&shares?"pointer":"not-allowed",fontFamily:"monospace"}}>追加</button>
           </div>
         </div>
       )}
@@ -768,18 +770,18 @@ function StockDetailPanel(p){
       {showAi&&(
         <div style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"12px"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontSize:12,fontWeight:700,color:"#22d3a0"}}>🤖 AI分析</div>
-            <button onClick={function(){setShowAi(false);setAiText("");}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:13,cursor:"pointer"}}>✕</button>
+            <div style={{fontSize:14,fontWeight:700,color:"#22d3a0"}}>🤖 AI分析</div>
+            <button onClick={function(){setShowAi(false);setAiText("");}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:15,cursor:"pointer"}}>✕</button>
           </div>
-          {aiLoading?(<div style={{textAlign:"center",padding:"12px 0"}}><div style={{fontSize:18}}>⏳</div><div style={{fontSize:12,color:"#4a90c0",marginTop:4}}>AIが分析中...</div></div>):(<div style={{fontSize:13,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}</div>)}
-          {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
+          {aiLoading?(<div style={{textAlign:"center",padding:"12px 0"}}><div style={{fontSize:18}}>⏳</div><div style={{fontSize:14,color:"#4a90c0",marginTop:4}}>AIが分析中...</div></div>):(<div style={{fontSize:15,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}</div>)}
+          {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
         </div>
       )}
       {/* TV・Yahoo・iSPEED */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-        <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📈 TV</a>
-        <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
-        <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
+        <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📈 TV</a>
+        <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
+        <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
       </div>
     </div>
   );
