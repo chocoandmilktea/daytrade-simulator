@@ -297,7 +297,7 @@ function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.activ
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross;
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
-  var tvUrl="tradingview://chart?symbol="+encodeURIComponent(s.tvSymbol);
+  function handleTvOpen(e){e.stopPropagation();if(navigator.clipboard){navigator.clipboard.writeText(s.tvSymbol).catch(function(){});}window.location.href="tradingview://";}
 
   // ── state ──────────────────────────────────────────────────────────────
   var expandedS=useState(false);var expanded=expandedS[0],setExpanded=expandedS[1];
@@ -574,7 +574,7 @@ function StockCard(p){
 
           {/* TV・Yahoo・iSPEED */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-            <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📈 TV</a>
+            <button onClick={handleTvOpen} style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textAlign:"center",display:"block",cursor:"pointer",width:"100%"}}>📈 TV<div style={{fontSize:9,color:"#93c5fd",marginTop:2}}>シンボルをコピー</div></button>
             <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
             <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
           </div>
@@ -596,7 +596,7 @@ function StockDetailPanel(p){
     );
   }
   var isUp=parseFloat(s.change)>=0;
-  var tvUrl="tradingview://chart?symbol="+encodeURIComponent(s.tvSymbol);
+  function handleTvOpen(e){e.stopPropagation();if(navigator.clipboard){navigator.clipboard.writeText(s.tvSymbol).catch(function(){});}window.location.href="tradingview://";}
   var mc=MKT[s.market]||MKT["US"];
   var bc=BADGE[s.timing];
   var borderColor=s.score>=68?"#22d3a0":s.score>=42?"#fbbf24":"#f43f5e";
@@ -779,7 +779,7 @@ function StockDetailPanel(p){
       )}
       {/* TV・Yahoo・iSPEED */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-        <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📈 TV</a>
+        <button onClick={handleTvOpen} style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textAlign:"center",display:"block",cursor:"pointer",width:"100%"}}>📈 TV<div style={{fontSize:10,color:"#93c5fd",marginTop:2}}>シンボルをコピー</div></button>
         <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
         <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
       </div>
@@ -1510,8 +1510,8 @@ function TrendPanel(){var cs=useState(0);var openCat=cs[0],setOpenCat=cs[1];retu
 
 function IndexPanel(){
   var INDEX_FUNDS=[
-    {label:"eMAXIS Slim 全世界株式（オール・カントリー）",url:"safari-https://www.rakuten-sec.co.jp/web/fund/detail/?ID=JP90C000H1T1",desc:"楽天証券 投資信託詳細ページ"},
-    {label:"楽天証券 ホーム",url:"safari-https://member.rakuten-sec.co.jp/app/home.do",desc:"保有資産・取引状況の確認"},
+    {label:"eMAXIS Slim 全世界株式（オール・カントリー）",url:"https://www.rakuten-sec.co.jp/web/fund/detail/?ID=JP90C000H1T1",desc:"楽天証券 投資信託詳細ページ"},
+    {label:"楽天証券 ホーム",url:"https://member.rakuten-sec.co.jp/app/home.do",desc:"保有資産・取引状況の確認"},
   ];
   return(
     <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}>
@@ -1521,11 +1521,10 @@ function IndexPanel(){
       <div style={{padding:"8px"}}>
         {INDEX_FUNDS.map(function(item,i){
           return(
-            <button key={i} onClick={function(){window.location.href=item.url;}}
-              style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4,width:"100%",textAlign:"left",cursor:"pointer"}}>
+            <a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}>
               <span style={{fontSize:15,fontWeight:700,color:"#93c5fd"}}>{item.label}</span>
               <span style={{fontSize:12,color:"#4a7090"}}>{item.desc}</span>
-            </button>
+            </a>
           );
         })}
       </div>
