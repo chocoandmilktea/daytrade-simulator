@@ -365,9 +365,14 @@ function StockCard(p){
 
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
 
+  var isMobile=window.innerWidth<768;
+
   return(
     <div style={{background:"#050e1c",border:"1px solid "+borderColor,borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}}
-      onClick={function(){setExpanded(function(v){return !v;});}}>
+      onClick={function(){
+        if(!isMobile){if(p.setSelectedStock)p.setSelectedStock(s);}
+        else{setExpanded(function(v){return !v;});}
+      }}>
       {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
       {/* ── 上段: スコアリング・市場・ティッカー・トレードタイプ・★ ── */}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -439,11 +444,11 @@ function StockCard(p){
         </div>
       )}
 
-      {/* 展開インジケーター */}
-      <div style={{textAlign:"center",fontSize:11,color:"#2a4060"}}>{expanded?"▲ 閉じる":"▼ 詳細を見る"}</div>
+      {/* 展開インジケーター（スマホのみ） */}
+      {isMobile&&<div style={{textAlign:"center",fontSize:11,color:"#2a4060"}}>{expanded?"▲ 閉じる":"▼ 詳細を見る"}</div>}
 
-      {/* ── 展開部分 ── */}
-      {expanded&&(
+      {/* ── 展開部分（スマホのみ） ── */}
+      {isMobile&&expanded&&(
         <div onClick={stopProp} style={{borderTop:"1px solid #0f2040",paddingTop:10,display:"flex",flexDirection:"column",gap:10}}>
 
           {/* ボタン群（展開後に表示） */}
@@ -577,6 +582,209 @@ function StockCard(p){
   );
 }
 
+// ── StockDetailPanel（iPad用右ペイン詳細パネル） ─────────────────────────────
+function StockDetailPanel(p){
+  var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav;
+  if(!s){
+    return(
+      <div style={{textAlign:"center",padding:"60px 20px",color:"#2a6090"}}>
+        <div style={{fontSize:32,marginBottom:12}}>👈</div>
+        <div style={{fontSize:15,color:"#4a90c0"}}>銘柄を選択してください</div>
+      </div>
+    );
+  }
+  var isUp=parseFloat(s.change)>=0;
+  var tvUrl="https://www.tradingview.com/chart/?symbol="+encodeURIComponent(s.tvSymbol)+"&interval=D";
+  var mc=MKT[s.market]||MKT["US"];
+  var bc=BADGE[s.timing];
+  var borderColor=s.score>=68?"#22d3a0":s.score>=42?"#fbbf24":"#f43f5e";
+  var fromHighColor=s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0";
+  var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
+  var stateColor=function(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";};
+  var stateLabel=function(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";};
+  var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
+  var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
+
+  var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
+  var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
+  var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
+  var simTargetS=useState(20);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
+  var simStopS=useState(-10);var simStop=simStopS[0],setSimStop=simStopS[1];
+  var showAddS=useState(false);var showAdd=showAddS[0],setShowAdd=showAddS[1];
+  var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
+  var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
+  var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
+  var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
+  var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
+  var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
+  var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
+
+  async function runAiAnalysis(){
+    if(aiLoading) return;
+    setShowAi(true);setAiLoading(true);setAiText("");
+    var prompt="あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
+      "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
+      "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
+      "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
+      "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
+      "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
+      "以下の3点を各2〜3文で答えてください:\n1. 現在の相場状況と注目ポイント\n2. このスコアになった主な理由\n3. 今後の注目ポイントと注意事項";
+    try{
+      var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:prompt}),signal:AbortSignal.timeout(30000)});
+      var aiData=await res.json();
+      if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
+      var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
+      setAiText(aiText2||"分析できませんでした。");
+    }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
+    setAiLoading(false);
+  }
+  function submitAdd(){
+    if(!buyPrice||!shares) return;
+    var portfolio=(function(){try{var v=localStorage.getItem("portfolio_v1");return v?JSON.parse(v):[];}catch(e){return[];}}());
+    var pos={id:Date.now(),ticker:s.ticker,name:s.name,market:s.market,buyPrice:parseFloat(buyPrice),shares:parseFloat(shares),stopLoss:null,target:null,addedAt:new Date().toLocaleDateString("ja-JP")};
+    try{localStorage.setItem("portfolio_v1",JSON.stringify(portfolio.concat([pos])));}catch(e){}
+    setShowAdd(false);setShares("");setAdded(true);
+    setTimeout(function(){setAdded(false);},2000);
+  }
+  var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+
+  return(
+    <div style={{background:"#050e1c",border:"1px solid "+borderColor,borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
+      {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
+      {/* ヘッダー */}
+      <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <ScoreRing score={s.score}/>
+          <div>
+            <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+              <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
+              <span style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{s.ticker.replace(".T","")}</span>
+              {s.tradeLabel&&<span style={bStyle("#0a0a1a","1px solid "+s.tradeColor,s.tradeColor)}>{s.tradeLabel}</span>}
+            </div>
+            <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>{s.name}</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+          <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:26,height:26,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
+          <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060"}}>{isFav(s.ticker)?"★":"☆"}</button>
+        </div>
+      </div>
+      {/* 価格・騰落率 */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:8,padding:"10px 14px"}}>
+        <div>
+          <span style={{fontSize:18,fontWeight:800,color:"#d8eeff"}}>{s.price}</span>
+          {s.market==="US"&&p.usdJpy&&<div style={{fontSize:11,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>}
+        </div>
+        <div style={{textAlign:"right"}}>
+          <span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
+          <div style={{marginTop:4}}><span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span></div>
+        </div>
+      </div>
+      {/* 52週 */}
+      {pos52!=null&&s.high52&&(
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#4a7090",marginBottom:4}}>
+            <span>52W安値</span>
+            <span style={{color:pos52Color,fontWeight:700}}>{pos52<=25?"安値圏":pos52<=75?"中間":"高値圏"}</span>
+            <span>52W高値</span>
+          </div>
+          <div style={{background:"#0a1828",borderRadius:3,height:5,position:"relative",marginBottom:8}}>
+            <div style={{background:"linear-gradient(90deg,#22d3a0,#fbbf24,#f43f5e)",height:5,borderRadius:3,width:"100%",opacity:0.25}}/>
+            <div style={{position:"absolute",top:-2,left:"calc("+pos52+"% - 5px)",width:10,height:10,borderRadius:"50%",background:pos52Color,border:"1px solid #071428"}}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:11,color:"#2a6090"}}>高値比</div><div style={{fontSize:13,fontWeight:700,color:fromHighColor}}>{s.fromHigh.toFixed(1)}%</div></div>
+            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:11,color:"#2a6090"}}>安値比</div><div style={{fontSize:13,fontWeight:700,color:fromLowColor}}>+{s.fromLow.toFixed(1)}%</div></div>
+            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:11,color:"#2a6090"}}>VIX</div><div style={{fontSize:13,fontWeight:700,color:p.vix&&parseFloat(p.vix)>=20?"#f43f5e":"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div></div>
+          </div>
+        </div>
+      )}
+      {/* ボタン群 */}
+      <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"flex-end"}}>
+        <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
+        <button onClick={function(){setShowAdd(function(v){return !v;});}} style={{background:showAdd?"#052e16":"transparent",border:"1px solid "+(showAdd?"#22d3a0":added?"#22d3a0":"#2a4060"),borderRadius:6,color:showAdd?"#22d3a0":added?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>{added?"✅":"💼"}</button>
+        <button onClick={function(){setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
+      </div>
+      {/* シグナル詳細 */}
+      <div>
+        <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
+        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+          {s.signals.map(function(sig,i){
+            return(
+              <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
+                <span style={{fontSize:12,color:"#4a7090"}}>{sig.label}</span>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
+                  <span style={{fontSize:10,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {/* 損益シミュレーション */}
+      {showSim&&(function(){
+        var bp=parseFloat(simBuy)||0;var sh=parseFloat(simShares)||0;
+        var isJP=s.market==="JP";
+        function fmtP(v){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);}
+        function fmtPnL(v){return(v>=0?"+":"")+(isJP?"¥"+Math.round(Math.abs(v)).toLocaleString():"$"+Math.abs(v).toFixed(2));}
+        var inpSim={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+        var scenarios=[{label:"損切りライン",pct:simStop,color:"#f43f5e"},{label:"-5%",pct:-5,color:"#fb923c"},{label:"+5%",pct:5,color:"#22d3a0"},{label:"+10%",pct:10,color:"#22d3a0"},{label:"+20%",pct:20,color:"#22d3a0"},{label:"目標価格",pct:simTarget,color:"#fbbf24"}];
+        return(
+          <div style={{background:"#040c18",border:"1px solid #a78bfa30",borderRadius:10,padding:"12px"}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",marginBottom:8}}>💹 損益シミュレーション</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>買値</div><input style={inpSim} type="number" value={simBuy} onChange={function(e){setSimBuy(e.target.value);}}/></div>
+              <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>株数</div><input style={inpSim} type="number" value={simShares} onChange={function(e){setSimShares(e.target.value);}}/></div>
+            </div>
+            {bp>0&&sh>0&&(
+              <div>
+                <div style={{background:"#071428",borderRadius:6,padding:"6px 10px",fontSize:12,color:"#4a7090",marginBottom:8}}>投資総額: <span style={{color:"#d8eeff",fontWeight:700}}>{fmtP(bp*sh)}</span></div>
+                <div style={{marginBottom:6}}><div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#4a7090",marginBottom:3}}><span>目標 +{simTarget}%</span><span style={{color:"#fbbf24"}}>{fmtP(bp*(1+simTarget/100))}</span></div><input type="range" min={1} max={100} value={simTarget} onChange={function(e){setSimTarget(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#fbbf24"}}/></div>
+                <div style={{marginBottom:8}}><div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#4a7090",marginBottom:3}}><span>損切り {simStop}%</span><span style={{color:"#f43f5e"}}>{fmtP(bp*(1+simStop/100))}</span></div><input type="range" min={-50} max={-1} value={simStop} onChange={function(e){setSimStop(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#f43f5e"}}/></div>
+                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                  {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){var pnl=(bp*(1+sc.pct/100)-bp)*sh;return(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"5px 8px"}}><div><span style={{fontSize:12,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:11,color:"#4a7090",marginLeft:4}}>{sc.pct>=0?"+":""}{sc.pct}%</span></div><span style={{fontSize:13,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span></div>);})}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+      {/* ポートフォリオ追加 */}
+      {showAdd&&(
+        <div style={{background:"#040c18",border:"1px solid #22d3a030",borderRadius:8,padding:"12px"}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#22d3a0",marginBottom:8}}>💼 ポートフォリオに追加</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+            <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>買値</div><input style={inp} type="number" value={buyPrice} onChange={function(e){setBuyPrice(e.target.value);}} placeholder="150.00"/></div>
+            <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>株数</div><input style={inp} type="number" value={shares} onChange={function(e){setShares(e.target.value);}} placeholder="100"/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button onClick={function(){setShowAdd(false);}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:6,color:"#4a7090",padding:"7px",fontSize:13,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
+            <button onClick={submitAdd} disabled={!buyPrice||!shares} style={{background:buyPrice&&shares?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:6,color:"#fff",padding:"7px",fontSize:13,fontWeight:700,cursor:buyPrice&&shares?"pointer":"not-allowed",fontFamily:"monospace"}}>追加</button>
+          </div>
+        </div>
+      )}
+      {/* AI分析 */}
+      {showAi&&(
+        <div style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"12px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#22d3a0"}}>🤖 AI分析</div>
+            <button onClick={function(){setShowAi(false);setAiText("");}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:13,cursor:"pointer"}}>✕</button>
+          </div>
+          {aiLoading?(<div style={{textAlign:"center",padding:"12px 0"}}><div style={{fontSize:18}}>⏳</div><div style={{fontSize:12,color:"#4a90c0",marginTop:4}}>AIが分析中...</div></div>):(<div style={{fontSize:13,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}</div>)}
+          {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
+        </div>
+      )}
+      {/* TV・Yahoo・iSPEED */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+        <a href={tvUrl} target="_blank" rel="noreferrer" style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📈 TV</a>
+        <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
+        <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
+      </div>
+    </div>
+  );
+}
+
 // ── MarketBar ─────────────────────────────────────────────────────────────────
 function MarketBar(){
   var dataS=useState({}); var data=dataS[0],setData=dataS[1];
@@ -643,15 +851,26 @@ function MarketBar(){
 // ── [FIX #7] Section を CrossPanel の外に定義してレンダー毎の再生成を防ぐ ──
 function CrossSection(sp){
   if(!sp.items||!sp.items.length) return null;
+  var isMobile=window.innerWidth<768;
   function isFavFn(t){return sp.favs.indexOf(t)>=0;}
+  var cards=(
+    <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
+      {sp.items.map(function(item){
+        return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={isFavFn} cross={item.cross} vix={sp.vix} usdJpy={sp.usdJpy} setSelectedStock={sp.setSelectedStock}/>;
+      })}
+    </div>
+  );
   return(
     <div style={{marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:700,color:sp.color,marginBottom:8,padding:"4px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
-      <div style={{display:"grid",gridTemplateColumns:window.innerWidth<768?"repeat(1,1fr)":"repeat(4,1fr)",gap:8}}>
-        {sp.items.map(function(item){
-          return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={isFavFn} cross={item.cross} vix={sp.vix} usdJpy={sp.usdJpy}/>;
-        })}
-      </div>
+      {isMobile?cards:(
+        <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+          <div style={{width:"45%",flexShrink:0}}>{cards}</div>
+          <div style={{flex:1,position:"sticky",top:60}}>
+            <StockDetailPanel s={sp.selectedStock&&sp.items.find(function(it){return it.s.ticker===sp.selectedStock.ticker;})?sp.selectedStock:null} toggleFav={sp.toggleFav} isFav={isFavFn} vix={sp.vix} usdJpy={sp.usdJpy}/>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -780,29 +999,42 @@ function AllStocksPanel(p){
       )}
 
       {/* ── 全銘柄モード ── */}
-      {viewMode==="all"&&(
-        <>
-          <div style={{display:"grid",gridTemplateColumns:window.innerWidth<768?"repeat(1,1fr)":"repeat(4,1fr)",gap:8}}>
+      {viewMode==="all"&&(function(){
+        var isMobile=window.innerWidth<768;
+        var cardGrid2=(
+          <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
             {displayStocks.map(function(s){
               var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-              return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
+              return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock}/>;
             })}
           </div>
-          {displayStocks.length===0&&(
-            <div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>該当する銘柄がありません</div>
-          )}
-        </>
-      )}
+        );
+        return(
+          <>
+            {isMobile?cardGrid2:(
+              <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                <div style={{width:"45%",flexShrink:0}}>{cardGrid2}</div>
+                <div style={{flex:1,position:"sticky",top:60}}>
+                  <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
+                </div>
+              </div>
+            )}
+            {displayStocks.length===0&&(
+              <div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>該当する銘柄がありません</div>
+            )}
+          </>
+        );
+      })()}
 
       {/* ── クロス予測モード ── */}
       {viewMode==="cross"&&(
         <>
           {!hasAny&&<div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>現在クロス条件に該当する銘柄がありません</div>}
-          <CrossSection title="⚡ GC接近中" items={gcNear} color="#fbbf24" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy}/>
-          <CrossSection title="🔥 GC発生中" items={gcNow} color="#22d3a0" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy}/>
-          <CrossSection title="👀 GC監視中" items={gcWatch} color="#60a5fa" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy}/>
-          <CrossSection title="⚠ DC接近中" items={dcNear} color="#fb923c" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy}/>
-          <CrossSection title="💀 DC発生中" items={dcNow} color="#f43f5e" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy}/>
+          <CrossSection title="⚡ GC接近中" items={gcNear} color="#fbbf24" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy} selectedStock={p.selectedStock} setSelectedStock={p.setSelectedStock}/>
+          <CrossSection title="🔥 GC発生中" items={gcNow} color="#22d3a0" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy} selectedStock={p.selectedStock} setSelectedStock={p.setSelectedStock}/>
+          <CrossSection title="👀 GC監視中" items={gcWatch} color="#60a5fa" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy} selectedStock={p.selectedStock} setSelectedStock={p.setSelectedStock}/>
+          <CrossSection title="⚠ DC接近中" items={dcNear} color="#fb923c" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy} selectedStock={p.selectedStock} setSelectedStock={p.setSelectedStock}/>
+          <CrossSection title="💀 DC発生中" items={dcNow} color="#f43f5e" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy} selectedStock={p.selectedStock} setSelectedStock={p.setSelectedStock}/>
         </>
       )}
     </div>
@@ -832,6 +1064,15 @@ function FavPanel(p){
     return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
   }
   function isFavRef(t){return favs.indexOf(t)>=0;}
+  var isMobile=window.innerWidth<768;
+  var cardGrid=(
+    <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
+      {displayStocks.map(function(s){
+        var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock}/>;
+      })}
+    </div>
+  );
   return(
     <div>
       <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
@@ -852,12 +1093,14 @@ function FavPanel(p){
           {sBtn("change","騰落率順")}
         </div>
       )}
-      <div style={{display:"grid",gridTemplateColumns:window.innerWidth<768?"repeat(1,1fr)":"repeat(4,1fr)",gap:8}}>
-        {displayStocks.map(function(s){
-          var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy}/>;
-        })}
-      </div>
+      {isMobile?cardGrid:(
+        <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+          <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
+          <div style={{flex:1,position:"sticky",top:60}}>
+            <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
+          </div>
+        </div>
+      )}
       {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:13}}>ティッカーを入力して追加できます</div>}
     </div>
   );
@@ -1446,6 +1689,7 @@ export default function App(){
   var usdJpyS=useState(null);var usdJpy=usdJpyS[0],setUsdJpy=usdJpyS[1];
   var predResS=useState("");var predictionResult=predResS[0],setPredictionResult=predResS[1];
   var predLoadS=useState(false);var predictionLoading=predLoadS[0],setPredictionLoading=predLoadS[1];
+  var selStockS=useState(null);var selectedStock=selStockS[0],setSelectedStock=selStockS[1];
   var k=useState("all");var activeTab=k[0],setActiveTab=k[1];
   var userId=(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}})();
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
@@ -1576,8 +1820,8 @@ export default function App(){
         )}
         {/* コンテンツ */}
         <div style={{marginLeft:isMobile?0:50,padding:"10px 10px 120px"}}>
-          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress}/>}
-          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy}/>}
+          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock}/>}
+          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock}/>}
           {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
           {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
           {activeTab==="index"&&<IndexPanel/>}
