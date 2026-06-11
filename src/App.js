@@ -1135,14 +1135,13 @@ function MarketPredictionPanel(p){
       "【GC発生中】\n"+(gcNowList.length>0?gcNowList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n"+
       "【GC接近中】\n"+(gcNearList.length>0?gcNearList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n"+
       "【DC発生中】\n"+(dcNowList.length>0?dcNowList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n\n"+
-      "以下の6セクション形式で出力してください。各セクションは必ず [SEC:キー]内容[/SEC] の形式で出力してください。キーはenv・mkt・stock・risk・next・adviceを使用してください。\n\n"+
-      "[SEC:env]📊 今日の相場環境（VIXの水準・市場の方向感・注意点を含めて3〜4行）[/SEC]\n\n"+
-      "[SEC:mkt]📈 注目市場・セクター（なぜ今注目なのか理由と根拠を含めて3〜4行）[/SEC]\n\n"+
-      "[SEC:stock]🔥 注目銘柄（2〜3銘柄）（各銘柄について「なぜ注目か」「どんな値動きが期待できるか」「リスクは何か」を説明）[/SEC]\n\n"+
-      "[SEC:risk]⚠️ リスク要因（具体的なリスクを2〜3点挙げて、それぞれ影響と対処法を説明）[/SEC]\n\n"+
-      "[SEC:next]🔭 来週の見通し（来週の相場展開の予想を3〜4行。注目イベント・経済指標があれば含める）[/SEC]\n\n"+
-      "[SEC:advice]💡 個人投資家へのアドバイス（今の相場環境でデイトレ・スイングをする際の具体的な注意点を2〜3行）[/SEC]\n\n"+
-      "必ず [SEC:env]・[SEC:mkt]・[SEC:stock]・[SEC:risk]・[SEC:next]・[SEC:advice] の6つ全てのセクションを出力してください。1つでも欠けると表示できません。";
+      "以下の6セクション形式で出力してください。各セクションは必ず以下のアイコンで始めてください：📊 今日の相場環境、📈 注目市場・セクター、🔥 注目銘柄、⚠️ リスク要因、🔭 来週の見通し、💡 個人投資家へのアドバイス。\n\n"+
+      "📊 今日の相場環境\nVIXの水準・市場の方向感・注意点を含めて3〜4行で説明。\n\n"+
+      "📈 注目市場・セクター\nなぜ今注目なのか理由と根拠を含めて3〜4行で説明。\n\n"+
+      "🔥 注目銘柄（2〜3銘柄）\n各銘柄について「なぜ注目か」「どんな値動きが期待できるか」「リスクは何か」を含めて説明。\n\n"+
+      "⚠️ リスク要因\n具体的なリスクを2〜3点挙げて、それぞれ影響と対処法を説明。\n\n"+
+      "🔭 来週の見通し\n来週の相場展開の予想を3〜4行で説明。注目イベント・経済指標があれば含める。\n\n"+
+      "💡 個人投資家へのアドバイス\n今の相場環境でデイトレ・スイングをする際の具体的な注意点を2〜3行で説明。";
     try{
       var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{
         method:"POST",
@@ -1175,18 +1174,22 @@ function MarketPredictionPanel(p){
   ];
   var activeSectionS=useState("env");var activeSection=activeSectionS[0],setActiveSection=activeSectionS[1];
 
-  // [SEC:key]...[/SEC] 形式でテキストを分割
+  // アイコンでテキストをセクション分割
   function buildSectionMap(text){
     var sectionMap={};
     if(!text) return sectionMap;
-    var matches=text.match(/\[SEC:(\w+)\]([\s\S]*?)\[\/SEC\]/g);
-    if(matches){
-      matches.forEach(function(m){
-        var key=m.match(/\[SEC:(\w+)\]/)[1];
-        var content=m.replace(/\[SEC:\w+\]/,"").replace(/\[\/SEC\]/,"").trim();
-        sectionMap[key]=content;
-      });
-    }
+    var sectionKeys=["env","mkt","stock","risk","next","advice"];
+    var sectionMarkers=["📊","📈","🔥","⚠️","🔭","💡"];
+    sectionMarkers.forEach(function(marker,i){
+      var startIdx=text.indexOf(marker);
+      if(startIdx===-1) return;
+      var nextIdx=text.length;
+      for(var j=i+1;j<sectionMarkers.length;j++){
+        var ni=text.indexOf(sectionMarkers[j],startIdx+1);
+        if(ni!==-1){nextIdx=ni;break;}
+      }
+      sectionMap[sectionKeys[i]]=text.slice(startIdx,nextIdx).trim();
+    });
     if(Object.keys(sectionMap).length===0) sectionMap["env"]=text;
     return sectionMap;
   }
