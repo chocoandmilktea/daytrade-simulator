@@ -513,9 +513,9 @@ function StockCard(p){
                       </div>
                       <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
                         <span style={{fontSize:11,color:"#4a7090",flexShrink:0}}>目標</span>
-                        <input type="number" value={simTarget} onChange={function(e){var v=parseInt(e.target.value);if(!isNaN(v)&&v>=1&&v<=200)setSimTarget(v);}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                        <input type="number" value={simTargetInput} onChange={function(e){setSimTargetInput(e.target.value);}} onBlur={function(){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);}setSimTargetInput(String(simTarget));}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
                         <span style={{fontSize:11,color:"#fbbf24"}}>%</span>
-                        <input type="range" min={1} max={200} value={simTarget} onChange={function(e){setSimTarget(parseInt(e.target.value));}} style={{flex:1,accentColor:"#fbbf24"}}/>
+                        <input type="range" min={1} max={200} value={simTarget} onChange={function(e){var v=parseInt(e.target.value);setSimTarget(v);setSimTargetInput(String(v));}} style={{flex:1,accentColor:"#fbbf24"}}/>
                       </div>
                     </div>
                     <div style={{marginBottom:8}}>
@@ -524,9 +524,9 @@ function StockCard(p){
                       </div>
                       <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
                         <span style={{fontSize:11,color:"#4a7090",flexShrink:0}}>損切り</span>
-                        <input type="number" value={simStop} onChange={function(e){var v=parseInt(e.target.value);if(!isNaN(v)&&v>=-50&&v<=-1)setSimStop(v);}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                        <input type="number" value={simStopInput} onChange={function(e){setSimStopInput(e.target.value);}} onBlur={function(){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);}setSimStopInput(String(simStop));}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
                         <span style={{fontSize:11,color:"#f43f5e"}}>%</span>
-                        <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){setSimStop(parseInt(e.target.value));}} style={{flex:1,accentColor:"#f43f5e"}}/>
+                        <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){var v=parseInt(e.target.value);setSimStop(v);setSimStopInput(String(v));}} style={{flex:1,accentColor:"#f43f5e"}}/>
                       </div>
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:4}}>
@@ -622,6 +622,8 @@ function StockDetailPanel(p){
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   var simTargetS=useState(20);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
   var simStopS=useState(-10);var simStop=simStopS[0],setSimStop=simStopS[1];
+  var simTargetInputS=useState("20");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
+  var simStopInputS=useState("-10");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
   var showAddS=useState(false);var showAdd=showAddS[0],setShowAdd=showAddS[1];
   var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
@@ -756,18 +758,18 @@ function StockDetailPanel(p){
                   <div style={{fontSize:13,color:"#fbbf24",marginBottom:3}}>{fmtP(bp*(1+simTarget/100))}</div>
                   <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
                     <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>目標</span>
-                    <input type="number" value={simTarget} onChange={function(e){var v=parseInt(e.target.value);if(!isNaN(v)&&v>=1&&v<=200)setSimTarget(v);}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                    <input type="number" value={simTargetInput} onChange={function(e){setSimTargetInput(e.target.value);}} onBlur={function(){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);}setSimTargetInput(String(simTarget));}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
                     <span style={{fontSize:13,color:"#fbbf24"}}>%</span>
-                    <input type="range" min={1} max={200} value={simTarget} onChange={function(e){setSimTarget(parseInt(e.target.value));}} style={{flex:1,accentColor:"#fbbf24"}}/>
+                    <input type="range" min={1} max={200} value={simTarget} onChange={function(e){var v=parseInt(e.target.value);setSimTarget(v);setSimTargetInput(String(v));}} style={{flex:1,accentColor:"#fbbf24"}}/>
                   </div>
                 </div>
                 <div style={{marginBottom:8}}>
                   <div style={{fontSize:13,color:"#f43f5e",marginBottom:3}}>{fmtP(bp*(1+simStop/100))}</div>
                   <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
                     <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>損切り</span>
-                    <input type="number" value={simStop} onChange={function(e){var v=parseInt(e.target.value);if(!isNaN(v)&&v>=-50&&v<=-1)setSimStop(v);}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                    <input type="number" value={simStopInput} onChange={function(e){setSimStopInput(e.target.value);}} onBlur={function(){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);}setSimStopInput(String(simStop));}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
                     <span style={{fontSize:13,color:"#f43f5e"}}>%</span>
-                    <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){setSimStop(parseInt(e.target.value));}} style={{flex:1,accentColor:"#f43f5e"}}/>
+                    <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){var v=parseInt(e.target.value);setSimStop(v);setSimStopInput(String(v));}} style={{flex:1,accentColor:"#f43f5e"}}/>
                   </div>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:4}}>
