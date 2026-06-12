@@ -509,15 +509,25 @@ function StockCard(p){
                     </div>
                     <div style={{marginBottom:6}}>
                       <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#4a7090",marginBottom:3}}>
-                        <span>目標 +{simTarget}%</span><span style={{color:"#fbbf24"}}>{fmtP(bp*(1+simTarget/100))}</span>
+                        <span style={{color:"#fbbf24"}}>{fmtP(bp*(1+simTarget/100))}</span>
                       </div>
-                      <input type="range" min={1} max={100} value={simTarget} onChange={function(e){setSimTarget(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#fbbf24"}}/>
+                      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                        <span style={{fontSize:11,color:"#4a7090",flexShrink:0}}>目標</span>
+                        <input type="number" value={simTarget} onChange={function(e){var v=parseInt(e.target.value);if(!isNaN(v)&&v>=1&&v<=200)setSimTarget(v);}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                        <span style={{fontSize:11,color:"#fbbf24"}}>%</span>
+                        <input type="range" min={1} max={200} value={simTarget} onChange={function(e){setSimTarget(parseInt(e.target.value));}} style={{flex:1,accentColor:"#fbbf24"}}/>
+                      </div>
                     </div>
                     <div style={{marginBottom:8}}>
                       <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#4a7090",marginBottom:3}}>
-                        <span>損切り {simStop}%</span><span style={{color:"#f43f5e"}}>{fmtP(bp*(1+simStop/100))}</span>
+                        <span style={{color:"#f43f5e"}}>{fmtP(bp*(1+simStop/100))}</span>
                       </div>
-                      <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){setSimStop(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#f43f5e"}}/>
+                      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                        <span style={{fontSize:11,color:"#4a7090",flexShrink:0}}>損切り</span>
+                        <input type="number" value={simStop} onChange={function(e){var v=parseInt(e.target.value);if(!isNaN(v)&&v>=-50&&v<=-1)setSimStop(v);}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                        <span style={{fontSize:11,color:"#f43f5e"}}>%</span>
+                        <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){setSimStop(parseInt(e.target.value));}} style={{flex:1,accentColor:"#f43f5e"}}/>
+                      </div>
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:4}}>
                       {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){
@@ -742,8 +752,24 @@ function StockDetailPanel(p){
             {bp>0&&sh>0&&(
               <div>
                 <div style={{background:"#071428",borderRadius:6,padding:"6px 10px",fontSize:14,color:"#4a7090",marginBottom:8}}>投資総額: <span style={{color:"#d8eeff",fontWeight:700}}>{fmtP(bp*sh)}</span></div>
-                <div style={{marginBottom:6}}><div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:"#4a7090",marginBottom:3}}><span>目標 +{simTarget}%</span><span style={{color:"#fbbf24"}}>{fmtP(bp*(1+simTarget/100))}</span></div><input type="range" min={1} max={100} value={simTarget} onChange={function(e){setSimTarget(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#fbbf24"}}/></div>
-                <div style={{marginBottom:8}}><div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:"#4a7090",marginBottom:3}}><span>損切り {simStop}%</span><span style={{color:"#f43f5e"}}>{fmtP(bp*(1+simStop/100))}</span></div><input type="range" min={-50} max={-1} value={simStop} onChange={function(e){setSimStop(parseInt(e.target.value));}} style={{width:"100%",accentColor:"#f43f5e"}}/></div>
+                <div style={{marginBottom:6}}>
+                  <div style={{fontSize:13,color:"#fbbf24",marginBottom:3}}>{fmtP(bp*(1+simTarget/100))}</div>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                    <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>目標</span>
+                    <input type="number" value={simTarget} onChange={function(e){var v=parseInt(e.target.value);if(!isNaN(v)&&v>=1&&v<=200)setSimTarget(v);}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                    <span style={{fontSize:13,color:"#fbbf24"}}>%</span>
+                    <input type="range" min={1} max={200} value={simTarget} onChange={function(e){setSimTarget(parseInt(e.target.value));}} style={{flex:1,accentColor:"#fbbf24"}}/>
+                  </div>
+                </div>
+                <div style={{marginBottom:8}}>
+                  <div style={{fontSize:13,color:"#f43f5e",marginBottom:3}}>{fmtP(bp*(1+simStop/100))}</div>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                    <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>損切り</span>
+                    <input type="number" value={simStop} onChange={function(e){var v=parseInt(e.target.value);if(!isNaN(v)&&v>=-50&&v<=-1)setSimStop(v);}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                    <span style={{fontSize:13,color:"#f43f5e"}}>%</span>
+                    <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){setSimStop(parseInt(e.target.value));}} style={{flex:1,accentColor:"#f43f5e"}}/>
+                  </div>
+                </div>
                 <div style={{display:"flex",flexDirection:"column",gap:4}}>
                   {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){var pnl=(bp*(1+sc.pct/100)-bp)*sh;return(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"5px 8px"}}><div><span style={{fontSize:14,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:13,color:"#4a7090",marginLeft:4}}>{sc.pct>=0?"+":""}{sc.pct}%</span></div><span style={{fontSize:15,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span></div>);})}
                 </div>
