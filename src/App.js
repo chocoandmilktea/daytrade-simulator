@@ -867,7 +867,7 @@ function CrossSection(sp){
       <div style={{fontSize:13,fontWeight:700,color:sp.color,marginBottom:8,padding:"4px 0",borderBottom:"1px solid #0f2040"}}>{sp.title} ({sp.items.length})</div>
       {isMobile?cards:(
         <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-          <div style={{width:"45%",flexShrink:0}}>{cards}</div>
+          <div style={{width:"60%",flexShrink:0}}>{cards}</div>
           <div style={{flex:1,position:"sticky",top:60}}>
             <StockDetailPanel s={sp.selectedStock&&sp.items.find(function(it){return it.s.ticker===sp.selectedStock.ticker;})?sp.selectedStock:null} toggleFav={sp.toggleFav} isFav={isFavFn} vix={sp.vix} usdJpy={sp.usdJpy}/>
           </div>
@@ -1015,7 +1015,7 @@ function AllStocksPanel(p){
           <>
             {isMobile?cardGrid2:(
               <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-                <div style={{width:"45%",flexShrink:0}}>{cardGrid2}</div>
+                <div style={{width:"60%",flexShrink:0}}>{cardGrid2}</div>
                 <div style={{flex:1,position:"sticky",top:60}}>
                   <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
                 </div>
@@ -1097,7 +1097,7 @@ function FavPanel(p){
       )}
       {isMobile?cardGrid:(
         <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-          <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
+          <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
           <div style={{flex:1,position:"sticky",top:60}}>
             <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
           </div>
