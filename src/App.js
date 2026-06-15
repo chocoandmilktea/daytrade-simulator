@@ -305,11 +305,11 @@ function StockCard(p){
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
-  var simTargetS=useState(20);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
-  var simStopS=useState(-10);var simStop=simStopS[0],setSimStop=simStopS[1];
-  var simTargetInputS=useState("20");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
-  var simStopInputS=useState("-10");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
-  var showAddS=useState(false);var showAdd=showAddS[0],setShowAdd=showAddS[1];
+  var simTargetS=useState(2);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
+  var simStopS=useState(-2);var simStop=simStopS[0],setSimStop=simStopS[1];
+  var simTargetInputS=useState("2");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
+  var simStopInputS=useState("-2");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
+  useEffect(function(){setSimBuy(s.rawPrice?s.rawPrice.toFixed(2):"");},[s.ticker]);
   var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
   var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
@@ -589,9 +589,8 @@ function StockCard(p){
             </div>
           )}
 
-          {/* TV・Yahoo・iSPEED */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-            <button onClick={handleTvOpen} style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textAlign:"center",display:"block",cursor:"pointer",width:"100%"}}>📈 TV<div style={{fontSize:9,color:"#93c5fd",marginTop:2}}>シンボルをコピー</div></button>
+          {/* Yahoo・iSPEED */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
             <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
             <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
           </div>
@@ -627,12 +626,11 @@ function StockDetailPanel(p){
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
-  var simTargetS=useState(20);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
-  var simStopS=useState(-10);var simStop=simStopS[0],setSimStop=simStopS[1];
-  var simTargetInputS=useState("20");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
-  var simStopInputS=useState("-10");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
-  var showAddS=useState(false);var showAdd=showAddS[0],setShowAdd=showAddS[1];
-  var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
+  var simTargetS=useState(2);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
+  var simStopS=useState(-2);var simStop=simStopS[0],setSimStop=simStopS[1];
+  var simTargetInputS=useState("2");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
+  var simStopInputS=useState("-2");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
+  useEffect(function(){setSimBuy(s.rawPrice?s.rawPrice.toFixed(2):"");},[s.ticker]);
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
   var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
   var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
@@ -816,9 +814,8 @@ function StockDetailPanel(p){
           {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
         </div>
       )}
-      {/* TV・Yahoo・iSPEED */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-        <button onClick={handleTvOpen} style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textAlign:"center",display:"block",cursor:"pointer",width:"100%"}}>📈 TV<div style={{fontSize:10,color:"#93c5fd",marginTop:2}}>シンボルをコピー</div></button>
+      {/* Yahoo・iSPEED */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
         <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
         <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
       </div>
