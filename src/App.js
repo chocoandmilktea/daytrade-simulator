@@ -303,7 +303,6 @@ function StockCard(p){
   var expandedS=useState(false);var expanded=expandedS[0],setExpanded=expandedS[1];
   var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
-  var showAddS=useState(false);var showAdd=showAddS[0],setShowAdd=showAddS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   var simTargetS=useState(2);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
