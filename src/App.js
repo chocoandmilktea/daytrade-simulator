@@ -323,8 +323,8 @@ function StockCard(p){
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
   var stateColor=function(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";};
   var stateLabel=function(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";};
-  var fromHighColor=s.fromHigh!=null?(s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0"):"#4a7090";
-  var fromLowColor=s.fromLow!=null?(s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e"):"#4a7090";
+  var fromHighColor=s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0";
+  var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
 
   function stopProp(e){e.stopPropagation();}
 
@@ -338,8 +338,8 @@ function StockCard(p){
     var prompt="あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
       "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
       "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
-      "52週高値比: "+(s.fromHigh!=null?s.fromHigh.toFixed(1):"─")+"%\n52週安値比: +"+(s.fromLow!=null?s.fromLow.toFixed(1):"─")+"%\n"+
-      "52週ポジション: "+(s.position52!=null?s.position52.toFixed(0):"─")+"% (0%=安値圏 100%=高値圏)\n"+
+      "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
+      "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
       "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
       "以下の3点を各2〜3文で答えてください:\n1. 現在の相場状況と注目ポイント\n2. このスコアになった主な理由\n3. 今後の注目ポイントと注意事項";
     try{
@@ -435,11 +435,11 @@ function StockCard(p){
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4}}>
           <div style={{background:"#071428",borderRadius:5,padding:"4px 6px"}}>
             <div style={{fontSize:8,color:"#2a6090"}}>高値比</div>
-            <div style={{fontSize:13,fontWeight:700,color:fromHighColor}}>{s.fromHigh!=null?s.fromHigh.toFixed(1):"─"}%</div>
+            <div style={{fontSize:13,fontWeight:700,color:fromHighColor}}>{s.fromHigh.toFixed(1)}%</div>
           </div>
           <div style={{background:"#071428",borderRadius:5,padding:"4px 6px"}}>
             <div style={{fontSize:8,color:"#2a6090"}}>安値比</div>
-            <div style={{fontSize:13,fontWeight:700,color:fromLowColor}}>+{s.fromLow!=null?s.fromLow.toFixed(1):"─"}%</div>
+            <div style={{fontSize:13,fontWeight:700,color:fromLowColor}}>+{s.fromLow.toFixed(1)}%</div>
           </div>
           <div style={{background:"#071428",borderRadius:5,padding:"4px 6px"}}>
             <div style={{fontSize:8,color:"#2a6090"}}>VIX</div>
@@ -616,8 +616,8 @@ function StockDetailPanel(p){
   var mc=MKT[s.market]||MKT["US"];
   var bc=BADGE[s.timing];
   var borderColor=s.score>=68?"#22d3a0":s.score>=42?"#fbbf24":"#f43f5e";
-  var fromHighColor=s.fromHigh!=null?(s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0"):"#4a7090";
-  var fromLowColor=s.fromLow!=null?(s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e"):"#4a7090";
+  var fromHighColor=s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0";
+  var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
   var stateColor=function(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";};
   var stateLabel=function(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";};
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
@@ -643,8 +643,8 @@ function StockDetailPanel(p){
     var prompt="あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
       "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
       "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
-      "52週高値比: "+(s.fromHigh!=null?s.fromHigh.toFixed(1):"─")+"%\n52週安値比: +"+(s.fromLow!=null?s.fromLow.toFixed(1):"─")+"%\n"+
-      "52週ポジション: "+(s.position52!=null?s.position52.toFixed(0):"─")+"% (0%=安値圏 100%=高値圏)\n"+
+      "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
+      "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
       "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
       "以下の3点を各2〜3文で答えてください:\n1. 現在の相場状況と注目ポイント\n2. このスコアになった主な理由\n3. 今後の注目ポイントと注意事項";
     try{
@@ -711,8 +711,8 @@ function StockDetailPanel(p){
             <div style={{position:"absolute",top:-2,left:"calc("+pos52+"% - 5px)",width:10,height:10,borderRadius:"50%",background:pos52Color,border:"1px solid #071428"}}/>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>高値比</div><div style={{fontSize:15,fontWeight:700,color:fromHighColor}}>{s.fromHigh!=null?s.fromHigh.toFixed(1):"─"}%</div></div>
-            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>安値比</div><div style={{fontSize:15,fontWeight:700,color:fromLowColor}}>+{s.fromLow!=null?s.fromLow.toFixed(1):"─"}%</div></div>
+            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>高値比</div><div style={{fontSize:15,fontWeight:700,color:fromHighColor}}>{s.fromHigh.toFixed(1)}%</div></div>
+            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>安値比</div><div style={{fontSize:15,fontWeight:700,color:fromLowColor}}>+{s.fromLow.toFixed(1)}%</div></div>
             <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>VIX</div><div style={{fontSize:15,fontWeight:700,color:p.vix&&parseFloat(p.vix)>=20?"#f43f5e":"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div></div>
           </div>
         </div>
