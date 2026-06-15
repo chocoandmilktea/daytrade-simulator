@@ -309,7 +309,6 @@ function StockCard(p){
   var simStopS=useState(-2);var simStop=simStopS[0],setSimStop=simStopS[1];
   var simTargetInputS=useState("2");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
   var simStopInputS=useState("-2");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
-  useEffect(function(){setSimBuy(s.rawPrice?s.rawPrice.toFixed(2):"");},[s.ticker]);
   var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
   var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
@@ -460,7 +459,7 @@ function StockCard(p){
             <button onClick={function(e){stopProp(e);setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:28,height:28,fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
             <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
             <button onClick={function(e){stopProp(e);setShowAdd(function(v){return !v;});}} style={{background:showAdd?"#052e16":"transparent",border:"1px solid "+(showAdd?"#22d3a0":added?"#22d3a0":"#2a4060"),borderRadius:6,color:showAdd?"#22d3a0":added?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>{added?"✅":"💼"}</button>
-            <button onClick={function(e){stopProp(e);setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
+            <button onClick={function(e){stopProp(e);if(!showSim){setSimBuy(s.rawPrice?s.rawPrice.toFixed(2):"");}setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
           </div>
 
           {/* シグナル詳細 */}
@@ -630,7 +629,6 @@ function StockDetailPanel(p){
   var simStopS=useState(-2);var simStop=simStopS[0],setSimStop=simStopS[1];
   var simTargetInputS=useState("2");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
   var simStopInputS=useState("-2");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
-  useEffect(function(){setSimBuy(s.rawPrice?s.rawPrice.toFixed(2):"");},[s.ticker]);
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
   var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
   var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
@@ -722,7 +720,7 @@ function StockDetailPanel(p){
       <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"flex-end"}}>
         <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
         <button onClick={function(){setShowAdd(function(v){return !v;});}} style={{background:showAdd?"#052e16":"transparent",border:"1px solid "+(showAdd?"#22d3a0":added?"#22d3a0":"#2a4060"),borderRadius:6,color:showAdd?"#22d3a0":added?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>{added?"✅":"💼"}</button>
-        <button onClick={function(){setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
+        <button onClick={function(){if(!showSim){setSimBuy(s.rawPrice?s.rawPrice.toFixed(2):"");}setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
       </div>
       {/* シグナル詳細 */}
       <div>
