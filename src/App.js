@@ -1831,7 +1831,7 @@ export default function App(){
                 </button>
               );
             })}
-          </div
+          </div>
         )}
         {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
       </div>
