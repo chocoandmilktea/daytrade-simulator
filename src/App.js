@@ -225,44 +225,20 @@ function analyzeStock(stock,pd){
     aptScore=Math.min(100,Math.max(0,aptScore));
   }catch(e){aptScore=0;}
 
-  // ── 買い・売り目安価格計算 ────────────────────────────────────────────
-  // (1) BB
-  var bbBuyTarget=bollVal?bollVal.lower:null;
-  var bbSellTarget=bollVal?bollVal.upper:null;
-
-  // (2) 52週 サポート/レジスタンス
-  var srBuyTarget=low52||null;
-  var srSellTarget=high52||null;
-
-  // (3) VWAP（直近20日）
-  var vwapTarget=null;
-  if(volumes.length>0&&closes.length>0){
-    var vLen=Math.min(20,closes.length);
-    var vStart=closes.length-vLen;
-    var sumPV=0,sumV=0;
-    for(var vi=vStart;vi<closes.length;vi++){
-      var tp=(closes[vi]+(highs[vi]||closes[vi])+(lows[vi]||closes[vi]))/3;
-      sumPV+=tp*(volumes[vi]||0);sumV+=(volumes[vi]||0);
-    }
-    vwapTarget=sumV>0?sumPV/sumV:null;
+   // ── 買い・売り目安価格計算（ATRベース）──────────────────────────────────
+  var atrLen=Math.min(14,closes.length-1);
+  var atrSum=0;
+  for(var ai=closes.length-atrLen;ai<closes.length;ai++){
+    atrSum+=Math.abs(closes[ai]-closes[ai-1]);
   }
+  var atr=atrLen>0?atrSum/atrLen:price*0.02;
 
-  // (4) アナリスト目標株価
-  var analystTarget=pd.analystTarget||null;
+  var buyMult=tradeType==="short"?1.0:tradeType==="mid"?1.5:2.0;
+  var sellMult=tradeType==="short"?1.5:tradeType==="mid"?2.0:3.0;
 
-  // 各ソースを収集して平均で買い・売り目安を算出
-  var MAX_RANGE=0.15;
-  var MAX_RANGE=tradeType==="short"?0.05:tradeType==="mid"?0.07:0.10;
-var capL=price*(1-MAX_RANGE),capH=price*(1+MAX_RANGE);
+  var buyTarget=Math.round(price-atr*buyMult);
+  var sellTarget=Math.round(price+atr*sellMult);
 
-  // 買い目安: VWAP・S/R下限・BB下限の中で現在値以下のもの
-  var buyVals=[bbBuyTarget,srBuyTarget,vwapTarget<price?vwapTarget:null].filter(function(v){return v!=null&&v<price&&v>=capL;});
-  var buyTarget=buyVals.length>0?Math.round(buyVals.reduce(function(a,b){return a+b;},0)/buyVals.length):Math.round(capL);
-
-  // 売り目安: アナリスト目標・S/R上限・BB上限の中で現在値以上のもの
-  var sellVals=[bbSellTarget,srSellTarget].filter(function(v){return v!=null&&v>price&&v<=capH;});
-  if(analystTarget&&analystTarget>price) sellVals.push(Math.min(analystTarget,price*1.5));
-  var sellTarget=sellVals.length>0?Math.round(sellVals.reduce(function(a,b){return a+b;},0)/sellVals.length):Math.round(capH);
   var aiAdj=(sc-50)/100;
   buyTarget=Math.round(buyTarget*(1-aiAdj*0.03));
   sellTarget=Math.round(sellTarget*(1+aiAdj*0.03));
