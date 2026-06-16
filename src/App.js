@@ -48,10 +48,10 @@ async function fetchYahoo(ticker){
   if(!result) throw new Error("empty");
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
-  var per=result.per||null,pbr=result.pbr||null;
-  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr};
+  var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null;
+  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget};
 }
 
 function genSim(ticker){
@@ -226,22 +226,42 @@ function analyzeStock(stock,pd){
   }catch(e){aptScore=0;}
 
   // ── 買い・売り目安価格計算 ────────────────────────────────────────────
-  var bbBuyTarget=bollVal?Math.round(bollVal.lower):null;
-  var bbSellTarget=bollVal?Math.round(bollVal.upper):null;
-  function calcRsiTarget(cls,targetRsi){
-    var p=14,len=cls.length,gains=0,losses=0;
-    for(var i=len-p;i<len;i++){var d=cls[i]-cls[i-1];d>=0?(gains+=d):(losses-=d);}
-    var ag=gains/p,al=losses/p,targetRs=targetRsi/(100-targetRsi),last=cls[len-1];
-    if(targetRsi>=70){var ng=targetRs*(al*(p-1))-ag*(p-1);return Math.round(last+Math.max(ng,0));}
-    var nl=(ag*(p-1))/targetRs-al*(p-1);return Math.round(last-Math.max(nl,0));
+  // (1) BB
+  var bbBuyTarget=bollVal?bollVal.lower:null;
+  var bbSellTarget=bollVal?bollVal.upper:null;
+
+  // (2) 52週 サポート/レジスタンス
+  var srBuyTarget=low52||null;
+  var srSellTarget=high52||null;
+
+  // (3) VWAP（直近20日）
+  var vwapTarget=null;
+  if(volumes.length>0&&closes.length>0){
+    var vLen=Math.min(20,closes.length);
+    var vStart=closes.length-vLen;
+    var sumPV=0,sumV=0;
+    for(var vi=vStart;vi<closes.length;vi++){
+      var tp=(closes[vi]+(highs[vi]||closes[vi])+(lows[vi]||closes[vi]))/3;
+      sumPV+=tp*(volumes[vi]||0);sumV+=(volumes[vi]||0);
+    }
+    vwapTarget=sumV>0?sumPV/sumV:null;
   }
-  var rsiBuyTarget=closes.length>15?calcRsiTarget(closes,30):null;
-  var rsiSellTarget=closes.length>15?calcRsiTarget(closes,70):null;
-  var rawBuy=(bbBuyTarget&&rsiBuyTarget)?Math.round((bbBuyTarget+rsiBuyTarget)/2):(bbBuyTarget||rsiBuyTarget);
-  var rawSell=(bbSellTarget&&rsiSellTarget)?Math.round((bbSellTarget+rsiSellTarget)/2):(bbSellTarget||rsiSellTarget);
-  var MAX_RANGE=0.1;
-  var buyTarget=rawBuy?Math.max(rawBuy,Math.round(price*(1-MAX_RANGE))):null;
-  var sellTarget=rawSell?Math.min(rawSell,Math.round(price*(1+MAX_RANGE))):null;
+
+  // (4) アナリスト目標株価
+  var analystTarget=pd.analystTarget||null;
+
+  // 各ソースを収集して平均で買い・売り目安を算出
+  var MAX_RANGE=0.15;
+  var capL=price*(1-MAX_RANGE),capH=price*(1+MAX_RANGE);
+
+  // 買い目安: VWAP・S/R下限・BB下限の中で現在値以下のもの
+  var buyVals=[bbBuyTarget,srBuyTarget,vwapTarget<price?vwapTarget:null].filter(function(v){return v!=null&&v<price&&v>=capL;});
+  var buyTarget=buyVals.length>0?Math.round(buyVals.reduce(function(a,b){return a+b;},0)/buyVals.length):Math.round(capL);
+
+  // 売り目安: アナリスト目標・S/R上限・BB上限の中で現在値以上のもの
+  var sellVals=[bbSellTarget,srSellTarget].filter(function(v){return v!=null&&v>price&&v<=capH;});
+  if(analystTarget&&analystTarget>price) sellVals.push(Math.min(analystTarget,price*1.5));
+  var sellTarget=sellVals.length>0?Math.round(sellVals.reduce(function(a,b){return a+b;},0)/sellVals.length):Math.round(capH);
   // ────────────────────────────────────────────────────────────────────────
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
