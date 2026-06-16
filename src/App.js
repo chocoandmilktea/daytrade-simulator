@@ -225,25 +225,17 @@ function analyzeStock(stock,pd){
     aptScore=Math.min(100,Math.max(0,aptScore));
   }catch(e){aptScore=0;}
 
-   // ── 買い・売り目安価格計算（ATRベース）──────────────────────────────────
+  // ── 本日の想定値幅（ATRベース）─────────────────────────────────────────
   var atrLen=Math.min(14,closes.length-1);
-var atrSum=0;
-for(var ai=closes.length-atrLen;ai<closes.length;ai++){
-  var h=highs[ai]||closes[ai],l=lows[ai]||closes[ai],pc=closes[ai-1];
-  var tr=Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc));
-  atrSum+=tr;
-}
-var atr=atrLen>0?atrSum/atrLen:price*0.02;
-
-var buyMult=tradeType==="short"?0.5:tradeType==="mid"?0.8:1.2;
-var sellMult=tradeType==="short"?0.8:tradeType==="mid"?1.2:2.0;
-
-  var buyTarget=Math.round(price-atr*buyMult);
-  var sellTarget=Math.round(price+atr*sellMult);
-
-  var aiAdj=(sc-50)/100;
-  buyTarget=Math.round(buyTarget*(1-aiAdj*0.03));
-  sellTarget=Math.round(sellTarget*(1+aiAdj*0.03));
+  var atrSum=0;
+  for(var ai=closes.length-atrLen;ai<closes.length;ai++){
+    var h=highs[ai]||closes[ai],l=lows[ai]||closes[ai],pc=closes[ai-1];
+    var tr=Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc));
+    atrSum+=tr;
+  }
+  var atr=atrLen>0?Math.round(atrSum/atrLen):Math.round(price*0.02);
+  var atrUpper=Math.round(price+atr);
+  var atrLower=Math.round(price-atr);
   // ────────────────────────────────────────────────────────────────────────
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
@@ -254,7 +246,7 @@ var sellMult=tradeType==="short"?0.8:tradeType==="mid"?1.2:2.0;
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
     aptScore:aptScore,
-    buyTarget:buyTarget,sellTarget:sellTarget,
+    atr:atr,atrUpper:atrUpper,atrLower:atrLower,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
 }
 
@@ -311,26 +303,28 @@ function ScoreRing(p){
 
 function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.active?p.color+"18":"transparent",border:"1px solid "+(p.active?p.color:"#1e3050"),borderRadius:6,color:p.active?p.color:"#4a6080",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",fontWeight:p.active?700:400}}>{p.label}</button>);}
 
-// ── 買い・売り目安価格UIブロック（共通コンポーネント） ───────────────────────
+// ── 本日の想定値幅UIブロック（共通コンポーネント） ────────────────────────
 function BuySellTargetBlock(p){
   var s=p.s;
-  if(!s.buyTarget||!s.sellTarget) return null;
-  var fmtPrice=function(v){return s.market==="JP"?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);};
-  var buyDiff=((s.rawPrice-s.buyTarget)/s.buyTarget*100).toFixed(1);
-  var sellDiff=((s.sellTarget-s.rawPrice)/s.rawPrice*100).toFixed(1);
+  if(!s.atr) return null;
+  var isJP=s.market==="JP";
+  var fmtP=function(v){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);};
+  var fmtA=function(v){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);};
   return(
     <div style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:8,padding:"10px 12px"}}>
-      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>💰 目安価格（BB+スコア補正）</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 本日の想定値幅（ATR14日）</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
         <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"6px 10px"}}>
-          <div style={{fontSize:10,color:"#22d3a0"}}>🟢 買い目安</div>
-          <div style={{fontSize:16,fontWeight:800,color:"#22d3a0"}}>{fmtPrice(s.buyTarget)}</div>
-          <div style={{fontSize:10,color:"#4a7090"}}>現在より{buyDiff}%</div>
+          <div style={{fontSize:10,color:"#22d3a0"}}>↑ 上限</div>
+          <div style={{fontSize:15,fontWeight:800,color:"#22d3a0"}}>{fmtP(s.atrUpper)}</div>
         </div>
-        <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"6px 10px"}}>
-          <div style={{fontSize:10,color:"#f43f5e"}}>🔴 売り目安</div>
-          <div style={{fontSize:16,fontWeight:800,color:"#f43f5e"}}>{fmtPrice(s.sellTarget)}</div>
-          <div style={{fontSize:10,color:"#4a7090"}}>現在より+{sellDiff}%</div>
+        <div style={{background:"#071428",border:"1px solid #4a90c040",borderRadius:6,padding:"6px 10px",textAlign:"center"}}>
+          <div style={{fontSize:10,color:"#4a90c0"}}>ATR</div>
+          <div style={{fontSize:15,fontWeight:800,color:"#4a90c0"}}>±{fmtA(s.atr)}</div>
+        </div>
+        <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"6px 10px",textAlign:"right"}}>
+          <div style={{fontSize:10,color:"#f43f5e"}}>↓ 下限</div>
+          <div style={{fontSize:15,fontWeight:800,color:"#f43f5e"}}>{fmtP(s.atrLower)}</div>
         </div>
       </div>
     </div>
