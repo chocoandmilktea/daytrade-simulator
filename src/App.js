@@ -40,7 +40,7 @@ async function buildStockUniverse(){
 
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real};}
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real};}
   var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=2y",{signal:AbortSignal.timeout(15000)});
   if(!res.ok) throw new Error("HTTP "+res.status);
   var json=await res.json();
@@ -49,9 +49,9 @@ async function fetchYahoo(ticker){
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
   var per=result.per||null,pbr=result.pbr||null;
-  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr};
+  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr};
 }
 
 function genSim(ticker){
@@ -81,6 +81,7 @@ function runBacktest(closes,sellDays){
 
 function analyzeStock(stock,pd){
   var closes=pd.closes.slice(),highs=pd.highs.slice(),lows=pd.lows.slice();
+  var volumes=pd.volumes?pd.volumes.slice():[];
   var n=closes.length-1;
   var s20=calcSMA(closes,20)[n],s50=calcSMA(closes,50)[n];
   var macdArr=calcMACD(closes),rsiVal=calcRSI(closes)[n];
@@ -158,6 +159,27 @@ function analyzeStock(stock,pd){
   if(hasGC&&hasRSIOversold&&hasBBLow){overlap+=10;overlapLabels.push("トリプル");}
 
   sc=sc+overlap;
+
+  var obScore=0;
+  if(volumes.length>0){
+    var dayRange=highs[n]-lows[n]||1;
+    var closePosition=(price-lows[n])/dayRange;
+    if(closePosition>=0.8){obScore+=8;signals.push({label:"板代替",val:"買い優勢",state:1});}
+    else if(closePosition>=0.6){obScore+=4;signals.push({label:"板代替",val:"やや買い優勢",state:1});}
+    else if(closePosition<=0.2){obScore-=8;signals.push({label:"板代替",val:"売り優勢",state:-1});}
+    else if(closePosition<=0.4){obScore-=4;signals.push({label:"板代替",val:"やや売り優勢",state:-1});}
+    else{signals.push({label:"板代替",val:"中立",state:0});}
+    var recentVols=volumes.slice(-21,-1);
+    if(recentVols.length>0){
+      var avgVol=recentVols.reduce(function(a,b){return a+b;},0)/recentVols.length;
+      var surge=avgVol>0?volumes[n]/avgVol:1;
+      if(surge>=2.0){
+        obScore+=(closePosition>=0.6?10:closePosition<=0.4?-10:3);
+        signals.push({label:"出来高",val:surge.toFixed(1)+"倍"+(closePosition>=0.6?"(買い)":closePosition<=0.4?"(売り)":"(中立)"),state:closePosition>=0.6?1:closePosition<=0.4?-1:0});
+      }else if(surge>=1.5){obScore+=3;signals.push({label:"出来高",val:"やや増加",state:0});}
+    }
+  }
+  sc=sc+obScore;
 
   var scoreCap=100;
   if(hasDC&&hasBearTrend){scoreCap=20;}
