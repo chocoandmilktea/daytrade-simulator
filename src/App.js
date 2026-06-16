@@ -227,11 +227,13 @@ function analyzeStock(stock,pd){
 
    // ── 買い・売り目安価格計算（ATRベース）──────────────────────────────────
   var atrLen=Math.min(14,closes.length-1);
-  var atrSum=0;
-  for(var ai=closes.length-atrLen;ai<closes.length;ai++){
-    atrSum+=Math.abs(closes[ai]-closes[ai-1]);
-  }
-  var atr=atrLen>0?atrSum/atrLen:price*0.02;
+var atrSum=0;
+for(var ai=closes.length-atrLen;ai<closes.length;ai++){
+  var h=highs[ai]||closes[ai],l=lows[ai]||closes[ai],pc=closes[ai-1];
+  var tr=Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc));
+  atrSum+=tr;
+}
+var atr=atrLen>0?atrSum/atrLen:price*0.02;
 
   var buyMult=tradeType==="short"?1.0:tradeType==="mid"?1.5:2.0;
   var sellMult=tradeType==="short"?1.5:tradeType==="mid"?2.0:3.0;
