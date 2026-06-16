@@ -237,8 +237,11 @@ function analyzeStock(stock,pd){
   }
   var rsiBuyTarget=closes.length>15?calcRsiTarget(closes,30):null;
   var rsiSellTarget=closes.length>15?calcRsiTarget(closes,70):null;
-  var buyTarget=(bbBuyTarget&&rsiBuyTarget)?Math.round((bbBuyTarget+rsiBuyTarget)/2):(bbBuyTarget||rsiBuyTarget);
-  var sellTarget=(bbSellTarget&&rsiSellTarget)?Math.round((bbSellTarget+rsiSellTarget)/2):(bbSellTarget||rsiSellTarget);
+  var rawBuy=(bbBuyTarget&&rsiBuyTarget)?Math.round((bbBuyTarget+rsiBuyTarget)/2):(bbBuyTarget||rsiBuyTarget);
+  var rawSell=(bbSellTarget&&rsiSellTarget)?Math.round((bbSellTarget+rsiSellTarget)/2):(bbSellTarget||rsiSellTarget);
+  var MAX_RANGE=0.1;
+  var buyTarget=rawBuy?Math.max(rawBuy,Math.round(price*(1-MAX_RANGE))):null;
+  var sellTarget=rawSell?Math.min(rawSell,Math.round(price*(1+MAX_RANGE))):null;
   // ────────────────────────────────────────────────────────────────────────
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
