@@ -252,7 +252,8 @@ function analyzeStock(stock,pd){
 
   // 各ソースを収集して平均で買い・売り目安を算出
   var MAX_RANGE=0.15;
-  var capL=price*(1-MAX_RANGE),capH=price*(1+MAX_RANGE);
+  var MAX_RANGE=tradeType==="short"?0.05:tradeType==="mid"?0.07:0.10;
+var capL=price*(1-MAX_RANGE),capH=price*(1+MAX_RANGE);
 
   // 買い目安: VWAP・S/R下限・BB下限の中で現在値以下のもの
   var buyVals=[bbBuyTarget,srBuyTarget,vwapTarget<price?vwapTarget:null].filter(function(v){return v!=null&&v<price&&v>=capL;});
