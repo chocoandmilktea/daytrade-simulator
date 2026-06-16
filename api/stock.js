@@ -36,13 +36,8 @@ export default async function handler(req, res) {
       const closes = result.indicators?.quote?.[0]?.close || [];
       const meta = result.meta || {};
 
-      // 有効な終値（null/undefined除外）を取得
       const validCloses = closes.filter(v => v != null && !isNaN(v));
 
-      // previousClose の優先順位:
-      // 1. 終値配列の最後から2番目（最も正確）
-      // 2. meta.chartPreviousClose（フォールバック）
-      // 3. meta.regularMarketPreviousClose（さらなるフォールバック）
       const prevFromCloses = validCloses.length >= 2
         ? validCloses[validCloses.length - 2]
         : null;
@@ -53,21 +48,20 @@ export default async function handler(req, res) {
         meta.regularMarketPreviousClose ||
         0;
 
-      // metaに正確なpreviousCloseを上書き
       result.meta.chartPreviousClose = previousClose;
     }
     // ────────────────────────────────────────────────────────────────────
 
-    // ── PER・PBRを複数の方法で取得 ───────────────────────────────────────
-    let per = null, pbr = null;
+    // ── PER・PBR・アナリスト目標株価を複数の方法で取得 ───────────────────
+    let per = null, pbr = null, analystTarget = null;
 
-    // 方法①: chart APIのmetaから直接取得（追加リクエスト不要）
+    // 方法①: chart APIのmetaから直接取得
     const chartMeta = data?.chart?.result?.[0]?.meta || {};
     if (chartMeta.trailingPE) per = chartMeta.trailingPE;
     if (chartMeta.priceToBook) pbr = chartMeta.priceToBook;
 
-    // 方法②: quoteSummary v10（方法①で取れなかった場合）
-    if (!per || !pbr) {
+    // 方法②: quoteSummary v10
+    if (!per || !pbr || !analystTarget) {
       try {
         const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics,summaryDetail,financialData`;
         const summaryRes = await fetch(summaryUrl, {
@@ -85,7 +79,6 @@ export default async function handler(req, res) {
             per = detail?.summaryDetail?.trailingPE?.raw
               || detail?.defaultKeyStatistics?.trailingEps?.raw
               || null;
-            // PERをEPSと株価から計算（EPSが取れた場合）
             if (!per && detail?.defaultKeyStatistics?.trailingEps?.raw && chartMeta.regularMarketPrice) {
               const eps = detail.defaultKeyStatistics.trailingEps.raw;
               if (eps > 0) per = chartMeta.regularMarketPrice / eps;
@@ -94,11 +87,15 @@ export default async function handler(req, res) {
           if (!pbr) {
             pbr = detail?.defaultKeyStatistics?.priceToBook?.raw || null;
           }
+          // アナリスト目標株価
+          if (detail?.financialData?.targetMeanPrice?.raw) {
+            analystTarget = detail.financialData.targetMeanPrice.raw;
+          }
         }
       } catch(e) {}
     }
 
-    // 方法③: quote APIから取得（方法①②で取れなかった場合）
+    // 方法③: quote APIから取得
     if (!per || !pbr) {
       try {
         const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}&fields=trailingPE,priceToBook`;
@@ -123,12 +120,14 @@ export default async function handler(req, res) {
     // null/NaN/Inf のガード
     if (per && (!isFinite(per) || per <= 0 || per > 10000)) per = null;
     if (pbr && (!isFinite(pbr) || pbr <= 0 || pbr > 1000)) pbr = null;
+    if (analystTarget && (!isFinite(analystTarget) || analystTarget <= 0)) analystTarget = null;
     // ─────────────────────────────────────────────────────────────────────
 
-    // chartデータにPER・PBRを付加
+    // chartデータにPER・PBR・アナリスト目標株価を付加
     if (data?.chart?.result?.[0]) {
       data.chart.result[0].per = per;
       data.chart.result[0].pbr = pbr;
+      data.chart.result[0].analystTarget = analystTarget;
     }
 
     return res.status(200).json(data);
