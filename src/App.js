@@ -262,6 +262,9 @@ function analyzeStock(stock,pd){
   var sellVals=[bbSellTarget,srSellTarget].filter(function(v){return v!=null&&v>price&&v<=capH;});
   if(analystTarget&&analystTarget>price) sellVals.push(Math.min(analystTarget,price*1.5));
   var sellTarget=sellVals.length>0?Math.round(sellVals.reduce(function(a,b){return a+b;},0)/sellVals.length):Math.round(capH);
+  var aiAdj=(sc-50)/100;
+  buyTarget=Math.round(buyTarget*(1-aiAdj*0.03));
+  sellTarget=Math.round(sellTarget*(1+aiAdj*0.03));
   // ────────────────────────────────────────────────────────────────────────
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
@@ -338,7 +341,7 @@ function BuySellTargetBlock(p){
   var sellDiff=((s.sellTarget-s.rawPrice)/s.rawPrice*100).toFixed(1);
   return(
     <div style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:8,padding:"10px 12px"}}>
-      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>💰 目安価格（BB+RSI平均）</div>
+      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>💰 目安価格（BB+スコア補正）</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
         <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"6px 10px"}}>
           <div style={{fontSize:10,color:"#22d3a0"}}>🟢 買い目安</div>
