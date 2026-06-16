@@ -235,8 +235,8 @@ for(var ai=closes.length-atrLen;ai<closes.length;ai++){
 }
 var atr=atrLen>0?atrSum/atrLen:price*0.02;
 
-  var buyMult=tradeType==="short"?1.0:tradeType==="mid"?1.5:2.0;
-  var sellMult=tradeType==="short"?1.5:tradeType==="mid"?2.0:3.0;
+var buyMult=tradeType==="short"?0.5:tradeType==="mid"?0.8:1.2;
+var sellMult=tradeType==="short"?0.8:tradeType==="mid"?1.2:2.0;
 
   var buyTarget=Math.round(price-atr*buyMult);
   var sellTarget=Math.round(price+atr*sellMult);
