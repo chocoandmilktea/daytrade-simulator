@@ -649,6 +649,7 @@ function StockDetailPanel(p){
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
+  useEffect(function(){var isJP=s.market==="JP";setSimBuy(s.rawPrice?(isJP?String(Math.round(s.rawPrice)):s.rawPrice.toFixed(2)):"");},[s.ticker]);
   var simTargetS=useState(20);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
   var simStopS=useState(-10);var simStop=simStopS[0],setSimStop=simStopS[1];
   var simTargetInputS=useState("20");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
