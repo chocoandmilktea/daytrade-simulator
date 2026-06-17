@@ -392,7 +392,10 @@ function StockCard(p){
         var jsonMatch=aiText2.match(/\{[^}]*"entry"[^}]*\}/);
         if(jsonMatch){var parsed=JSON.parse(jsonMatch[0]);setAiEntry(parsed);}
       }catch(je){}
-      setAiText(aiText2.replace(/\{[^}]*"entry"[^}]*\}/,"").trim()||"分析できませんでした。");
+      setAiText(aiText2
+  .replace(/```json[\s\S]*?```/g,"")   // コードフェンスごと除去
+  .replace(/\{[^}]*"entry"[^}]*\}/,"") // JSONオブジェクト除去
+  .trim()||"分析できませんでした。");
     }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
     setAiLoading(false);
   }
@@ -717,7 +720,10 @@ function StockDetailPanel(p){
         var jsonMatch=aiText2.match(/\{[^}]*"entry"[^}]*\}/);
         if(jsonMatch){var parsed=JSON.parse(jsonMatch[0]);setAiEntry(parsed);}
       }catch(je){}
-      setAiText(aiText2.replace(/\{[^}]*"entry"[^}]*\}/,"").trim()||"分析できませんでした。");
+      setAiText(aiText2
+  .replace(/```json[\s\S]*?```/g,"")   // コードフェンスごと除去
+  .replace(/\{[^}]*"entry"[^}]*\}/,"") // JSONオブジェクト除去
+  .trim()||"分析できませんでした。");
     }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
     setAiLoading(false);
   }
