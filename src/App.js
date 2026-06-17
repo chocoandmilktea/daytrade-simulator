@@ -1828,9 +1828,9 @@ export default function App(){
       .finally(function(){scan();});
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
-  var TABS=[["all","📋"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["index","🌍"],["market","📡"],["news","📰"],["trend","🔥"],["sync","🔗"]];
-  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","index":"リンク","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
-  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","portfolio":"PF","backtest":"BT","index":"指数","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"同期"};
+  var TABS=[["all","📋"],["fav","⭐"],["portfolio","💼"],["index","🌍"],["market","📡"],["news","📰"],["trend","🔥"],["sync","🔗"]];
+  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","index":"リンク","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
+  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","portfolio":"PF","index":"指数","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"同期"};
   var isMobile=window.innerWidth<768;
   return(
     <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0"}}>
@@ -1878,7 +1878,6 @@ export default function App(){
           {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock}/>}
           {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock}/>}
           {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
-          {activeTab==="backtest"&&<BacktestPanel stocks={stocks} favs={favs}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="trend"&&<TrendPanel/>}
