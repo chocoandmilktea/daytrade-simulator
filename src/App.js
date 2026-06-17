@@ -304,40 +304,10 @@ function ScoreRing(p){
 
 function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.active?p.color+"18":"transparent",border:"1px solid "+(p.active?p.color:"#1e3050"),borderRadius:6,color:p.active?p.color:"#4a6080",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",fontWeight:p.active?700:400}}>{p.label}</button>);}
 
-// ── 本日の想定値幅UIブロック（共通コンポーネント） ────────────────────────
-function BuySellTargetBlock(p){
-  var s=p.s;
-  if(!s.atr) return null;
-  var isJP=s.market==="JP";
-  var fmtP=function(v){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);};
-  var fmtA=function(v){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);};
-  return(
-    <div style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:8,padding:"10px 12px"}}>
-      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 本日の想定値幅（ATR14日）</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-        <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"6px 10px"}}>
-          <div style={{fontSize:10,color:"#22d3a0"}}>↑ 上限</div>
-          <div style={{fontSize:15,fontWeight:800,color:"#22d3a0"}}>{fmtP(s.atrUpper)}</div>
-        </div>
-        <div style={{background:"#071428",border:"1px solid #4a90c040",borderRadius:6,padding:"6px 10px",textAlign:"center"}}>
-          <div style={{fontSize:10,color:"#4a90c0"}}>ATR</div>
-          <div style={{fontSize:15,fontWeight:800,color:"#4a90c0"}}>±{fmtA(s.atr)}</div>
-        </div>
-        <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"6px 10px",textAlign:"right"}}>
-          <div style={{fontSize:10,color:"#f43f5e"}}>↓ 下限</div>
-          <div style={{fontSize:15,fontWeight:800,color:"#f43f5e"}}>{fmtP(s.atrLower)}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── StockCard ────────────────────────────────────────────────────────────────
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross;
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
-  function handleTvOpen(e){e.stopPropagation();if(navigator.clipboard){navigator.clipboard.writeText(s.tvSymbol).catch(function(){});}window.location.href="tradingview://";}
-
   var expandedS=useState(false);var expanded=expandedS[0],setExpanded=expandedS[1];
   var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
@@ -519,9 +489,6 @@ function StockCard(p){
             </div>
           </div>
 
-          {/* ── 買い・売り目安価格 ── */}
-          <BuySellTargetBlock s={s}/>
-
           {/* 損益シミュレーション */}
           {showSim&&(function(){
             var bp=parseFloat(simBuy)||0;
@@ -647,8 +614,7 @@ function StockCard(p){
             </div>
           )}
 
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-            <button onClick={handleTvOpen} style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textAlign:"center",display:"block",cursor:"pointer",width:"100%"}}>📈 TV<div style={{fontSize:9,color:"#93c5fd",marginTop:2}}>シンボルをコピー</div></button>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
             <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
             <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
           </div>
@@ -670,7 +636,6 @@ function StockDetailPanel(p){
     );
   }
   var isUp=parseFloat(s.change)>=0;
-  function handleTvOpen(e){e.stopPropagation();if(navigator.clipboard){navigator.clipboard.writeText(s.tvSymbol).catch(function(){});}window.location.href="tradingview://";}
   var mc=MKT[s.market]||MKT["US"];
   var bc=BADGE[s.timing];
   var borderColor=s.score>=68?"#22d3a0":s.score>=42?"#fbbf24":"#f43f5e";
@@ -809,9 +774,6 @@ function StockDetailPanel(p){
         </div>
       </div>
 
-      {/* ── 買い・売り目安価格 ── */}
-      <BuySellTargetBlock s={s}/>
-
       {showSim&&(function(){
         var bp=parseFloat(simBuy)||0;var sh=parseFloat(simShares)||0;
         var isJP=s.market==="JP";
@@ -882,8 +844,7 @@ function StockDetailPanel(p){
           {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
         </div>
       )}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-        <button onClick={handleTvOpen} style={{background:"linear-gradient(135deg,#0d2d4a,#0369a1)",border:"1px solid #0ea5e9",borderRadius:8,color:"#fff",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textAlign:"center",display:"block",cursor:"pointer",width:"100%"}}>📈 TV<div style={{fontSize:10,color:"#93c5fd",marginTop:2}}>シンボルをコピー</div></button>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
         <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
         <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
       </div>
