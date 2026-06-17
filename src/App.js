@@ -1575,11 +1575,12 @@ function IndexPanel(){
   var INDEX_FUNDS=[
     {label:"eMAXIS Slim 全世界株式（オール・カントリー）",url:"https://www.rakuten-sec.co.jp/web/fund/detail/?ID=JP90C000H1T1",desc:"楽天証券 投資信託詳細ページ"},
     {label:"楽天証券 ホーム",url:"https://member.rakuten-sec.co.jp/app/home.do",desc:"保有資産・取引状況の確認"},
+     {label:"実質損益",url:"https://member.rakuten-sec.co.jp/app/ass_real_gain_loss.do;BV_SessionID=11B8DED5279E4D6008E75A4ACDAF15EF.c0240dbc?eventType=init&gmn=S&smn=07&lmn=01&fmn=01",desc:"楽天証券 実質損益確認"},
   ];
   return(
     <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}>
       <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px"}}>
-        <div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>インデックスファンド</div>
+                <div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>リンク</div>
       </div>
       <div style={{padding:"8px"}}>
         {INDEX_FUNDS.map(function(item,i){
@@ -1828,7 +1829,7 @@ export default function App(){
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
   var TABS=[["all","📋"],["fav","⭐"],["portfolio","💼"],["backtest","📈"],["index","🌍"],["market","📡"],["news","📰"],["trend","🔥"],["sync","🔗"]];
-  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","index":"インデックス","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
+  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","backtest":"バックテスト","index":"リンク","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
   var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","portfolio":"PF","backtest":"BT","index":"指数","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"同期"};
   var isMobile=window.innerWidth<768;
   return(
