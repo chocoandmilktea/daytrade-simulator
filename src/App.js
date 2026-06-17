@@ -421,7 +421,7 @@ function StockCard(p){
         if(!isMobile){if(p.setSelectedStock)p.setSelectedStock(s);}
         else{setExpanded(function(v){return !v;});}
       }}>
-      {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
+      {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);)}/>,document.body)}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <ScoreRing score={s.score}/>
         <div style={{flex:1,minWidth:0}}>
@@ -739,7 +739,7 @@ function StockDetailPanel(p){
 
   return(
     <div style={{background:"#050e1c",border:"1px solid "+borderColor,borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
-      {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
+     {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);)}/>,document.body)}
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
           <ScoreRing score={s.score}/>
@@ -1869,7 +1869,7 @@ export default function App(){
             })}
           </div>
         )}
-        {showHelp&&<HelpModal onClose={function(){setShowHelp(false);}}/>}
+        {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);)}/>,document.body)}
       </div>
       {activeTab==="market"&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:100,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"10px 10px 80px",transform:"translateZ(0)"}}
