@@ -310,7 +310,7 @@ function StockCard(p){
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var expandedS=useState(false);var expanded=expandedS[0],setExpanded=expandedS[1];
   var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
-  var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
+  var showSimS=useState(true);var showSim=showSimS[0],setShowSim=showSimS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   var simTargetS=useState(3);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
@@ -646,7 +646,7 @@ function StockDetailPanel(p){
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
 
-  var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
+  var showSimS=useState(true);var showSim=showSimS[0],setShowSim=showSimS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   useEffect(function(){var isJP=s.market==="JP";setSimBuy(s.rawPrice?(isJP?String(Math.round(s.rawPrice)):s.rawPrice.toFixed(2)):"");},[s.ticker]);
