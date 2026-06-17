@@ -986,6 +986,7 @@ function AllStocksPanel(p){
   var filterMktS=useState("ALL");var filterMkt=filterMktS[0],setFilterMkt=filterMktS[1];
   var sortByS=useState("score");var sortBy=sortByS[0],setSortBy=sortByS[1];
   var filterTradeS=useState("ALL");var filterTrade=filterTradeS[0],setFilterTrade=filterTradeS[1];
+  var showSortHelpS=useState(false);var showSortHelp=showSortHelpS[0],setShowSortHelp=showSortHelpS[1];
 
   function isFavRef(t){return favs.indexOf(t)>=0;}
 
@@ -1083,12 +1084,32 @@ function AllStocksPanel(p){
       </div>
 
       {viewMode==="all"&&(
-        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",position:"relative"}}>
           <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>並替:</span>
           {sBtn("score","スコア順")}
           {sBtn("change","騰落率順")}
           {sBtn("apt","適性順")}
+          <button onClick={function(){setShowSortHelp(!showSortHelp);}} style={{background:showSortHelp?"#0ea5e920":"transparent",border:"1px solid "+(showSortHelp?"#0ea5e9":"#1e3050"),borderRadius:"50%",color:showSortHelp?"#0ea5e9":"#4a6080",width:18,height:18,fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0,fontFamily:"monospace",flexShrink:0}}>?</button>
           <span style={{fontSize:11,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
+          {showSortHelp&&(<div onClick={function(){setShowSortHelp(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999}}/>)}
+          {showSortHelp&&(
+            <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,background:"#071e38",border:"1px solid #1e4060",borderRadius:10,padding:"12px 14px",zIndex:1000,boxShadow:"0 8px 24px #000a"}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:10}}>並び替えの説明</div>
+              {[
+                {label:"スコア順",color:"#0ea5e9",desc:"MACD・RSI・ボリンジャーバンド・ストキャスティクスなど複数指標を総合した0〜100点のスコアで降順に並べます。買いシグナルが多いほど高スコアになります。"},
+                {label:"騰落率順",color:"#22d3a0",desc:"前日比の騰落率（絶対値）が大きい順に並べます。上昇・下落どちらも値動きの激しい銘柄が上位に来ます。"},
+                {label:"適性順",color:"#fbbf24",desc:"スキャル・デイトレ・スイングのトレードタイプを年間値幅・平均日次変動率・当日騰落率から判定し、選択中のタイプフィルターに最適な銘柄を優先表示します。"}
+              ].map(function(item){
+                return(
+                  <div key={item.label} style={{marginBottom:10,paddingBottom:10,borderBottom:"1px solid #0f2040"}}>
+                    <div style={{fontSize:12,fontWeight:700,color:item.color,marginBottom:4}}>{item.label}</div>
+                    <div style={{fontSize:11,color:"#8ab0cc",lineHeight:1.6}}>{item.desc}</div>
+                  </div>
+                );
+              })}
+              <button onClick={function(){setShowSortHelp(false);}} style={{marginTop:2,background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#4a6080",padding:"3px 12px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>閉じる</button>
+            </div>
+          )}
         </div>
       )}
 
