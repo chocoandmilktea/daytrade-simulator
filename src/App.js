@@ -963,7 +963,7 @@ function CrossSection(sp){
       {isMobile?cards:(
         <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
           <div style={{width:"60%",flexShrink:0}}>{cards}</div>
-          <div style={{flex:1,position:"sticky",top:60}}>
+          <div style={{flex:1,position:"sticky",top:60,maxHeight:"calc(100vh - 70px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
             <StockDetailPanel s={sp.selectedStock&&sp.items.find(function(it){return it.s.ticker===sp.selectedStock.ticker;})?sp.selectedStock:null} toggleFav={sp.toggleFav} isFav={isFavFn} vix={sp.vix} usdJpy={sp.usdJpy}/>
           </div>
         </div>
@@ -1100,7 +1100,7 @@ function AllStocksPanel(p){
             {isMobile?cardGrid2:(
               <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
                 <div style={{width:"60%",flexShrink:0}}>{cardGrid2}</div>
-                <div style={{flex:1,position:"sticky",top:60}}>
+                <div style={{flex:1,position:"sticky",top:60,maxHeight:"calc(100vh - 70px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
                   <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
                 </div>
               </div>
@@ -1181,7 +1181,7 @@ function FavPanel(p){
       {isMobile?cardGrid:(
         <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
           <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
-          <div style={{flex:1,position:"sticky",top:60}}>
+          <div style={{flex:1,position:"sticky",top:60,maxHeight:"calc(100vh - 70px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
             <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
           </div>
         </div>
