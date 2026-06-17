@@ -1275,9 +1275,18 @@ function SimPanel(p){
           <div>
             <div style={{fontSize:11,color:"#2a6090",marginBottom:4}}>銘柄（任意）</div>
             <select value={ticker} onChange={function(e){
-              setTicker(e.target.value);
-              var s=stocks.find(function(s){return s.ticker===e.target.value;});
-              if(s) setBuyPrice(s.rawPrice.toFixed(2));
+  var val=e.target.value;
+  setTicker(val);
+  if(!val){
+    setBuyPrice("");
+  }else{
+    var fd=stocks.find(function(s){return s.ticker===val;});
+    if(fd){
+      var isJP=val.endsWith(".T");
+      setBuyPrice(isJP?String(Math.round(fd.rawPrice)):fd.rawPrice.toFixed(2));
+    }
+  }
+}}
             }} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 6px",fontSize:13,fontFamily:"monospace",width:"100%"}}>
               <option value="">手動入力</option>
               {stocks.slice(0,50).map(function(s){return(<option key={s.ticker} value={s.ticker}>{s.ticker.replace(".T","")} {s.name.slice(0,12)}</option>);})}
