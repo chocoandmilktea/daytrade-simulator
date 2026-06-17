@@ -364,17 +364,22 @@ function StockCard(p){
 
   function stopProp(e){e.stopPropagation();}
 
+  var aiEntryS=useState(null);var aiEntry=aiEntryS[0],setAiEntry=aiEntryS[1];
+
   async function runAiAnalysis(e){
     stopProp(e);
     if(aiLoading) return;
-    setShowAi(true);setAiLoading(true);setAiText("");
+    setShowAi(true);setAiLoading(true);setAiText("");setAiEntry(null);
+    var isJP=s.market==="JP";
     var prompt="あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
       "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
       "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
       "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
       "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
+      "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
       "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
-      "以下の3点を各2〜3文で答えてください:\n1. 現在の相場状況と注目ポイント\n2. このスコアになった主な理由\n3. 今後の注目ポイントと注意事項";
+      "以下の3点を各2〜3文で答えてください:\n1. 現在の相場状況と注目ポイント\n2. このスコアになった主な理由\n3. 今後の注目ポイントと注意事項\n\n"+
+      "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+"}";
     try{
       var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -383,7 +388,11 @@ function StockCard(p){
       var aiData=await res.json();
       if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
       var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
-      setAiText(aiText2||"分析できませんでした。");
+      try{
+        var jsonMatch=aiText2.match(/\{[^}]*"entry"[^}]*\}/);
+        if(jsonMatch){var parsed=JSON.parse(jsonMatch[0]);setAiEntry(parsed);}
+      }catch(je){}
+      setAiText(aiText2.replace(/\{[^}]*"entry"[^}]*\}/,"").trim()||"分析できませんでした。");
     }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
     setAiLoading(false);
   }
@@ -609,6 +618,25 @@ function StockCard(p){
               ):(
                 <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}</div>
               )}
+              {!aiLoading&&aiEntry&&(
+                <div style={{background:"#071428",border:"1px solid #4a90c040",borderRadius:8,padding:"8px 10px",marginTop:8}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 AIエントリー提案</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                    <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}>
+                      <div style={{fontSize:10,color:"#22d3a0"}}>📥 エントリー</div>
+                      <div style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>{s.market==="JP"?"¥"+Math.round(aiEntry.entry).toLocaleString():"$"+parseFloat(aiEntry.entry).toFixed(2)}</div>
+                    </div>
+                    <div style={{background:"#071e10",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}>
+                      <div style={{fontSize:10,color:"#22d3a0"}}>🎯 利確</div>
+                      <div style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>{s.market==="JP"?"¥"+Math.round(aiEntry.target).toLocaleString():"$"+parseFloat(aiEntry.target).toFixed(2)}</div>
+                    </div>
+                    <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"5px 8px"}}>
+                      <div style={{fontSize:10,color:"#f43f5e"}}>🛑 損切り</div>
+                      <div style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>{s.market==="JP"?"¥"+Math.round(aiEntry.stop).toLocaleString():"$"+parseFloat(aiEntry.stop).toFixed(2)}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
               {!aiLoading&&aiText&&(
                 <button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>
               )}
@@ -665,22 +693,31 @@ function StockDetailPanel(p){
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
   var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
 
+  var aiEntryS=useState(null);var aiEntry=aiEntryS[0],setAiEntry=aiEntryS[1];
+
   async function runAiAnalysis(){
     if(aiLoading) return;
-    setShowAi(true);setAiLoading(true);setAiText("");
+    setShowAi(true);setAiLoading(true);setAiText("");setAiEntry(null);
+    var isJP=s.market==="JP";
     var prompt="あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
       "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
       "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
       "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
       "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
+      "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
       "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
-      "以下の3点を各2〜3文で答えてください:\n1. 現在の相場状況と注目ポイント\n2. このスコアになった主な理由\n3. 今後の注目ポイントと注意事項";
+      "以下の3点を各2〜3文で答えてください:\n1. 現在の相場状況と注目ポイント\n2. このスコアになった主な理由\n3. 今後の注目ポイントと注意事項\n\n"+
+      "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+"}";
     try{
       var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:prompt}),signal:AbortSignal.timeout(30000)});
       var aiData=await res.json();
       if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
       var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
-      setAiText(aiText2||"分析できませんでした。");
+      try{
+        var jsonMatch=aiText2.match(/\{[^}]*"entry"[^}]*\}/);
+        if(jsonMatch){var parsed=JSON.parse(jsonMatch[0]);setAiEntry(parsed);}
+      }catch(je){}
+      setAiText(aiText2.replace(/\{[^}]*"entry"[^}]*\}/,"").trim()||"分析できませんでした。");
     }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
     setAiLoading(false);
   }
