@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 
 var BADGE = {
   BUY:   { bg:"#052e16", border:"#22d3a0", text:"#22d3a0", label:"買い"   },
