@@ -1242,6 +1242,11 @@ function SimPanel(p){
   var stocks=p.stocks;
   var tickerS=useState("");var ticker=tickerS[0],setTicker=tickerS[1];
   var buyPriceS=useState("");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
+    var buyPriceS=useState("");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
+  useEffect(function(){
+    if(!ticker){setBuyPrice("");return;}
+    var fd=stocks.find(function(st){return st.ticker===ticker;});
+    if(fd){var isJP=ticker.endsWith(".T");setBuyPrice(isJP?String(Math.round(fd.rawPrice)):fd.rawPrice.toFixed(2));}},[ticker]);
   var sharesS=useState("100");var shares=sharesS[0],setShares=sharesS[1];
   var targetPctS=useState(20);var targetPct=targetPctS[0],setTargetPct=targetPctS[1];
   var stopPctS=useState(-10);var stopPct=stopPctS[0],setStopPct=stopPctS[1];
