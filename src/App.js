@@ -239,6 +239,24 @@ function analyzeStock(stock,pd){
   var atrLower=Math.round(price-atr);
   // ────────────────────────────────────────────────────────────────────────
 
+  // ── スコア履歴をlocalStorageに蓄積（自動・最大20日分）────────────────────
+  var scoreHist=(function(){
+    try{
+      var key="sh_"+stock.ticker;
+      var hist=JSON.parse(localStorage.getItem(key)||"[]");
+      var today=new Date().toISOString().slice(0,10);
+      if(hist.length&&hist[hist.length-1].d===today){
+        hist[hist.length-1]={d:today,s:sc,atr:atr};
+      }else{
+        hist.push({d:today,s:sc,atr:atr});
+        if(hist.length>20)hist.shift();
+      }
+      localStorage.setItem(key,JSON.stringify(hist));
+      return hist;
+    }catch(e){return[];}
+  })();
+  // ────────────────────────────────────────────────────────────────────────
+
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
@@ -248,6 +266,7 @@ function analyzeStock(stock,pd){
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
     aptScore:aptScore,
     atr:atr,atrUpper:atrUpper,atrLower:atrLower,
+    scoreHist:scoreHist,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
 }
 
@@ -348,6 +367,17 @@ function StockCard(p){
       "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
       "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
       "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
+      (function(){
+        if(!s.scoreHist||s.scoreHist.length<2) return "";
+        var days=s.tradeType==="short"?5:s.tradeType==="mid"?7:10;
+        var slice=s.scoreHist.slice(-days);
+        var trend=slice[slice.length-1].s-slice[0].s;
+        var atrTrend=slice[slice.length-1].atr-slice[0].atr;
+        return "スコア推移(直近"+slice.length+"日):\n"+
+          slice.map(function(x){return"  "+x.d+": "+x.s+"点 ATR:"+x.atr;}).join("\n")+"\n"+
+          "スコアトレンド: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"\n"+
+          "ATRトレンド: "+(atrTrend>0?"↑拡大中(ボラ増)":"↓縮小中(ボラ減)")+"\n";
+      })()+
       "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
       "以下の3点を各2〜3文で答えてください:\n1. 現在の相場状況と注目ポイント\n2. このスコアになった主な理由\n3. 今後の注目ポイントと注意事項\n\n"+
       "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+"}";
@@ -492,7 +522,15 @@ function StockCard(p){
           {showAi&&(
             <div style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"12px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#22d3a0"}}>🤖 AI分析</div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#22d3a0"}}>🤖 AI分析</div>
+                  {s.scoreHist&&(<span style={{fontSize:9,padding:"1px 5px",borderRadius:4,
+                    background:s.scoreHist.length>=7?"#052e16":s.scoreHist.length>=3?"#1c1400":"#1f0010",
+                    color:s.scoreHist.length>=7?"#22d3a0":s.scoreHist.length>=3?"#fbbf24":"#f43f5e",
+                    border:"1px solid "+(s.scoreHist.length>=7?"#22d3a0":s.scoreHist.length>=3?"#fbbf24":"#f43f5e")}}>
+                    {s.scoreHist.length>=7?"精度◎":s.scoreHist.length>=3?"精度△("+s.scoreHist.length+"日)":"精度⚠️("+s.scoreHist.length+"日)"}
+                  </span>)}
+                </div>
                 <button onClick={function(){setShowAi(false);setAiText("");}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:13,cursor:"pointer"}}>✕</button>
               </div>
               {aiLoading?(
@@ -675,6 +713,17 @@ function StockDetailPanel(p){
       "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
       "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
       "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
+      (function(){
+        if(!s.scoreHist||s.scoreHist.length<2) return "";
+        var days=s.tradeType==="short"?5:s.tradeType==="mid"?7:10;
+        var slice=s.scoreHist.slice(-days);
+        var trend=slice[slice.length-1].s-slice[0].s;
+        var atrTrend=slice[slice.length-1].atr-slice[0].atr;
+        return "スコア推移(直近"+slice.length+"日):\n"+
+          slice.map(function(x){return"  "+x.d+": "+x.s+"点 ATR:"+x.atr;}).join("\n")+"\n"+
+          "スコアトレンド: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"\n"+
+          "ATRトレンド: "+(atrTrend>0?"↑拡大中(ボラ増)":"↓縮小中(ボラ減)")+"\n";
+      })()+
       "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
       "以下の3点を各2〜3文で答えてください:\n1. 現在の相場状況と注目ポイント\n2. このスコアになった主な理由\n3. 今後の注目ポイントと注意事項\n\n"+
       "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+"}";
@@ -778,7 +827,15 @@ function StockDetailPanel(p){
       {showAi&&(
         <div style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"12px"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontSize:14,fontWeight:700,color:"#22d3a0"}}>🤖 AI分析</div>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <div style={{fontSize:14,fontWeight:700,color:"#22d3a0"}}>🤖 AI分析</div>
+              {s.scoreHist&&(<span style={{fontSize:9,padding:"1px 5px",borderRadius:4,
+                background:s.scoreHist.length>=7?"#052e16":s.scoreHist.length>=3?"#1c1400":"#1f0010",
+                color:s.scoreHist.length>=7?"#22d3a0":s.scoreHist.length>=3?"#fbbf24":"#f43f5e",
+                border:"1px solid "+(s.scoreHist.length>=7?"#22d3a0":s.scoreHist.length>=3?"#fbbf24":"#f43f5e")}}>
+                {s.scoreHist.length>=7?"精度◎":s.scoreHist.length>=3?"精度△("+s.scoreHist.length+"日)":"精度⚠️("+s.scoreHist.length+"日)"}
+              </span>)}
+            </div>
             <button onClick={function(){setShowAi(false);setAiText("");}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:15,cursor:"pointer"}}>✕</button>
           </div>
           {aiLoading?(<div style={{textAlign:"center",padding:"12px 0"}}><div style={{fontSize:18}}>⏳</div><div style={{fontSize:14,color:"#4a90c0",marginTop:4}}>AIが分析中...</div></div>):(<div style={{fontSize:15,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}</div>)}
