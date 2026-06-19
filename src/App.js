@@ -240,16 +240,18 @@ function analyzeStock(stock,pd){
   // ── サポートレベル（下値目安）──────────────────────────────────────────────
   var support=null;
   if(lows.length>=20){
-    var validLows=lows.filter(function(v){return v!=null&&v>0&&!isNaN(v);});
+    var validLows=lows.filter(function(v){return v!=null&&v>0&&!isNaN(v)&&isFinite(v);});
     var isJPfmt=stock.market==="JP";
-    var s1v=Math.min.apply(null,validLows.slice(-20));
-    var s2v=Math.min.apply(null,validLows.slice(-60));
+    var s1v=validLows.length>=20?Math.min.apply(null,validLows.slice(-20)):null;
+    var s2v=validLows.length>=1?Math.min.apply(null,validLows.slice(-60)):null;
     var atrFv=price-atr*1.5;
-    support={
-      s1:isJPfmt?Math.round(s1v):parseFloat(s1v.toFixed(2)),
-      s2:isJPfmt?Math.round(s2v):parseFloat(s2v.toFixed(2)),
-      atrFloor:isJPfmt?Math.round(atrFv):parseFloat(atrFv.toFixed(2))
-    };
+    if(s1v!==null&&s2v!==null&&isFinite(s1v)&&isFinite(s2v)){
+      support={
+        s1:isJPfmt?Math.round(s1v):parseFloat(s1v.toFixed(2)),
+        s2:isJPfmt?Math.round(s2v):parseFloat(s2v.toFixed(2)),
+        atrFloor:isJPfmt?Math.round(atrFv):parseFloat(atrFv.toFixed(2))
+      };
+    }
   }
   // ────────────────────────────────────────────────────────────────────────
 
