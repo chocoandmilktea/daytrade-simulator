@@ -576,23 +576,29 @@ function StockCard(p){
                   </div>
                 </div>
               )}
-              {s.support&&(
-                <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px",marginTop:6}}>
-                  <div style={{fontSize:11,fontWeight:700,color:"#fbbf24",marginBottom:6}}>📉 下値サポート目安</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-                    {[["🟡 S1 20日",s.support.s1,"#fbbf24"],["🔴 S2 60日",s.support.s2,"#f43f5e"],["⚡ ATR×1.5",s.support.atrFloor,"#a78bfa"]].map(function(row){
-                      return(
-                        <div key={row[0]} style={{background:"#040c18",border:"1px solid #1e3050",borderRadius:6,padding:"5px 8px"}}>
-                          <div style={{fontSize:9,color:row[2],marginBottom:2}}>{row[0]}</div>
-                          <div style={{fontSize:13,fontWeight:800,color:row[2]}}>{s.market==="JP"?"¥"+row[1].toLocaleString():"$"+row[1]}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div style={{fontSize:10,color:"#2a5070",marginTop:5}}>S1割れ→S2、S2割れ→ATR下限が次の下値目安</div>
-                </div>
-              )}
               {!aiLoading&&aiText&&(
+                <button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>
+              )}
+            </div>
+          )}
+
+          {s.support&&(
+            <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#fbbf24",marginBottom:6}}>📉 下値サポート目安</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                {[["🟡 S1 20日",s.support.s1,"#fbbf24"],["🔴 S2 60日",s.support.s2,"#f43f5e"],["⚡ ATR×1.5",s.support.atrFloor,"#a78bfa"]].map(function(row){
+                  return(
+                    <div key={row[0]} style={{background:"#040c18",border:"1px solid #1e3050",borderRadius:6,padding:"5px 8px"}}>
+                      <div style={{fontSize:9,color:row[2],marginBottom:2}}>{row[0]}</div>
+                      <div style={{fontSize:13,fontWeight:800,color:row[2]}}>{s.market==="JP"?"¥"+row[1].toLocaleString():"$"+row[1]}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{fontSize:10,color:"#2a5070",marginTop:5}}>S1割れ→S2、S2割れ→ATR下限が次の下値目安</div>
+            </div>
+          )}
+
           {showSim&&(function(){
             var bp=parseFloat(simBuy)||0;
             var sh=parseFloat(simShares)||0;
@@ -865,23 +871,23 @@ function StockDetailPanel(p){
             <button onClick={function(){setShowAi(false);setAiText("");}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:15,cursor:"pointer"}}>✕</button>
           </div>
           {aiLoading?(<div style={{textAlign:"center",padding:"12px 0"}}><div style={{fontSize:18}}>⏳</div><div style={{fontSize:14,color:"#4a90c0",marginTop:4}}>AIが分析中...</div></div>):(<div style={{fontSize:15,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}</div>)}
-          {!aiLoading&&s.support&&(
-            <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px",marginTop:8}}>
-              <div style={{fontSize:12,fontWeight:700,color:"#fbbf24",marginBottom:6}}>📉 下値サポート目安</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-                {[["🟡 S1 20日",s.support.s1,"#fbbf24"],["🔴 S2 60日",s.support.s2,"#f43f5e"],["⚡ ATR×1.5",s.support.atrFloor,"#a78bfa"]].map(function(row){
-                  return(
-                    <div key={row[0]} style={{background:"#040c18",border:"1px solid #1e3050",borderRadius:6,padding:"5px 8px"}}>
-                      <div style={{fontSize:10,color:row[2],marginBottom:2}}>{row[0]}</div>
-                      <div style={{fontSize:14,fontWeight:800,color:row[2]}}>{s.market==="JP"?"¥"+row[1].toLocaleString():"$"+row[1]}</div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div style={{fontSize:11,color:"#2a5070",marginTop:5}}>S1割れ→S2、S2割れ→ATR下限が次の下値目安</div>
-            </div>
-          )}
           {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
+        </div>
+      )}
+      {s.support&&(
+        <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#fbbf24",marginBottom:6}}>📉 下値サポート目安</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+            {[["🟡 S1 20日",s.support.s1,"#fbbf24"],["🔴 S2 60日",s.support.s2,"#f43f5e"],["⚡ ATR×1.5",s.support.atrFloor,"#a78bfa"]].map(function(row){
+              return(
+                <div key={row[0]} style={{background:"#040c18",border:"1px solid #1e3050",borderRadius:6,padding:"5px 8px"}}>
+                  <div style={{fontSize:10,color:row[2],marginBottom:2}}>{row[0]}</div>
+                  <div style={{fontSize:14,fontWeight:800,color:row[2]}}>{s.market==="JP"?"¥"+row[1].toLocaleString():"$"+row[1]}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{fontSize:11,color:"#2a5070",marginTop:5}}>S1割れ→S2、S2割れ→ATR下限が次の下値目安</div>
         </div>
       )}
       {showSim&&(function(){
