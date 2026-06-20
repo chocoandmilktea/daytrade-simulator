@@ -273,6 +273,24 @@ function analyzeStock(stock,pd){
   })();
   // ────────────────────────────────────────────────────────────────────────
 
+  var bottomScore=0;
+  if(position52!=null&&position52<=15) bottomScore+=35;
+  else if(position52!=null&&position52<=25) bottomScore+=25;
+  else if(position52!=null&&position52<=40) bottomScore+=10;
+  if(rsiVal<30) bottomScore+=30;
+  else if(rsiVal<40) bottomScore+=20;
+  else if(rsiVal<50) bottomScore+=8;
+  if(mNow.hist>0&&mPrev&&mPrev.hist<=0) bottomScore+=30;
+  else if(mNow.hist>0&&mPrev&&mNow.hist>mPrev.hist) bottomScore+=15;
+  else if(mNow.hist<0&&mPrev&&mNow.hist>mPrev.hist) bottomScore+=10;
+  if(bollVal&&price<=bollVal.lower) bottomScore+=20;
+  else if(bollVal&&closes[n]<bollVal.lower+(bollVal.upper-bollVal.lower)*0.2) bottomScore+=10;
+  if(stochVal!==null&&stochVal<20) bottomScore+=15;
+  else if(stochVal!==null&&stochVal<35) bottomScore+=8;
+  if(hasDC&&hasBearTrend) bottomScore-=20;
+  else if(hasBearTrend) bottomScore-=10;
+  bottomScore=Math.min(100,Math.max(0,bottomScore));
+
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
@@ -282,8 +300,162 @@ function analyzeStock(stock,pd){
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
     aptScore:aptScore,
     atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,
-    scoreHist:scoreHist,
+    scoreHist:scoreHist,bottomScore:bottomScore,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
+}
+
+function BottomFishCard(p){
+  var s=p.s,isFav=p.isFav,toggleFav=p.toggleFav,getReason=p.getReason;
+  var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
+  var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
+  var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
+
+  async function runBottomAI(){
+    if(aiLoading) return;
+    setShowAi(true);setAiLoading(true);setAiText("");
+    var isJP=s.market==="JP";
+    var prompt=
+      "あなたは株式アナリストです。以下は「底値圏の割安株」として抽出された銘柄です。\n\n"+
+      "銘柄: "+s.ticker+" ("+s.name+")\n"+
+      "市場: "+s.market+"\n"+
+      "現在値: "+s.price+"\n"+
+      "前日比: "+s.change+"%\n"+
+      "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏/100%=高値圏)\n"+
+      "52週高値比: "+s.fromHigh.toFixed(1)+"%\n"+
+      "底値スコア: "+s.bottomScore+"/100\n"+
+      "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
+      "この銘柄が今後【上昇しそうな理由】を以下の3点で各2文ずつ日本語で答えてください。\n"+
+      "1. 📉 なぜ今が底値圏なのか（テクニカル根拠）\n"+
+      "2. 📈 どのシグナルが反転を示唆しているか\n"+
+      "3. 🎯 どのくらいの上昇が期待できるか（"+(isJP?"円":"ドル")+"ベースの目安も含めて）\n\n"+
+      "最後に1行で「⚠️ 注意点:」として下落リスクも添えてください。";
+    try{
+      var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({prompt:prompt}),
+        signal:AbortSignal.timeout(30000)
+      });
+      var data=await res.json();
+      if(data.error) throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+      setAiText(typeof data.text==="string"?data.text:"分析できませんでした。");
+    }catch(e){
+      setAiText("エラー: "+(e.message||"不明なエラー"));
+    }
+    setAiLoading(false);
+  }
+
+  var macdSig=s.signals.find(function(x){return x.label==="MACD";});
+  var gcBadge=macdSig&&macdSig.val==="ゴールデンクロス";
+  var pos52Color=s.position52<=15?"#22d3a0":s.position52<=25?"#fbbf24":"#60a5fa";
+
+  return(
+    <div style={{background:"#071428",border:"1px solid "+(gcBadge?"#22d3a040":"#1e3050"),borderRadius:10,padding:"12px 14px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+        <div>
+          <span style={{fontSize:15,fontWeight:800,color:"#d8eeff",marginRight:6}}>{s.ticker.replace(".T","")}</span>
+          <span style={{fontSize:12,color:"#4a7090"}}>{s.name}</span>
+          {gcBadge&&<span style={{...bStyle("#052e16","#22d3a0","#22d3a0"),marginLeft:6}}>🔥GC発生</span>}
+        </div>
+        <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:16,cursor:"pointer",color:isFav?"#fbbf24":"#2a4060",padding:"0 4px"}}>{isFav?"★":"☆"}</button>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:8}}>
+        {[["現在値",s.price,"#b8cce0"],["騰落率",s.change+"%",parseFloat(s.change)>=0?"#22d3a0":"#f43f5e"],["底値スコア",s.bottomScore+"/100","#22d3a0"],["52週位置",s.position52!=null?s.position52.toFixed(0)+"%":"─",pos52Color]].map(function(row){
+          return(<div key={row[0]} style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
+            <div style={{fontSize:9,color:"#2a6090",marginBottom:2}}>{row[0]}</div>
+            <div style={{fontSize:13,fontWeight:700,color:row[2]}}>{row[1]}</div>
+          </div>);
+        })}
+      </div>
+      <div style={{fontSize:11,color:"#4a8070",background:"#050e1c",border:"1px solid #0a2030",borderRadius:6,padding:"6px 10px",marginBottom:8}}>
+        💡 {getReason(s)||"複数シグナル重複"}
+      </div>
+      {s.support&&(
+        <div style={{fontSize:11,color:"#2a6090",marginBottom:8}}>
+          サポート: S1={s.market==="JP"?"¥"+s.support.s1.toLocaleString():"$"+s.support.s1} / S2={s.market==="JP"?"¥"+s.support.s2.toLocaleString():"$"+s.support.s2}
+        </div>
+      )}
+      {!showAi&&(
+        <button onClick={runBottomAI} style={{width:"100%",background:"linear-gradient(135deg,#0a2040,#071428)",border:"1px solid #1e4070",borderRadius:8,color:"#4a90c0",padding:"8px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
+          🤖 なぜ伸びそうか予測する
+        </button>
+      )}
+      {showAi&&(
+        <div style={{background:"#040c18",border:"1px solid #0ea5e940",borderRadius:8,padding:"10px 12px",marginTop:4}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <span style={{fontSize:11,fontWeight:700,color:"#4a90c0"}}>🤖 AI上昇予測</span>
+            <button onClick={function(){setShowAi(false);setAiText("");}} style={{background:"transparent",border:"none",color:"#2a5070",fontSize:13,cursor:"pointer"}}>✕</button>
+          </div>
+          {aiLoading?(
+            <div style={{textAlign:"center",padding:"12px 0",color:"#4a7090"}}>
+              <div style={{fontSize:20,marginBottom:4}}>⏳</div>
+              <div style={{fontSize:11}}>AIが分析中...</div>
+            </div>
+          ):(
+            <div style={{fontSize:12,color:"#b8cce0",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{aiText}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BottomFishPanel(p){
+  var stocks=p.stocks,toggleFav=p.toggleFav,favs=p.favs;
+  var mktS=useState("ALL");var mktFilter=mktS[0],setMktFilter=mktS[1];
+
+  var candidates=stocks.filter(function(s){
+    if(mktFilter!=="ALL"&&s.market!==mktFilter) return false;
+    return s.bottomScore>=50&&s.position52!=null&&s.position52<=40;
+  }).sort(function(a,b){return b.bottomScore-a.bottomScore;}).slice(0,30);
+
+  function getReason(s){
+    var reasons=[];
+    if(s.position52<=15) reasons.push("52週最安値圏");
+    else if(s.position52<=25) reasons.push("52週安値圏");
+    var rsiSig=s.signals.find(function(x){return x.label&&x.label.startsWith("RSI");});
+    if(rsiSig&&(rsiSig.val==="売られすぎ"||rsiSig.val==="やや売られ")) reasons.push("RSI"+rsiSig.val);
+    var macdSig=s.signals.find(function(x){return x.label==="MACD";});
+    if(macdSig&&macdSig.val==="ゴールデンクロス") reasons.push("🔥GC発生");
+    else if(macdSig&&macdSig.val==="強気ゾーン") reasons.push("MACD反転");
+    var bbSig=s.signals.find(function(x){return x.label==="BB";});
+    if(bbSig&&(bbSig.val==="下限→反発"||bbSig.val==="下限付近")) reasons.push("BB下限");
+    var stSig=s.signals.find(function(x){return x.label&&x.label.startsWith("Stoch");});
+    if(stSig&&(stSig.val==="売られすぎ"||stSig.val==="やや売られ")) reasons.push("Stoch底値");
+    return reasons.slice(0,3).join(" / ");
+  }
+
+  function bBtn(val,label,color){
+    var active=mktFilter===val;
+    return(<button onClick={function(){setMktFilter(val);}} style={{background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>{label}</button>);
+  }
+
+  return(
+    <div>
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+        <div style={{fontSize:14,fontWeight:700,color:"#22d3a0",marginBottom:4}}>🌱 底値狩りスクリーナー</div>
+        <div style={{fontSize:11,color:"#4a7090"}}>52週安値圏 × 反転シグナルが重なった銘柄を自動抽出</div>
+      </div>
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+        {bBtn("ALL","全て","#60a5fa")}
+        {bBtn("US","🇺🇸 US","#3b82f6")}
+        {bBtn("JP","🇯🇵 JP","#f87171")}
+        <span style={{marginLeft:"auto",fontSize:11,color:"#2a6090"}}>{candidates.length}銘柄</span>
+      </div>
+      {candidates.length===0?(
+        <div style={{textAlign:"center",padding:"60px 20px",color:"#2a6090"}}>
+          <div style={{fontSize:32,marginBottom:12}}>🔍</div>
+          <div style={{fontSize:13,color:"#4a7090"}}>条件に合う銘柄が見つかりません</div>
+          <div style={{fontSize:11,color:"#2a6090",marginTop:4}}>スキャン後に再確認してください</div>
+        </div>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {candidates.map(function(s){
+            return(<BottomFishCard key={s.ticker} s={s} isFav={favs.indexOf(s.ticker)>=0} toggleFav={toggleFav} getReason={getReason}/>);
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function classifyStockFn(s){
@@ -1551,7 +1723,7 @@ function MarketPredictionPanel(p){
       "US市場: 上昇銘柄 "+usUpPct+"% ("+usUp+"/"+usStocks.length+"銘柄)\n"+
       "JP市場: 上昇銘柄 "+jpUpPct+"% ("+jpUp+"/"+jpStocks.length+"銘柄)\n\n"+
       "【スコア上位5銘柄】\n"+
-      top5.map(function(s){return s.ticker+"(正式社名:"+s.name+") スコア:"+s.score+" "+s.tradeLabel+" 騰落:"+s.change+"%";}).join("\n")+"\n\n"+
+      top5.map(function(s){return s.ticker+" スコア:"+s.score+" "+s.tradeLabel+" 騰落:"+s.change+"%";}).join("\n")+"\n\n"+
       "【GC発生中】\n"+(gcNowList.length>0?gcNowList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n"+
       "【GC接近中】\n"+(gcNearList.length>0?gcNearList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n"+
       "【DC発生中】\n"+(dcNowList.length>0?dcNowList.map(function(s){return s.ticker+"("+s.market+")";}).join(", "):"なし")+"\n\n"+
@@ -1936,9 +2108,9 @@ export default function App(){
       .finally(function(){scan();});
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
-  var TABS=[["all","📋"],["fav","⭐"],["portfolio","💼"],["index","🌍"],["market","📡"],["news","📰"],["trend","🔥"],["sync","🔗"]];
-  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","portfolio":"ポートフォリオ","index":"リンク","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
-  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","portfolio":"PF","index":"指数","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"同期"};
+  var TABS=[["all","📋"],["fav","⭐"],["bottom","🌱"],["portfolio","💼"],["index","🌍"],["market","📡"],["news","📰"],["trend","🔥"],["sync","🔗"]];
+  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","bottom":"底値狩り","portfolio":"ポートフォリオ","index":"リンク","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
+  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","bottom":"底値狩り","portfolio":"PF","index":"指数","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"同期"};
   var isMobile=window.innerWidth<768;
   return(
     <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0"}}>
@@ -1985,6 +2157,7 @@ export default function App(){
         <div style={{marginLeft:isMobile?0:50,padding:"10px 10px 120px"}}>
           {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock}/>}
           {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock}/>}
+          {activeTab==="bottom"&&<BottomFishPanel stocks={stocks} toggleFav={toggleFav} favs={favs}/>}
           {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="news"&&<NewsPanel/>}
