@@ -521,9 +521,9 @@ function StockCard(p){
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   var simTargetS=useState(3);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
-  var simStopS=useState(-2);var simStop=simStopS[0],setSimStop=simStopS[1];
+  var simStopS=useState(-5);var simStop=simStopS[0],setSimStop=simStopS[1];
   var simTargetInputS=useState("3");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
-  var simStopInputS=useState("-2");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
+  var simStopInputS=useState("-5");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
   var showAddS=useState(false);var showAdd=showAddS[0],setShowAdd=showAddS[1];
   var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
@@ -893,9 +893,9 @@ function StockDetailPanel(p){
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   useEffect(function(){var isJP=s.market==="JP";setSimBuy(s.rawPrice?(isJP?String(Math.round(s.rawPrice)):s.rawPrice.toFixed(2)):"");},[s.ticker]);
   var simTargetS=useState(3);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
-  var simStopS=useState(-2);var simStop=simStopS[0],setSimStop=simStopS[1];
+  var simStopS=useState(-5);var simStop=simStopS[0],setSimStop=simStopS[1];
   var simTargetInputS=useState("3");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
-  var simStopInputS=useState("-2");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
+  var simStopInputS=useState("-5");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
   var showAddS=useState(false);var showAdd=showAddS[0],setShowAdd=showAddS[1];
   var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
   var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
