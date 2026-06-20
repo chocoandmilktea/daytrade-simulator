@@ -1883,7 +1883,9 @@ function NewsPanel(){
       var data=await res.json();
       if(data.error) throw new Error(data.error);
       var text=(data.text||"").replace(/```json|```/g,"").trim();
-      var parsed=JSON.parse(text);
+      var start=text.indexOf("{"); var end=text.lastIndexOf("}");
+      if(start===-1||end===-1) throw new Error("JSONが見つかりませんでした");
+      var parsed=JSON.parse(text.slice(start,end+1));
       setResult(parsed);
       setLastUpd(new Date().toLocaleTimeString("ja-JP"));
       setOpenCat(CATS.find(function(c){return parsed[c.key]&&parsed[c.key].length>0;})||null);
