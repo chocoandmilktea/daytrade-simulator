@@ -1845,7 +1845,158 @@ function MarketPredictionPanel(p){
   );
 }
 
-function NewsPanel(){var NEWS=[{label:"株式ニュース",url:"https://finance.yahoo.co.jp/news",desc:"国内外の最新株式ニュース"},{label:"日本株ニュース",url:"https://finance.yahoo.co.jp/news/stocks",desc:"日本株関連ニュース"},{label:"米国株ニュース",url:"https://finance.yahoo.co.jp/news/world",desc:"米国株最新情報"},{label:"マーケット概況",url:"https://finance.yahoo.co.jp/stocks",desc:"日本株式市場の概況"}];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px"}}><div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>ニュース</div></div><div style={{padding:"8px"}}>{NEWS.map(function(item,i){return(<a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}><span style={{fontSize:15,fontWeight:700,color:"#93c5fd"}}>{item.label}</span><span style={{fontSize:12,color:"#4a7090"}}>{item.desc}</span></a>);})}</div></div>);}
+function NewsPanel(){
+  var AI_API="https://daytrade-simulator.vercel.app/api/ai";
+  var NEWS_LINKS=[
+    {label:"株式ニュース",url:"https://finance.yahoo.co.jp/news",desc:"国内外の最新株式ニュース"},
+    {label:"日本株ニュース",url:"https://finance.yahoo.co.jp/news/stocks",desc:"日本株関連ニュース"},
+    {label:"米国株ニュース",url:"https://finance.yahoo.co.jp/news/world",desc:"米国株最新情報"},
+    {label:"マーケット概況",url:"https://finance.yahoo.co.jp/stocks",desc:"日本株式市場の概況"},
+  ];
+  var CATS=[
+    {key:"金融政策", icon:"🏦", color:"#a78bfa"},
+    {key:"決算・業績", icon:"📈", color:"#22d3a0"},
+    {key:"経済指標", icon:"🌍", color:"#60a5fa"},
+    {key:"相場急変", icon:"⚡", color:"#fbbf24"},
+    {key:"セクター動向", icon:"🏭", color:"#fb923c"},
+  ];
+  var loadingS=useState(false); var loading=loadingS[0],setLoading=loadingS[1];
+  var resultS=useState(null); var result=resultS[0],setResult=resultS[1];
+  var lastUpdS=useState(""); var lastUpd=lastUpdS[0],setLastUpd=lastUpdS[1];
+  var openCatS=useState(null); var openCat=openCatS[0],setOpenCat=openCatS[1];
+
+  async function fetchNews(){
+    setLoading(true); setResult(null);
+    var prompt=
+      "今日の株式市場の最新ニュースをWeb検索で取得し、以下の5カテゴリに分類して日本語でわかりやすく要約してください。\n\n"+
+      "対象カテゴリ：🏦 金融政策 / 📈 決算・業績 / 🌍 経済指標 / ⚡ 相場急変 / 🏭 セクター動向\n\n"+
+      "【出力形式】必ずJSON形式のみで出力し、前後の説明文やMarkdownコードブロックは不要です。\n"+
+      '{"金融政策":[{"headline":"見出し","summary":"2〜3文の平易な説明","impact":"投資家への影響を一言"}],"決算・業績":[...],"経済指標":[...],"相場急変":[...],"セクター動向":[...]}\n\n'+
+      "ルール：\n- 各カテゴリに1〜3件のニュースを入れる。該当ニュースがない場合は空配列[]\n- 専門用語は必ず平易な言葉に言い換える（例：「利上げ」→「金利を上げること。借金の利子が増えるため、企業の負担が増す」）\n- impactは「株価への影響」を具体的に一言で（例：「銀行株に追い風、グロース株には逆風」）\n- 必ず日本語で回答";
+    try{
+      var res=await fetch(AI_API,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({prompt:prompt,system:"あなたは個人投資家向けの株式ニュース解説者です。最新ニュースをWeb検索で必ず取得し、難しい言葉を使わずわかりやすく解説してください。JSONのみ出力してください。",useWebSearch:true}),
+        signal:AbortSignal.timeout(60000),
+      });
+      var data=await res.json();
+      if(data.error) throw new Error(data.error);
+      var text=(data.text||"").replace(/```json|```/g,"").trim();
+      var parsed=JSON.parse(text);
+      setResult(parsed);
+      setLastUpd(new Date().toLocaleTimeString("ja-JP"));
+      setOpenCat(CATS.find(function(c){return parsed[c.key]&&parsed[c.key].length>0;})||null);
+    }catch(e){
+      setResult({error:"取得に失敗しました: "+(e.message||"不明なエラー")});
+    }
+    setLoading(false);
+  }
+
+  return(
+    <div>
+      {/* AIニュース変換エリア */}
+      <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden",marginBottom:10}}>
+        <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>📰 AIニュース変換</div>
+            {lastUpd&&<div style={{fontSize:11,color:"#2a6090",marginTop:2}}>更新: {lastUpd}</div>}
+          </div>
+          <button onClick={fetchNews} disabled={loading}
+            style={{background:loading?"#0a1828":"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"7px 16px",fontSize:13,fontWeight:700,cursor:loading?"not-allowed":"pointer",fontFamily:"monospace"}}>
+            {loading?"取得中...":"🔄 最新ニュース取得"}
+          </button>
+        </div>
+
+        {/* ローディング */}
+        {loading&&(
+          <div style={{textAlign:"center",padding:"48px 20px",color:"#4a90c0"}}>
+            <div style={{fontSize:32,marginBottom:12}}>🔍</div>
+            <div style={{fontSize:13}}>AIがニュースを取得・分類中...</div>
+            <div style={{fontSize:11,color:"#2a6090",marginTop:6}}>最新情報をWeb検索しています</div>
+          </div>
+        )}
+
+        {/* エラー */}
+        {!loading&&result&&result.error&&(
+          <div style={{padding:"20px",color:"#f43f5e",fontSize:13}}>{result.error}</div>
+        )}
+
+        {/* カテゴリ表示 */}
+        {!loading&&result&&!result.error&&(
+          <div>
+            {/* カテゴリタブ */}
+            <div style={{display:"flex",gap:6,padding:"10px 12px",overflowX:"auto",WebkitOverflowScrolling:"touch",borderBottom:"1px solid #0a1828"}}>
+              {CATS.map(function(cat){
+                var items=result[cat.key]||[];
+                var active=openCat&&openCat.key===cat.key;
+                return(
+                  <button key={cat.key} onClick={function(){setOpenCat(active?null:cat);}}
+                    style={{background:active?cat.color+"22":"transparent",border:"1px solid "+(active?cat.color:"#1e3050"),borderRadius:6,color:active?cat.color:"#4a6080",padding:"5px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap",flexShrink:0,opacity:items.length===0?0.4:1}}>
+                    {cat.icon} {cat.key}
+                    {items.length>0&&<span style={{marginLeft:4,background:cat.color+"33",borderRadius:10,padding:"0 5px",fontSize:10,color:cat.color}}>{items.length}</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ニュース一覧 */}
+            {openCat&&(function(){
+              var items=result[openCat.key]||[];
+              if(items.length===0) return <div style={{padding:"20px",color:"#4a7090",fontSize:13,textAlign:"center"}}>該当ニュースなし</div>;
+              return(
+                <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
+                  {items.map(function(item,i){
+                    return(
+                      <div key={i} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:8,padding:"12px 14px"}}>
+                        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:6}}>{item.headline}</div>
+                        <div style={{fontSize:12,color:"#b8cce0",lineHeight:1.7,marginBottom:8}}>{item.summary}</div>
+                        <div style={{background:openCat.color+"18",border:"1px solid "+openCat.color+"44",borderRadius:6,padding:"6px 10px",fontSize:11,color:openCat.color}}>
+                          💡 {item.impact}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            {!openCat&&(
+              <div style={{textAlign:"center",padding:"24px",color:"#2a6090",fontSize:12}}>カテゴリを選択してください</div>
+            )}
+          </div>
+        )}
+
+        {/* 初期状態 */}
+        {!loading&&!result&&(
+          <div style={{textAlign:"center",padding:"48px 20px",color:"#2a6090"}}>
+            <div style={{fontSize:36,marginBottom:12}}>📰</div>
+            <div style={{fontSize:13,color:"#4a90c0",marginBottom:6}}>最新ニュースをAIがわかりやすく変換します</div>
+            <div style={{fontSize:11}}>カテゴリ別に整理 + 投資家への影響を解説</div>
+          </div>
+        )}
+      </div>
+
+      {/* 既存リンク集 */}
+      <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}>
+        <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 16px"}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#4a7090"}}>🔗 ニュースサイト</div>
+        </div>
+        <div style={{padding:"8px"}}>
+          {NEWS_LINKS.map(function(item,i){
+            return(
+              <a key={i} href={item.url} target="_blank" rel="noreferrer"
+                style={{display:"flex",flexDirection:"column",padding:"10px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:3}}>
+                <span style={{fontSize:14,fontWeight:700,color:"#93c5fd"}}>{item.label}</span>
+                <span style={{fontSize:11,color:"#4a7090"}}>{item.desc}</span>
+              </a>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 function TrendPanel(){var cs=useState(0);var openCat=cs[0],setOpenCat=cs[1];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>トレンド・ランキング</div></div>{TREND_LINKS.map(function(cat,ci){var isOpen=openCat===ci;return(<div key={ci}><div onClick={function(){setOpenCat(isOpen?-1:ci);}} style={{padding:"10px 14px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #0a1828",background:isOpen?"#071a2e":"transparent"}}><span style={{fontSize:14,fontWeight:700,color:"#b8cce0"}}>{cat.category}</span><span style={{fontSize:12,color:"#2a6090"}}>{isOpen?"▲":"▼"}</span></div>{isOpen&&<div style={{background:"#040c18",borderBottom:"1px solid #0a1828"}}>{cat.links.map(function(link,li){return(<a key={li} href={link.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",padding:"9px 20px",borderBottom:"1px solid #0a1828",textDecoration:"none",gap:8}}><span style={{fontSize:12,color:"#22d3a0"}}>→</span><span style={{fontSize:14,color:"#93c5fd"}}>{link.label}</span></a>);})}</div>}</div>);})}</div>);}
 
 function IndexPanel(){
