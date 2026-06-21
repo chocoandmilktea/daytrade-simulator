@@ -71,7 +71,6 @@ const JP_NAMES_FALLBACK = {
 // ── /api/ipo から名前マップを取得（失敗時はフォールバックを返す） ──────────
 async function fetchNameMap(req) {
   try {
-    // 同一Vercelインスタンス内でのself呼び出し
     const host = req.headers.host || "daytrade-simulator.vercel.app";
     const protocol = host.includes("localhost") ? "http" : "https";
     const r = await fetch(`${protocol}://${host}/api/ipo`, {
@@ -81,20 +80,29 @@ async function fetchNameMap(req) {
     const json = await r.json();
     return json?.names || {};
   } catch (e) {
-    // 取得失敗時はフォールバックを使う
     return {};
   }
 }
 
-function getLatestBusinessDay() {
+// JST 15:30以降は当日データが確定しているため当日日付を返す
+// それ以前は前営業日を返す
+function getTargetBusinessDay() {
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+
+  const hhmm = jst.getUTCHours() * 60 + jst.getUTCMinutes();
+  const MARKET_CLOSE = 15 * 60 + 30; // 15:30
+
   let d = new Date(jst);
-  // 常に前営業日を使う（当日データは夕方以降しか確定しないため）
-  d.setUTCDate(d.getUTCDate() - 1);
-  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) {
+
+  // 15:30未満 or 土日は前営業日へ
+  if (hhmm < MARKET_CLOSE || d.getUTCDay() === 0 || d.getUTCDay() === 6) {
     d.setUTCDate(d.getUTCDate() - 1);
+    while (d.getUTCDay() === 0 || d.getUTCDay() === 6) {
+      d.setUTCDate(d.getUTCDate() - 1);
+    }
   }
+
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getUTCDate()).padStart(2, "0");
@@ -105,11 +113,10 @@ async function getJPRanking(req) {
   const apiKey = process.env.JQUANTS_API_KEY;
   if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
 
-  // 名前マップと株価データを並列取得
   const [nameMap, barsResult] = await Promise.allSettled([
     fetchNameMap(req),
     (async () => {
-      const dateStr = getLatestBusinessDay();
+      const dateStr = getTargetBusinessDay();
       const url = `https://api.jquants.com/v2/equities/bars/daily?date=${dateStr}`;
       const res = await fetch(url, {
         headers: { "x-api-key": apiKey },
@@ -123,10 +130,8 @@ async function getJPRanking(req) {
     })(),
   ]);
 
-  // 名前マップ（失敗時はフォールバック）
   const names = nameMap.status === "fulfilled" ? nameMap.value : {};
 
-  // 株価データ（失敗時はエラーを投げる）
   if (barsResult.status === "rejected") throw barsResult.reason;
   const json = barsResult.value;
   const bars = json?.data || [];
@@ -149,8 +154,6 @@ async function getJPRanking(req) {
       const open = bar.O || 0;
       const vol = bar.Vo || 0;
       const change = open > 0 ? ((close - open) / open * 100) : 0;
-
-      // J-Quantsの正式名称 → フォールバック手動マップ → コードをそのまま表示 の優先順
       const name = names[code] || JP_NAMES_FALLBACK[code] || code;
 
       return {
