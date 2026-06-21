@@ -1239,7 +1239,7 @@ function AllStocksPanel(p){
     return true;
   }).slice().sort(function(a,b){
     if(sortBy==="score") return b.score-a.score;
-    if(sortBy==="change") return Math.abs(parseFloat(b.change))-Math.abs(parseFloat(a.change));
+    if(sortBy==="change") return parseFloat(b.change)-parseFloat(a.change);
     if(sortBy==="apt") return (b.aptScore||0)-(a.aptScore||0);
     return 0;
   });
@@ -1328,7 +1328,7 @@ function AllStocksPanel(p){
         <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",position:"relative"}}>
           <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>並替:</span>
           {sBtn("score","スコア順")}
-          {sBtn("change","騰落率順")}
+          {sBtn("change","上昇率順")}
           {sBtn("apt","適性順")}
           <button onClick={function(){setShowSortHelp(!showSortHelp);}} style={{background:showSortHelp?"#0ea5e920":"transparent",border:"1px solid "+(showSortHelp?"#0ea5e9":"#1e3050"),borderRadius:"50%",color:showSortHelp?"#0ea5e9":"#4a6080",width:18,height:18,fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0,fontFamily:"monospace",flexShrink:0}}>?</button>
           <span style={{fontSize:11,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
@@ -1338,7 +1338,7 @@ function AllStocksPanel(p){
               <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:10}}>並び替えの説明</div>
               {[
                 {label:"スコア順",color:"#0ea5e9",desc:"MACD・RSI・ボリンジャーバンド・ストキャスティクスなど複数指標を総合した0〜100点のスコアで降順に並べます。買いシグナルが多いほど高スコアになります。"},
-                {label:"騰落率順",color:"#22d3a0",desc:"前日比の騰落率（絶対値）が大きい順に並べます。上昇・下落どちらも値動きの激しい銘柄が上位に来ます。"},
+                {label:"上昇率順",color:"#22d3a0",desc:"前日比の上昇率が高い順に並べます。当日モメンタムの強い銘柄が上位に来ます。下落銘柄は下位に並びます。"},
                 {label:"適性順",color:"#fbbf24",desc:"スキャル・デイトレ・スイングのトレードタイプを年間値幅・平均日次変動率・当日騰落率から判定し、選択中のタイプフィルターに最適な銘柄を優先表示します。"}
               ].map(function(item){
                 return(
@@ -1406,7 +1406,7 @@ function FavPanel(p){
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
   var displayStocks=(filterMkt==="ALL"?favStocks:favStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){
     if(sortBy==="score") return b.score-a.score;
-    if(sortBy==="change") return Math.abs(parseFloat(b.change))-Math.abs(parseFloat(a.change));
+    if(sortBy==="change") return parseFloat(b.change)-parseFloat(a.change);
     return 0;
   });
   function fBtn(val,label,activeColor){
@@ -1444,7 +1444,7 @@ function FavPanel(p){
           {fBtn("JP","JP","#f87171")}
           <span style={{fontSize:11,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
           {sBtn("score","スコア順")}
-          {sBtn("change","騰落率順")}
+          {sBtn("change","上昇率順")}
         </div>
       )}
       {isMobile?cardGrid:(
