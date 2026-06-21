@@ -23,7 +23,8 @@ async function fetchRanking(market){
     var res=await fetch(RANKING_API+"?market="+market,{signal:AbortSignal.timeout(15000)});
     if(!res.ok) throw new Error("ranking "+res.status);
     var json=await res.json();
-    var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol};});
+    // ハイブリッド方式：volume・changeも受け取る
+    var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume||0,change:s.change||0};});
     return stocks.length>0?stocks:null;
   }catch(e){return null;}
 }
@@ -34,8 +35,9 @@ async function buildStockUniverse(){
   var jp=results[1]||[];
   if(us.length===0){var retry=await fetchRanking("us");us=retry||[];}
   if(jp.length===0){var retry2=await fetchRanking("jp");jp=retry2||[];}
+  // ハイブリッド方式：サーバー側で重複除去済みのため上限撤廃
   var seen={},out=[];
-  us.slice(0,50).concat(jp.slice(0,50)).forEach(function(s){if(!seen[s.ticker]){seen[s.ticker]=true;out.push(s);}});
+  us.concat(jp).forEach(function(s){if(!seen[s.ticker]){seen[s.ticker]=true;out.push(s);}});
   return out;
 }
 
