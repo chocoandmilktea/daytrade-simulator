@@ -479,13 +479,19 @@ export default function StockDetail({ s, isFav, toggleFav, vix, usdJpy }) {
             display:"block" }}>
           🔗 Yahoo!
         </a>
-        <a href="https://apps.apple.com/jp/app/ispeed-%E6%A5%BD%E5%A4%A9%E8%A8%BC%E5%88%B8%E3%81%AE%E6%A0%AA%E5%8F%96%E5%BC%95%E3%82%A2%E3%83%97%E3%83%AA/id427547505"
-          target="_blank" rel="noreferrer"
+        <a
+          href="ispeed://"
+          onClick={function(){
+            var code = s.ticker.replace(".T","");
+            if(navigator.clipboard){
+              navigator.clipboard.writeText(code).catch(function(){});
+            }
+          }}
           style={{ background:"#071428", border:"1px solid #22d3a0", borderRadius:8,
             color:"#22d3a0", padding:"10px", fontSize:12, fontWeight:700,
             fontFamily:"monospace", textDecoration:"none", textAlign:"center",
             display:"block" }}>
-          📱 iSpeed
+          📱 iSPEED
         </a>
       </div>
     </div>
