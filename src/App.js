@@ -112,22 +112,22 @@ function MarketHours() {
     <div style={{ display:"flex", gap:16, alignItems:"flex-start" }}>
       {/* 日本株列 */}
       <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-        <span style={{ fontSize:12, whiteSpace:"nowrap",
+        <span style={{ fontSize:14, whiteSpace:"nowrap",
           color:jpAm?"#22d3a0":"#4a7090", fontWeight:jpAm?700:400 }}>
           🇯🇵 9:00〜11:30
         </span>
-        <span style={{ fontSize:12, whiteSpace:"nowrap",
+        <span style={{ fontSize:14, whiteSpace:"nowrap",
           color:jpPm?"#22d3a0":"#4a7090", fontWeight:jpPm?700:400 }}>
           🇯🇵 12:30〜15:30
         </span>
       </div>
       {/* 米国株列 */}
       <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-        <span style={{ fontSize:12, whiteSpace:"nowrap",
+        <span style={{ fontSize:14, whiteSpace:"nowrap",
           color:usOpen?"#22d3a0":"#4a7090", fontWeight:usOpen?700:400 }}>
           🇺🇸 {usLine1}
         </span>
-        <span style={{ fontSize:12, whiteSpace:"nowrap", color:"#4a7090" }}>
+        <span style={{ fontSize:14, whiteSpace:"nowrap", color:"#4a7090" }}>
           🇺🇸 {usLine2}
         </span>
       </div>
@@ -165,7 +165,7 @@ function MarketBar() {
     });
   }, []);
   return (
-    <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:4 }}>
+    <div style={{ display:"grid", gridTemplateColumns:"repeat(5, 1fr)", gap:4 }}>
       {INDICES.map(function(idx) {
         var d = data[idx.key];
         var isVix = idx.key === "vix";
