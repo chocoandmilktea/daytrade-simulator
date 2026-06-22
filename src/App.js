@@ -141,7 +141,7 @@ function MarketBar() {
   var INDICES = [
     { key:"nikkei", ticker:"^N225",    label:"日経平均", prefix:"¥", round:true  },
     { key:"dow",    ticker:"^DJI",     label:"NYダウ",   prefix:"$", round:true  },
-    { key:"sp500",  ticker:"^GSPC",    label:"S&P500",  prefix:"",  round:false },
+    { key:"sp500",  ticker:"^GSPC",    label:"S&P500",  prefix:"",  round:true  },
     { key:"usdjpy", ticker:"USDJPY=X", label:"ドル円",   prefix:"¥", round:false },
     { key:"vix",    ticker:"^VIX",     label:"VIX",     prefix:"",  round:false },
   ];
