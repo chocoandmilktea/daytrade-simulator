@@ -1,8 +1,4 @@
 // components/StockCard.js
-// スキャルピング・デイトレ特化カード
-// 削除: スパークライン・52週バー・overlapラベル
-// 追加: モメンタム方向・出来高急増率・BUYバッジ
-
 import { useState } from "react";
 
 var BADGE = {
@@ -47,22 +43,15 @@ export default function StockCard({ s, isFav, toggleFav, onSelect, isSelected, u
   var isUp = parseFloat(s.change) >= 0;
   var changeColor = isUp ? "#22d3a0" : "#f43f5e";
   var cardBorder = isSelected ? "#60a5fa" : scoreColor(s.score);
-
-  // モメンタムバッジ
-  var momLabel = s.momentumPlus ? "↑ 上昇" : "↓ 下降";
   var momColor = s.momentumPlus ? "#22d3a0" : "#f43f5e";
   var momBg    = s.momentumPlus ? "#052e16" : "#1f0010";
 
-  // 出来高急増バッジ（1.5倍以上のみ表示）
   var surgeTag = null;
   if (s.surge >= 2.0) {
-    surgeTag = { label: "出来高" + s.surge.toFixed(1) + "倍", color: "#f97316", bg: "#1a0800" };
+    surgeTag = { label: "出来高"+s.surge.toFixed(1)+"倍", color:"#f97316", bg:"#1a0800" };
   } else if (s.surge >= 1.5) {
-    surgeTag = { label: "出来高" + s.surge.toFixed(1) + "倍", color: "#fbbf24", bg: "#1c1400" };
+    surgeTag = { label: "出来高"+s.surge.toFixed(1)+"倍", color:"#fbbf24", bg:"#1c1400" };
   }
-
-  // 日足データフォールバック警告
-  var dataWarn = s.dataWarn || null;
 
   function stopProp(e) { e.stopPropagation(); }
 
@@ -73,23 +62,24 @@ export default function StockCard({ s, isFav, toggleFav, onSelect, isSelected, u
         background: isSelected ? "#071e38" : "#050e1c",
         border: "2px solid " + cardBorder,
         borderRadius: 10,
-        padding: "10px 12px",
+        padding: "8px 10px",
         cursor: "pointer",
         display: "flex",
         flexDirection: "column",
-        gap: 6,
+        gap: 5,
       }}
     >
-      {/* 行1: スコアリング・市場・銘柄コード・お気に入り */}
+      {/* 行1: スコアリング・銘柄情報・株価（右側） */}
       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
         <ScoreRing score={s.score} />
+
+        {/* 銘柄名エリア */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
             <span style={bStyle(mc.bg, mc.border, mc.text)}>{mc.label}</span>
             <span style={{ fontSize: 14, fontWeight: 800, color: "#d8eeff" }}>
               {s.ticker.replace(".T", "")}
             </span>
-            {/* トレードタイプタグは設計書に合わせ "📈デイトレ" 相当を表示 */}
             {s.timing === "BUY" && (
               <span style={bStyle("#052e16", "#22d3a0", "#22d3a0")}>📈デイトレ</span>
             )}
@@ -102,62 +92,56 @@ export default function StockCard({ s, isFav, toggleFav, onSelect, isSelected, u
             {s.name}
           </div>
         </div>
+
+        {/* 株価・上昇率（銘柄名の右側） */}
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#d8eeff", lineHeight: 1.2 }}>
+            {s.price}
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: changeColor }}>
+            {isUp ? "▲" : "▼"}{Math.abs(s.change)}%
+          </div>
+          {s.market === "US" && usdJpy && (
+            <div style={{ fontSize: 9, color: "#4a7090" }}>
+              ¥{Math.round(s.rawPrice * usdJpy).toLocaleString()}
+            </div>
+          )}
+        </div>
+
         <button
-          onClick={function (e) { stopProp(e); toggleFav(s.ticker); }}
+          onClick={function(e) { stopProp(e); toggleFav(s.ticker); }}
           style={{ background: "transparent", border: "none", fontSize: 16,
-            cursor: "pointer", color: isFav ? "#fbbf24" : "#2a4060", padding: 0, flexShrink: 0 }}
+            cursor: "pointer", color: isFav ? "#fbbf24" : "#2a4060",
+            padding: 0, flexShrink: 0 }}
         >
           {isFav ? "★" : "☆"}
         </button>
       </div>
 
-      {/* 行2: 現在値・円換算 */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-        <span style={{ fontSize: 16, fontWeight: 800, color: "#d8eeff" }}>{s.price}</span>
-        {s.market === "US" && usdJpy && (
-          <span style={{ fontSize: 11, color: "#4a7090" }}>
-            ¥{Math.round(s.rawPrice * usdJpy).toLocaleString()}
-          </span>
-        )}
-        {dataWarn && (
-          <span style={{ fontSize: 9, color: "#fbbf24", marginLeft: "auto" }}>{dataWarn}</span>
-        )}
-      </div>
-
-      {/* 行3: 変化率・シグナルタグ・BUYバッジ */}
-      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-        {/* 騰落率 */}
-        <span style={{ fontSize: 13, fontWeight: 700, color: changeColor }}>
-          {isUp ? "▲" : "▼"}{Math.abs(s.change)}%
+      {/* 行2: シグナルタグ・BUYバッジ */}
+      <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={bStyle(momBg, momColor, momColor)}>
+          {s.momentumPlus ? "↑ 上昇" : "↓ 下降"}
         </span>
-
-        {/* モメンタム */}
-        <span style={bStyle(momBg, momColor, momColor)}>{momLabel}</span>
-
-        {/* 出来高急増 */}
         {surgeTag && (
           <span style={bStyle(surgeTag.bg, surgeTag.color, surgeTag.color)}>
             {surgeTag.label}
           </span>
         )}
-
-        {/* RSI・BBシグナルタグ */}
-        {s.signals && s.signals.map(function (sig, i) {
-          // モメンタム・出来高は上で表示済みなのでスキップ
+        {s.signals && s.signals.map(function(sig, i) {
           if (sig.label === "モメンタム" || sig.label === "出来高") return null;
-          if (sig.state === 0) return null; // 中立は表示しない
+          if (sig.state === 0) return null;
           return (
             <span key={i} style={bStyle(
               sig.state === 1 ? "#052e16" : "#1f0010",
               sig.state === 1 ? "#22d3a0" : "#f43f5e",
               sig.state === 1 ? "#22d3a0" : "#f43f5e"
-            )}>
-              {sig.label}
-            </span>
+            )}>{sig.label}</span>
           );
         })}
-
-        {/* BUYバッジ（右端） */}
+        {s.dataWarn && (
+          <span style={{ fontSize: 9, color: "#fbbf24" }}>{s.dataWarn}</span>
+        )}
         <span style={{ ...bStyle(bc.bg, bc.border, bc.text), marginLeft: "auto" }}>
           {bc.label}
         </span>
