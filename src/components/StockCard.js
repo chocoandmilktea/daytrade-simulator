@@ -77,7 +77,7 @@ export default function StockCard({ s, isFav, toggleFav, onSelect, isSelected, u
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
             <span style={bStyle(mc.bg, mc.border, mc.text)}>{mc.label}</span>
-            <span style={{ fontSize: 14, fontWeight: 800, color: "#d8eeff" }}>
+            <span style={{ fontSize: 17, fontWeight: 800, color: "#d8eeff" }}>
               {s.ticker.replace(".T", "")}
             </span>
             {s.timing === "BUY" && (
@@ -87,7 +87,7 @@ export default function StockCard({ s, isFav, toggleFav, onSelect, isSelected, u
               <span style={bStyle("#1a1200", "#7c6010", "#fbbf24")}>SIM</span>
             )}
           </div>
-          <div style={{ fontSize: 11, color: "#4a7090", marginTop: 1,
+          <div style={{ fontSize: 12, color: "#6a90b0", marginTop: 2,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {s.name}
           </div>
@@ -95,14 +95,14 @@ export default function StockCard({ s, isFav, toggleFav, onSelect, isSelected, u
 
         {/* 株価・上昇率（銘柄名の右側） */}
         <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: "#d8eeff", lineHeight: 1.2 }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#d8eeff", lineHeight: 1.2 }}>
             {s.price}
           </div>
-          <div style={{ fontSize: 12, fontWeight: 700, color: changeColor }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: changeColor }}>
             {isUp ? "▲" : "▼"}{Math.abs(s.change)}%
           </div>
           {s.market === "US" && usdJpy && (
-            <div style={{ fontSize: 9, color: "#4a7090" }}>
+            <div style={{ fontSize: 10, color: "#4a7090" }}>
               ¥{Math.round(s.rawPrice * usdJpy).toLocaleString()}
             </div>
           )}
