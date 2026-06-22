@@ -1004,7 +1004,7 @@ export default function App() {
 
       {/* メインコンテンツ */}
       <div style={{ marginLeft:isMobile?0:50, padding:"10px 10px 0",
-        height:"calc(100vh - 110px)", overflow:"hidden", boxSizing:"border-box" }}>
+        height:"calc(100vh - 110px)", overflow:"visible", boxSizing:"border-box" }}>
         {activeTab==="all" && (
           <AllStocksPanel
             stocks={stocks} loading={loading} progress={progress} ts={ts}
