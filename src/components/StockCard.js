@@ -77,7 +77,8 @@ export default function StockCard({ s, isFav, toggleFav, onSelect, isSelected, u
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
             <span style={bStyle(mc.bg, mc.border, mc.text)}>{mc.label}</span>
-            <span style={{ fontSize: 17, fontWeight: 800, color: "#d8eeff" }}>
+            {/* ▼ ティッカー: 17→20px に拡大 */}
+            <span style={{ fontSize: 20, fontWeight: 800, color: "#d8eeff" }}>
               {s.ticker.replace(".T", "")}
             </span>
             {s.timing === "BUY" && (
@@ -87,7 +88,8 @@ export default function StockCard({ s, isFav, toggleFav, onSelect, isSelected, u
               <span style={bStyle("#1a1200", "#7c6010", "#fbbf24")}>SIM</span>
             )}
           </div>
-          <div style={{ fontSize: 12, color: "#6a90b0", marginTop: 2,
+          {/* ▼ 銘柄名: 12→14px に拡大 */}
+          <div style={{ fontSize: 14, color: "#6a90b0", marginTop: 2,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {s.name}
           </div>
@@ -95,10 +97,12 @@ export default function StockCard({ s, isFav, toggleFav, onSelect, isSelected, u
 
         {/* 株価・上昇率（銘柄名の右側） */}
         <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "#d8eeff", lineHeight: 1.2 }}>
+          {/* ▼ 株価: 17→21px に拡大 */}
+          <div style={{ fontSize: 21, fontWeight: 800, color: "#d8eeff", lineHeight: 1.2 }}>
             {s.price}
           </div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: changeColor }}>
+          {/* ▼ 変化率: 14→16px に拡大 */}
+          <div style={{ fontSize: 16, fontWeight: 700, color: changeColor }}>
             {isUp ? "▲" : "▼"}{Math.abs(s.change)}%
           </div>
           {s.market === "US" && usdJpy && (
