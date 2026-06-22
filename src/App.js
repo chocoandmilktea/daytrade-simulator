@@ -99,35 +99,47 @@ function MarketHours() {
   var jst = new Date(now.getTime() + 9*60*60*1000);
   var h = jst.getUTCHours(), m = jst.getUTCMinutes(), dow = jst.getUTCDay();
   var tm = h*60+m;
-  var jpOpen = dow>=1&&dow<=5 && ((tm>=540&&tm<690)||(tm>=750&&tm<930));
+  var jpAm = dow>=1&&dow<=5 && tm>=540&&tm<690;
+  var jpPm = dow>=1&&dow<=5 && tm>=750&&tm<930;
+  var jpOpen = jpAm || jpPm;
   var mo = jst.getUTCMonth()+1, dy = jst.getUTCDate();
   var isSummer = (mo>3&&mo<11)||(mo===3&&dy>=8)||(mo===11&&dy<=7);
   var usStart = isSummer ? 22*60+30 : 23*60+30;
-  var usEnd   = isSummer ? 5*60      : 6*60;
-  var usOpen  = (dow>=1&&dow<=5) && (tm>=usStart||tm<usEnd);
+  var usEnd   = isSummer ? 5*60 : 6*60;
+  var usOpen  = dow>=1&&dow<=5 && (tm>=usStart||tm<usEnd);
+  var usLabel = isSummer ? "22:30〜翌5:00" : "23:30〜翌6:00";
+  var season  = isSummer ? "[夏]" : "[冬]";
   return (
-    <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-      <span style={{ fontSize:11, color:jpOpen?"#22d3a0":"#4a7090",
-        fontWeight:jpOpen?700:400, whiteSpace:"nowrap" }}>
-        🇯🇵 {jpOpen?"開場":"閉場"}
-      </span>
-      <span style={{ fontSize:11, color:usOpen?"#22d3a0":"#4a7090",
-        fontWeight:usOpen?700:400, whiteSpace:"nowrap" }}>
-        🇺🇸 {usOpen?"開場":"閉場"}
-      </span>
+    <div style={{ display:"flex", flexDirection:"column", gap:2, alignItems:"flex-end" }}>
+      <div style={{ display:"flex", gap:10 }}>
+        <span style={{ fontSize:10, color:jpOpen?"#22d3a0":"#4a7090",
+          fontWeight:jpOpen?700:400, whiteSpace:"nowrap" }}>
+          🇯🇵 9:00〜11:30
+        </span>
+        <span style={{ fontSize:10, color:usOpen?"#22d3a0":"#4a7090",
+          fontWeight:usOpen?700:400, whiteSpace:"nowrap" }}>
+          🇺🇸 {usLabel} {season}
+        </span>
+      </div>
+      <div style={{ display:"flex", gap:10 }}>
+        <span style={{ fontSize:10, color:jpPm?"#22d3a0":"#4a7090",
+          fontWeight:jpPm?700:400, whiteSpace:"nowrap" }}>
+          🇯🇵 12:30〜15:30
+        </span>
+      </div>
     </div>
   );
 }
 
-// ── MarketBar（指数バー・大きめ表示） ─────────────────────────────────────────
+// ── MarketBar（指数バー・画像1スタイル） ──────────────────────────────────────
 function MarketBar() {
   var [data, setData] = useState({});
   var INDICES = [
-    { key:"nikkei", ticker:"^N225",    label:"日経",   prefix:"¥", round:true  },
-    { key:"dow",    ticker:"^DJI",     label:"NYダウ", prefix:"",  round:true  },
-    { key:"sp500",  ticker:"^GSPC",    label:"S&P",   prefix:"",  round:true  },
-    { key:"usdjpy", ticker:"USDJPY=X", label:"$/¥",   prefix:"",  round:false },
-    { key:"vix",    ticker:"^VIX",     label:"VIX",   prefix:"",  round:false },
+    { key:"nikkei", ticker:"^N225",    label:"日経平均", prefix:"¥", round:true  },
+    { key:"dow",    ticker:"^DJI",     label:"NYダウ",   prefix:"$", round:true  },
+    { key:"sp500",  ticker:"^GSPC",    label:"S&P500",  prefix:"",  round:false },
+    { key:"usdjpy", ticker:"USDJPY=X", label:"ドル円",   prefix:"¥", round:false },
+    { key:"vix",    ticker:"^VIX",     label:"VIX",     prefix:"",  round:false },
   ];
   useEffect(function() {
     Promise.all(INDICES.map(async function(idx) {
@@ -136,7 +148,7 @@ function MarketBar() {
           { signal:AbortSignal.timeout(8000) });
         var json = await res.json();
         var meta = json?.chart?.result?.[0]?.meta;
-        if (!meta) return { key:idx.key, error:true };
+        if (!meta) return { key:idx.key, error:true, label:idx.label };
         var price = meta.regularMarketPrice||0;
         var prev  = meta.chartPreviousClose||price;
         var change = prev ? ((price-prev)/prev*100).toFixed(2) : "0.00";
@@ -149,35 +161,42 @@ function MarketBar() {
     });
   }, []);
   return (
-    <div style={{ display:"flex", gap:4, overflowX:"auto",
-      WebkitOverflowScrolling:"touch", padding:"4px 0" }}>
+    <div style={{ display:"flex", gap:6, overflowX:"auto",
+      WebkitOverflowScrolling:"touch" }}>
       {INDICES.map(function(idx) {
         var d = data[idx.key];
         var isVix = idx.key === "vix";
         if (!d || d.error) return (
-          <div key={idx.key} style={{ flexShrink:0, textAlign:"center",
+          <div key={idx.key} style={{ flexShrink:0, minWidth:100,
             background:"#071428", border:"1px solid #0f2040",
-            borderRadius:6, padding:"4px 10px", minWidth:60 }}>
-            <div style={{ fontSize:10, color:"#2a6090" }}>{idx.label}</div>
-            <div style={{ fontSize:14, color:"#4a7090" }}>─</div>
+            borderRadius:6, padding:"6px 14px" }}>
+            <div style={{ fontSize:10, color:"#2a6090", marginBottom:2 }}>{idx.label}</div>
+            <div style={{ fontSize:18, color:"#1e3050", fontWeight:800 }}>─</div>
           </div>
         );
         var isUp = parseFloat(d.change) >= 0;
         var vixAlert = isVix && d.price >= 20;
-        var price = d.round ? Math.round(d.price).toLocaleString() : parseFloat(d.price).toFixed(2);
+        var price = idx.key === "sp500"
+          ? parseFloat(d.price).toFixed(0)
+          : idx.key === "usdjpy"
+            ? parseFloat(d.price).toFixed(2)
+            : idx.key === "vix"
+              ? parseFloat(d.price).toFixed(2)
+              : Math.round(d.price).toLocaleString();
         return (
-          <div key={idx.key} style={{ flexShrink:0, textAlign:"center",
+          <div key={idx.key} style={{ flexShrink:0, minWidth:100,
             background:vixAlert?"#1f0010":"#071428",
-            border:"1px solid "+(vixAlert?"#f43f5e40":"#0f2040"),
-            borderRadius:6, padding:"4px 10px", minWidth:60 }}>
-            <div style={{ fontSize:10, color:vixAlert?"#f43f5e":"#4a7090" }}>
+            border:"1px solid "+(vixAlert?"#f43f5e60":"#0f2040"),
+            borderRadius:6, padding:"6px 14px" }}>
+            <div style={{ fontSize:10, color:vixAlert?"#f43f5e":"#4a7090", marginBottom:2 }}>
               {idx.label}{vixAlert?" ⚠":""}
             </div>
-            <div style={{ fontSize:15, fontWeight:800,
-              color:vixAlert?"#f43f5e":"#d8eeff", lineHeight:1.2 }}>
+            <div style={{ fontSize:18, fontWeight:800, color:vixAlert?"#f43f5e":"#d8eeff",
+              lineHeight:1.2, letterSpacing:-0.5 }}>
               {d.prefix}{price}
             </div>
-            <div style={{ fontSize:11, fontWeight:700, color:isUp?"#22d3a0":"#f43f5e" }}>
+            <div style={{ fontSize:11, fontWeight:700,
+              color:isUp?"#22d3a0":"#f43f5e", marginTop:1 }}>
               {isUp?"▲":"▼"}{Math.abs(d.change)}%
             </div>
           </div>
@@ -255,10 +274,11 @@ function AllStocksPanel({ stocks, loading, progress, ts, vix, usdJpy,
   );
 
   return (
-    <div>
+    <div style={{ display:"flex", flexDirection:"column",
+      height:"100%", overflow:"hidden" }}>
       {/* スキャンボタン・進捗 */}
       <div style={{ background:"#071428", border:"1px solid #0f2040",
-        borderRadius:10, padding:"10px 14px", marginBottom:10 }}>
+        borderRadius:10, padding:"10px 14px", marginBottom:8, flexShrink:0 }}>
         <div style={{ display:"flex", justifyContent:"space-between",
           alignItems:"center", gap:8 }}>
           <div>
@@ -281,7 +301,6 @@ function AllStocksPanel({ stocks, loading, progress, ts, vix, usdJpy,
             {loading ? "スキャン中..." : "🔍 スキャン"}
           </button>
         </div>
-        {/* プログレスバー */}
         {loading && progress.total > 0 && (
           <div style={{ background:"#0a1828", borderRadius:3, height:4,
             marginTop:8, overflow:"hidden" }}>
@@ -292,35 +311,33 @@ function AllStocksPanel({ stocks, loading, progress, ts, vix, usdJpy,
         )}
       </div>
 
-      {/* ④ フィルター＋ソート（同一行） */}
+      {/* フィルター＋ソート */}
       <div style={{ display:"flex", gap:6, alignItems:"center",
-        margin:"8px 0", flexWrap:"nowrap", overflowX:"auto",
-        WebkitOverflowScrolling:"touch" }}>
+        marginBottom:8, flexWrap:"nowrap", overflowX:"auto",
+        WebkitOverflowScrolling:"touch", flexShrink:0 }}>
         {fBtn("ALL","全銘柄","#60a5fa")}
         {fBtn("US","🇺🇸 US","#3b82f6")}
         {fBtn("JP","🇯🇵 JP","#f87171")}
-        <span style={{ width:1, height:16, background:"#1e3050",
-          flexShrink:0, marginLeft:2, marginRight:2 }} />
+        <span style={{ width:1, height:16, background:"#1e3050", flexShrink:0 }} />
         {sBtn("score","スコア順")}
         {sBtn("change","上昇率順")}
         <span style={{ fontSize:11, color:"#2a6090", marginLeft:"auto",
           flexShrink:0, whiteSpace:"nowrap" }}>{displayed.length}銘柄</span>
       </div>
 
-      {/* 2ペインレイアウト（デスクトップ） */}
-      {isMobile ? cardList : (
-        <div style={{ display:"flex", gap:12 }}>
-          {/* 左ペイン: 独立スクロール */}
+      {/* 2ペイン（高さ残り全部・各自独立スクロール） */}
+      {isMobile ? (
+        <div style={{ flex:1, overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
+          {cardList}
+        </div>
+      ) : (
+        <div style={{ flex:1, display:"flex", gap:12, minHeight:0 }}>
           <div style={{ width:"40%", flexShrink:0,
-            height:"calc(100vh - 150px)",
             overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
             {cardList}
           </div>
-          {/* 右ペイン: 高さ固定・独立スクロール（突き抜けなし） */}
           <div style={{ flex:1,
-            height:"calc(100vh - 150px)",
-            overflowY:"auto", WebkitOverflowScrolling:"touch",
-            position:"sticky", top:95 }}>
+            overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
             <StockDetail
               s={selectedStock}
               isFav={selectedStock && favs.indexOf(selectedStock.ticker) >= 0}
@@ -395,10 +412,11 @@ function FavPanel({ stocks, favs, toggleFav, vix, usdJpy, selectedStock, setSele
   );
 
   return (
-    <div>
+    <div style={{ display:"flex", flexDirection:"column",
+      height:"100%", overflow:"hidden" }}>
       {/* 検索追加 */}
       <div style={{ background:"#050e1c", border:"1px solid #1e3050",
-        borderRadius:10, padding:"12px 14px", marginBottom:10 }}>
+        borderRadius:10, padding:"12px 14px", marginBottom:8, flexShrink:0 }}>
         <div style={{ display:"flex", gap:8 }}>
           <input
             style={{ background:"#071428", border:"1px solid #1e3050",
@@ -424,7 +442,7 @@ function FavPanel({ stocks, favs, toggleFav, vix, usdJpy, selectedStock, setSele
 
       {/* ソート */}
       {favStocks.length > 0 && (
-        <div style={{ display:"flex", gap:6, marginBottom:8 }}>
+        <div style={{ display:"flex", gap:6, marginBottom:8, flexShrink:0 }}>
           {["score","change"].map(function(val) {
             var label = val==="score" ? "スコア順" : "上昇率順";
             var active = sort === val;
@@ -442,17 +460,18 @@ function FavPanel({ stocks, favs, toggleFav, vix, usdJpy, selectedStock, setSele
         </div>
       )}
 
-      {isMobile ? cardList : (
-        <div style={{ display:"flex", gap:12 }}>
+      {isMobile ? (
+        <div style={{ flex:1, overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
+          {cardList}
+        </div>
+      ) : (
+        <div style={{ flex:1, display:"flex", gap:12, minHeight:0 }}>
           <div style={{ width:"40%", flexShrink:0,
-            height:"calc(100vh - 150px)",
             overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
             {cardList}
           </div>
           <div style={{ flex:1,
-            height:"calc(100vh - 150px)",
-            overflowY:"auto", WebkitOverflowScrolling:"touch",
-            position:"sticky", top:95 }}>
+            overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
             <StockDetail
               s={selectedStock}
               isFav={selectedStock && favs.indexOf(selectedStock.ticker) >= 0}
@@ -968,7 +987,8 @@ export default function App() {
       )}
 
       {/* メインコンテンツ */}
-      <div style={{ marginLeft:isMobile?0:50, padding:"10px 10px 120px" }}>
+      <div style={{ marginLeft:isMobile?0:50, padding:"10px 10px 0",
+        height:"calc(100vh - 110px)", overflow:"hidden", boxSizing:"border-box" }}>
         {activeTab==="all" && (
           <AllStocksPanel
             stocks={stocks} loading={loading} progress={progress} ts={ts}
@@ -985,10 +1005,16 @@ export default function App() {
             selectedStock={selectedStock} setSelectedStock={setSelectedStock}
           />
         )}
-        {activeTab==="index"  && <IndexPanel />}
-        {activeTab==="market" && <MarketPanel stocks={stocks} vix={vix} />}
+        {activeTab==="index"  && (
+          <div style={{ height:"100%", overflowY:"auto" }}><IndexPanel /></div>
+        )}
+        {activeTab==="market" && (
+          <div style={{ height:"100%", overflowY:"auto" }}><MarketPanel stocks={stocks} vix={vix} /></div>
+        )}
         {activeTab==="sync"   && (
-          <SyncPanel userId={userId} setFavs={setFavs} scan={scan} />
+          <div style={{ height:"100%", overflowY:"auto" }}>
+            <SyncPanel userId={userId} setFavs={setFavs} scan={scan} />
+          </div>
         )}
       </div>
     </div>
