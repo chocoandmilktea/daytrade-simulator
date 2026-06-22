@@ -112,22 +112,22 @@ function MarketHours() {
     <div style={{ display:"flex", gap:16, alignItems:"flex-start" }}>
       {/* 日本株列 */}
       <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-        <span style={{ fontSize:10, whiteSpace:"nowrap",
+        <span style={{ fontSize:12, whiteSpace:"nowrap",
           color:jpAm?"#22d3a0":"#4a7090", fontWeight:jpAm?700:400 }}>
           🇯🇵 9:00〜11:30
         </span>
-        <span style={{ fontSize:10, whiteSpace:"nowrap",
+        <span style={{ fontSize:12, whiteSpace:"nowrap",
           color:jpPm?"#22d3a0":"#4a7090", fontWeight:jpPm?700:400 }}>
           🇯🇵 12:30〜15:30
         </span>
       </div>
       {/* 米国株列 */}
       <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-        <span style={{ fontSize:10, whiteSpace:"nowrap",
+        <span style={{ fontSize:12, whiteSpace:"nowrap",
           color:usOpen?"#22d3a0":"#4a7090", fontWeight:usOpen?700:400 }}>
           🇺🇸 {usLine1}
         </span>
-        <span style={{ fontSize:10, whiteSpace:"nowrap", color:"#4a7090" }}>
+        <span style={{ fontSize:12, whiteSpace:"nowrap", color:"#4a7090" }}>
           🇺🇸 {usLine2}
         </span>
       </div>
@@ -165,17 +165,15 @@ function MarketBar() {
     });
   }, []);
   return (
-    <div style={{ display:"flex", gap:6, overflowX:"auto",
-      WebkitOverflowScrolling:"touch" }}>
+    <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:4 }}>
       {INDICES.map(function(idx) {
         var d = data[idx.key];
         var isVix = idx.key === "vix";
         if (!d || d.error) return (
-          <div key={idx.key} style={{ flexShrink:0, minWidth:100,
-            background:"#071428", border:"1px solid #0f2040",
-            borderRadius:6, padding:"6px 14px" }}>
-            <div style={{ fontSize:10, color:"#2a6090", marginBottom:2 }}>{idx.label}</div>
-            <div style={{ fontSize:18, color:"#1e3050", fontWeight:800 }}>─</div>
+          <div key={idx.key} style={{ background:"#071428", border:"1px solid #0f2040",
+            borderRadius:6, padding:"4px 10px" }}>
+            <div style={{ fontSize:10, color:"#2a6090", marginBottom:1 }}>{idx.label}</div>
+            <div style={{ fontSize:16, color:"#1e3050", fontWeight:800 }}>─</div>
           </div>
         );
         var isUp = parseFloat(d.change) >= 0;
@@ -188,14 +186,14 @@ function MarketBar() {
               ? parseFloat(d.price).toFixed(2)
               : Math.round(d.price).toLocaleString();
         return (
-          <div key={idx.key} style={{ flexShrink:0, minWidth:100,
+          <div key={idx.key} style={{
             background:vixAlert?"#1f0010":"#071428",
             border:"1px solid "+(vixAlert?"#f43f5e60":"#0f2040"),
-            borderRadius:6, padding:"6px 14px" }}>
-            <div style={{ fontSize:10, color:vixAlert?"#f43f5e":"#4a7090", marginBottom:2 }}>
+            borderRadius:6, padding:"4px 10px" }}>
+            <div style={{ fontSize:10, color:vixAlert?"#f43f5e":"#4a7090", marginBottom:1 }}>
               {idx.label}{vixAlert?" ⚠":""}
             </div>
-            <div style={{ fontSize:18, fontWeight:800, color:vixAlert?"#f43f5e":"#d8eeff",
+            <div style={{ fontSize:16, fontWeight:800, color:vixAlert?"#f43f5e":"#d8eeff",
               lineHeight:1.2, letterSpacing:-0.5 }}>
               {d.prefix}{price}
             </div>
@@ -522,12 +520,13 @@ function IndexPanel() {
             </a>
           );
         })}
-        {/* iSPEED: ispeed:// スキームで直接アプリ起動 */}
+        {/* iSPEED: href + onClick ダブル方式でアプリ起動 */}
         <a href="ispeed://"
+          onClick={function(e){ e.preventDefault(); window.location.href = "ispeed://"; }}
           style={{ display:"flex", flexDirection:"column",
             padding:"12px 14px", margin:"4px 0",
             background:"#1a0a0a", border:"1px solid #f87171",
-            borderRadius:8, textDecoration:"none", gap:4 }}>
+            borderRadius:8, textDecoration:"none", gap:4, cursor:"pointer" }}>
           <span style={{ fontSize:14, fontWeight:700, color:"#fca5a5" }}>
             📱 iSPEED（楽天証券）
           </span>
