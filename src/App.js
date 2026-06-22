@@ -125,7 +125,7 @@ function analyzeStock(stock,pd){
   else{sc-=12;signals.push({label:rl,val:"買われすぎ",state:-1});}
 
   if(bollVal){
-    var bbPos=(price-bollVal.lower)/(bollVal.upper-bollVal.lower||1);
+    var bbPos=(closes[n]-bollVal.lower)/(bollVal.upper-bollVal.lower||1);
     if(price<=bollVal.lower){sc+=20;signals.push({label:"BB",val:"下限→反発",state:1});}
     else if(bbPos<0.2){sc+=15;signals.push({label:"BB",val:"下限付近",state:1});}
     else if(price>=bollVal.upper){sc-=15;signals.push({label:"BB",val:"上限→過熱",state:-1});}
