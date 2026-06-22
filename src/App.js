@@ -2,7 +2,7 @@
 // スキャルピング・デイトレ特化スクリーナー
 // タブ: 全銘柄 / お気に入り / 指数リンク / 市場予測 / デバイス同期
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { analyzeStock } from "./calc/score";
 import StockCard from "./components/StockCard";
 import StockDetail from "./components/StockDetail";
@@ -929,12 +929,23 @@ export default function App() {
     ["sync",   "🔗", "同期"],
   ];
 
+  var headerRef = useRef(null);
+  var [headerH, setHeaderH] = useState(110);
+  useEffect(function() {
+    function measure() {
+      if (headerRef.current) setHeaderH(headerRef.current.offsetHeight);
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return function(){ window.removeEventListener("resize", measure); };
+  }, []);
+
   return (
     <div style={{ minHeight:"100vh", background:"#040c18",
       fontFamily:"monospace", color:"#b8cce0" }}>
 
       {/* ヘッダー */}
-      <div style={{ background:"linear-gradient(180deg,#071428,#050f20)",
+      <div ref={headerRef} style={{ background:"linear-gradient(180deg,#071428,#050f20)",
         borderBottom:"1px solid #0f2040", padding:"8px 12px 6px",
         position:"sticky", top:0, zIndex:20,
         marginLeft:isMobile?0:50 }}>
@@ -1004,7 +1015,7 @@ export default function App() {
 
       {/* メインコンテンツ */}
       <div style={{ marginLeft:isMobile?0:50, padding:"10px 10px 0",
-        height:"calc(100vh - 110px)", overflow:"visible", boxSizing:"border-box" }}>
+        height:"calc(100vh - "+headerH+"px)", overflow:"hidden", boxSizing:"border-box" }}>
         {activeTab==="all" && (
           <AllStocksPanel
             stocks={stocks} loading={loading} progress={progress} ts={ts}
