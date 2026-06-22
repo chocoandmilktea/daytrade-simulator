@@ -93,7 +93,7 @@ function genSim(ticker) {
 function MarketHours() {
   var [now, setNow] = useState(new Date());
   useEffect(function() {
-    var t = setInterval(function(){ setNow(new Date()); }, 60000);
+    var t = setInterval(function(){ setNow(new Date()); }, 30000);
     return function(){ clearInterval(t); };
   }, []);
   var jst = new Date(now.getTime() + 9*60*60*1000);
@@ -106,18 +106,20 @@ function MarketHours() {
   var usEnd   = isSummer ? 5*60      : 6*60;
   var usOpen  = (dow>=1&&dow<=5) && (tm>=usStart||tm<usEnd);
   return (
-    <div style={{ display:"flex", gap:12, alignItems:"center", fontSize:12 }}>
-      <span style={{ color:jpOpen?"#22d3a0":"#4a7090", fontWeight:jpOpen?700:400 }}>
-        🇯🇵 {jpOpen?"開場中":"閉場"}
+    <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+      <span style={{ fontSize:11, color:jpOpen?"#22d3a0":"#4a7090",
+        fontWeight:jpOpen?700:400, whiteSpace:"nowrap" }}>
+        🇯🇵 {jpOpen?"開場":"閉場"}
       </span>
-      <span style={{ color:usOpen?"#22d3a0":"#4a7090", fontWeight:usOpen?700:400 }}>
-        🇺🇸 {usOpen?"開場中":"閉場"}
+      <span style={{ fontSize:11, color:usOpen?"#22d3a0":"#4a7090",
+        fontWeight:usOpen?700:400, whiteSpace:"nowrap" }}>
+        🇺🇸 {usOpen?"開場":"閉場"}
       </span>
     </div>
   );
 }
 
-// ── MarketBar（指数バー） ─────────────────────────────────────────────────────
+// ── MarketBar（指数バー・ヘッダー横スクロール版） ──────────────────────────────
 function MarketBar() {
   var [data, setData] = useState({});
   var INDICES = [
@@ -147,15 +149,15 @@ function MarketBar() {
     });
   }, []);
   return (
-    <div style={{ display:"flex", gap:8, overflowX:"auto", padding:"8px 0",
-      WebkitOverflowScrolling:"touch" }}>
+    <div style={{ display:"flex", gap:6, overflowX:"auto",
+      WebkitOverflowScrolling:"touch", flexShrink:0 }}>
       {INDICES.map(function(idx) {
         var d = data[idx.key];
         if (!d || d.error) return (
-          <div key={idx.key} style={{ background:"#071428", borderRadius:6,
-            padding:"5px 10px", flexShrink:0 }}>
+          <div key={idx.key} style={{ flexShrink:0, textAlign:"center",
+            padding:"2px 6px", minWidth:44 }}>
             <div style={{ fontSize:9, color:"#2a6090" }}>{idx.label}</div>
-            <div style={{ fontSize:12, color:"#4a7090" }}>─</div>
+            <div style={{ fontSize:11, color:"#4a7090" }}>─</div>
           </div>
         );
         var isUp = parseFloat(d.change) >= 0;
@@ -163,15 +165,18 @@ function MarketBar() {
         var vixAlert = isVix && d.price >= 20;
         var price = d.round ? Math.round(d.price).toLocaleString() : parseFloat(d.price).toFixed(2);
         return (
-          <div key={idx.key} style={{ background:vixAlert?"#1f0010":"#071428",
-            border:"1px solid "+(vixAlert?"#f43f5e40":"#0f2040"),
-            borderRadius:6, padding:"5px 10px", flexShrink:0 }}>
+          <div key={idx.key} style={{ flexShrink:0, textAlign:"center",
+            padding:"2px 6px", minWidth:48,
+            background:vixAlert?"#1f001020":"transparent",
+            borderRadius:4 }}>
             <div style={{ fontSize:9, color:vixAlert?"#f43f5e":"#4a7090" }}>
               {idx.label}{vixAlert?" ⚠":""}
             </div>
-            <div style={{ fontSize:13, fontWeight:700,
-              color:vixAlert?"#f43f5e":"#d8eeff" }}>{d.prefix}{price}</div>
-            <div style={{ fontSize:10, color:isUp?"#22d3a0":"#f43f5e" }}>
+            <div style={{ fontSize:12, fontWeight:700,
+              color:vixAlert?"#f43f5e":"#d8eeff", lineHeight:1.2 }}>
+              {d.prefix}{price}
+            </div>
+            <div style={{ fontSize:9, color:isUp?"#22d3a0":"#f43f5e" }}>
               {isUp?"▲":"▼"}{Math.abs(d.change)}%
             </div>
           </div>
@@ -286,27 +291,31 @@ function AllStocksPanel({ stocks, loading, progress, ts, vix, usdJpy,
         )}
       </div>
 
-      <MarketBar />
-
-      {/* フィルター */}
-      <div style={{ display:"flex", gap:6, flexWrap:"wrap",
-        alignItems:"center", margin:"8px 0" }}>
+      {/* ④ フィルター＋ソート（同一行） */}
+      <div style={{ display:"flex", gap:6, alignItems:"center",
+        margin:"8px 0", flexWrap:"nowrap", overflowX:"auto",
+        WebkitOverflowScrolling:"touch" }}>
         {fBtn("ALL","全銘柄","#60a5fa")}
         {fBtn("US","🇺🇸 US","#3b82f6")}
         {fBtn("JP","🇯🇵 JP","#f87171")}
-        <span style={{ marginLeft:"auto", display:"flex", gap:4 }}>
-          {sBtn("score","スコア順")}
-          {sBtn("change","上昇率順")}
-        </span>
-        <span style={{ fontSize:11, color:"#2a6090" }}>{displayed.length}銘柄</span>
+        <span style={{ width:1, height:16, background:"#1e3050",
+          flexShrink:0, marginLeft:2, marginRight:2 }} />
+        {sBtn("score","スコア順")}
+        {sBtn("change","上昇率順")}
+        <span style={{ fontSize:11, color:"#2a6090", marginLeft:"auto",
+          flexShrink:0, whiteSpace:"nowrap" }}>{displayed.length}銘柄</span>
       </div>
 
       {/* 2ペインレイアウト（デスクトップ） */}
       {isMobile ? cardList : (
         <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
-          {/* 左ペイン: 銘柄リスト（約40%） */}
-          <div style={{ width:"40%", flexShrink:0 }}>{cardList}</div>
-          {/* 右ペイン: 詳細（約60%）sticky */}
+          {/* ⑤ 左ペイン: スクロール時に突き抜けないよう高さ固定 */}
+          <div style={{ width:"40%", flexShrink:0,
+            maxHeight:"calc(100vh - 120px)",
+            overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
+            {cardList}
+          </div>
+          {/* 右ペイン: 詳細 sticky */}
           <div style={{ flex:1, position:"sticky", top:60,
             maxHeight:"calc(100vh - 70px)",
             overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
@@ -888,13 +897,19 @@ export default function App() {
         position:"sticky", top:0, zIndex:20,
         marginLeft:isMobile?0:50 }}>
         <div style={{ display:"flex", justifyContent:"space-between",
-          alignItems:"center" }}>
-          <div style={{ fontSize:14, fontWeight:800, color:"#e0f0ff" }}>
+          alignItems:"center", gap:8, minHeight:36 }}>
+          {/* 左: タイトル */}
+          <div style={{ fontSize:14, fontWeight:800, color:"#e0f0ff", flexShrink:0 }}>
             ScalpScreener
             <span style={{ fontSize:11, color:"#4a7090", fontWeight:400,
               marginLeft:6 }}>/ {{all:"全銘柄",fav:"お気に入り",
                 index:"リンク",market:"市場予測",sync:"同期"}[activeTab]}</span>
           </div>
+          {/* 中: 指数バー（ヘッダー右側） */}
+          <div style={{ flex:1, overflow:"hidden", margin:"0 8px" }}>
+            <MarketBar />
+          </div>
+          {/* 右: 開場時間 */}
           <MarketHours />
         </div>
 
