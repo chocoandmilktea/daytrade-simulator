@@ -89,7 +89,7 @@ function genSim(ticker) {
            previousClose:closes[closes.length-2], real:false };
 }
 
-// ── MarketHours ──────────────────────────────────────────────────────────────
+// ── MarketHours（修正①: 2列×2行レイアウト） ─────────────────────────────────
 function MarketHours() {
   var [now, setNow] = useState(new Date());
   useEffect(function() {
@@ -101,37 +101,41 @@ function MarketHours() {
   var tm = h*60+m;
   var jpAm = dow>=1&&dow<=5 && tm>=540&&tm<690;
   var jpPm = dow>=1&&dow<=5 && tm>=750&&tm<930;
-  var jpOpen = jpAm || jpPm;
   var mo = jst.getUTCMonth()+1, dy = jst.getUTCDate();
   var isSummer = (mo>3&&mo<11)||(mo===3&&dy>=8)||(mo===11&&dy<=7);
   var usStart = isSummer ? 22*60+30 : 23*60+30;
   var usEnd   = isSummer ? 5*60 : 6*60;
   var usOpen  = dow>=1&&dow<=5 && (tm>=usStart||tm<usEnd);
-  var usLabel = isSummer ? "22:30〜翌5:00" : "23:30〜翌6:00";
-  var season  = isSummer ? "[夏]" : "[冬]";
+  var usLine1 = isSummer ? "22:30〜翌5:00 [夏]" : "23:30〜翌6:00 [冬]";
+  var usLine2 = isSummer ? "23:30〜翌6:00 [冬]" : "22:30〜翌5:00 [夏]";
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:2, alignItems:"flex-end" }}>
-      <div style={{ display:"flex", gap:10 }}>
-        <span style={{ fontSize:10, color:jpOpen?"#22d3a0":"#4a7090",
-          fontWeight:jpOpen?700:400, whiteSpace:"nowrap" }}>
+    <div style={{ display:"flex", gap:16, alignItems:"flex-start" }}>
+      {/* 日本株列 */}
+      <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+        <span style={{ fontSize:10, whiteSpace:"nowrap",
+          color:jpAm?"#22d3a0":"#4a7090", fontWeight:jpAm?700:400 }}>
           🇯🇵 9:00〜11:30
         </span>
-        <span style={{ fontSize:10, color:usOpen?"#22d3a0":"#4a7090",
-          fontWeight:usOpen?700:400, whiteSpace:"nowrap" }}>
-          🇺🇸 {usLabel} {season}
+        <span style={{ fontSize:10, whiteSpace:"nowrap",
+          color:jpPm?"#22d3a0":"#4a7090", fontWeight:jpPm?700:400 }}>
+          🇯🇵 12:30〜15:30
         </span>
       </div>
-      <div style={{ display:"flex", gap:10 }}>
-        <span style={{ fontSize:10, color:jpPm?"#22d3a0":"#4a7090",
-          fontWeight:jpPm?700:400, whiteSpace:"nowrap" }}>
-          🇯🇵 12:30〜15:30
+      {/* 米国株列 */}
+      <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+        <span style={{ fontSize:10, whiteSpace:"nowrap",
+          color:usOpen?"#22d3a0":"#4a7090", fontWeight:usOpen?700:400 }}>
+          🇺🇸 {usLine1}
+        </span>
+        <span style={{ fontSize:10, whiteSpace:"nowrap", color:"#4a7090" }}>
+          🇺🇸 {usLine2}
         </span>
       </div>
     </div>
   );
 }
 
-// ── MarketBar（指数バー・画像1スタイル） ──────────────────────────────────────
+// ── MarketBar（指数バー） ─────────────────────────────────────────────────────
 function MarketBar() {
   var [data, setData] = useState({});
   var INDICES = [
@@ -485,7 +489,7 @@ function FavPanel({ stocks, favs, toggleFav, vix, usdJpy, selectedStock, setSele
   );
 }
 
-// ── IndexPanel（既存流用） ────────────────────────────────────────────────────
+// ── IndexPanel（修正②: iSPEEDリンクを ispeed:// スキームに修正） ─────────────
 function IndexPanel() {
   var LINKS = [
     { label:"eMAXIS Slim 全世界株式（オール・カントリー）",
@@ -518,12 +522,25 @@ function IndexPanel() {
             </a>
           );
         })}
+        {/* iSPEED: ispeed:// スキームで直接アプリ起動 */}
+        <a href="ispeed://"
+          style={{ display:"flex", flexDirection:"column",
+            padding:"12px 14px", margin:"4px 0",
+            background:"#1a0a0a", border:"1px solid #f87171",
+            borderRadius:8, textDecoration:"none", gap:4 }}>
+          <span style={{ fontSize:14, fontWeight:700, color:"#fca5a5" }}>
+            📱 iSPEED（楽天証券）
+          </span>
+          <span style={{ fontSize:11, color:"#7a4040" }}>
+            タップしてiSPEEDアプリを開く
+          </span>
+        </a>
       </div>
     </div>
   );
 }
 
-// ── MarketPanel（既存流用・スキャル向けプロンプトに更新） ─────────────────────
+// ── MarketPanel ───────────────────────────────────────────────────────────────
 function MarketPanel({ stocks, vix }) {
   var [result, setResult]   = useState("");
   var [loading, setLoading] = useState(false);
@@ -684,7 +701,7 @@ function MarketPanel({ stocks, vix }) {
   );
 }
 
-// ── SyncPanel（既存流用） ─────────────────────────────────────────────────────
+// ── SyncPanel ─────────────────────────────────────────────────────────────────
 function SyncPanel({ userId, setFavs, scan }) {
   var [copyStatus, setCopyStatus] = useState(null);
   var [input, setInput]           = useState("");
@@ -933,7 +950,7 @@ export default function App() {
           </div>
           <MarketHours />
         </div>
-        {/* 下段: 指数バー（大きめ） */}
+        {/* 下段: 指数バー */}
         <MarketBar />
 
         {/* モバイルタブ */}
