@@ -35,11 +35,11 @@ function BBGraph({ graphCloses, graphBB, graphMA5, graphMA25, currentPrice, isJP
   var innerH = H - PAD.t - PAD.b;
   var len = graphCloses.length;
 
-  // 当日現在値を最右端に追加（設計書: "当日現在値を最右端に追加"）
-  var allCloses = graphCloses.slice();
-  var allBB = graphBB ? graphBB.slice() : [];
-  var allMA5 = graphMA5 ? graphMA5.slice() : [];
-  var allMA25 = graphMA25 ? graphMA25.slice() : [];
+  // 計算済み配列から表示用に直近2日分だけスライス
+  var allCloses = graphCloses.slice(-2);
+  var allBB = graphBB ? graphBB.slice(-2) : [];
+  var allMA5 = graphMA5 ? graphMA5.slice(-2) : [];
+  var allMA25 = graphMA25 ? graphMA25.slice(-2) : [];
 
   // 価格範囲計算（BB上限/下限も含む）
   var allVals = allCloses.filter(Boolean);
@@ -55,7 +55,7 @@ function BBGraph({ graphCloses, graphBB, graphMA5, graphMA25, currentPrice, isJP
   maxV += range * 0.05;
   range = maxV - minV;
 
-  var totalLen = len + 1; // 現在値の分を+1
+  var totalLen = allCloses.length + 1; // 表示2日分 + 現在値
 
   function toX(i) { return PAD.l + (i / (totalLen - 1)) * innerW; }
   function toY(v) { return PAD.t + innerH - ((v - minV) / range) * innerH; }
@@ -68,7 +68,7 @@ function BBGraph({ graphCloses, graphBB, graphMA5, graphMA25, currentPrice, isJP
   }
 
   // 現在値縦線のX座標
-  var curX = toX(len); // 最右端（len番目）
+  var curX = toX(allCloses.length); // 最右端（表示2日分の次）
   var curY = currentPrice ? toY(currentPrice) : null;
 
   // Y軸ラベル（3本）
@@ -414,7 +414,7 @@ export default function StockDetail({ s, isFav, toggleFav, vix, usdJpy }) {
       {/* BBグラフ（新規追加） */}
       <div>
         <div style={{ fontSize:13, fontWeight:700, color:"#4a90c0", marginBottom:6 }}>
-          📈 BBグラフ（過去60日 + 現在値）
+          📈 BBグラフ（過去2日 + 現在値）
         </div>
         <div style={{ background:"#040c18", borderRadius:8, padding:"8px 4px" }}>
           <BBGraph
