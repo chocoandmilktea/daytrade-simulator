@@ -119,7 +119,7 @@ function MarketHours() {
   );
 }
 
-// ── MarketBar（指数バー・ヘッダー横スクロール版） ──────────────────────────────
+// ── MarketBar（指数バー・大きめ表示） ─────────────────────────────────────────
 function MarketBar() {
   var [data, setData] = useState({});
   var INDICES = [
@@ -149,34 +149,35 @@ function MarketBar() {
     });
   }, []);
   return (
-    <div style={{ display:"flex", gap:6, overflowX:"auto",
-      WebkitOverflowScrolling:"touch", flexShrink:0 }}>
+    <div style={{ display:"flex", gap:4, overflowX:"auto",
+      WebkitOverflowScrolling:"touch", padding:"4px 0" }}>
       {INDICES.map(function(idx) {
         var d = data[idx.key];
+        var isVix = idx.key === "vix";
         if (!d || d.error) return (
           <div key={idx.key} style={{ flexShrink:0, textAlign:"center",
-            padding:"2px 6px", minWidth:44 }}>
-            <div style={{ fontSize:9, color:"#2a6090" }}>{idx.label}</div>
-            <div style={{ fontSize:11, color:"#4a7090" }}>─</div>
+            background:"#071428", border:"1px solid #0f2040",
+            borderRadius:6, padding:"4px 10px", minWidth:60 }}>
+            <div style={{ fontSize:10, color:"#2a6090" }}>{idx.label}</div>
+            <div style={{ fontSize:14, color:"#4a7090" }}>─</div>
           </div>
         );
         var isUp = parseFloat(d.change) >= 0;
-        var isVix = idx.key === "vix";
         var vixAlert = isVix && d.price >= 20;
         var price = d.round ? Math.round(d.price).toLocaleString() : parseFloat(d.price).toFixed(2);
         return (
           <div key={idx.key} style={{ flexShrink:0, textAlign:"center",
-            padding:"2px 6px", minWidth:48,
-            background:vixAlert?"#1f001020":"transparent",
-            borderRadius:4 }}>
-            <div style={{ fontSize:9, color:vixAlert?"#f43f5e":"#4a7090" }}>
+            background:vixAlert?"#1f0010":"#071428",
+            border:"1px solid "+(vixAlert?"#f43f5e40":"#0f2040"),
+            borderRadius:6, padding:"4px 10px", minWidth:60 }}>
+            <div style={{ fontSize:10, color:vixAlert?"#f43f5e":"#4a7090" }}>
               {idx.label}{vixAlert?" ⚠":""}
             </div>
-            <div style={{ fontSize:12, fontWeight:700,
+            <div style={{ fontSize:15, fontWeight:800,
               color:vixAlert?"#f43f5e":"#d8eeff", lineHeight:1.2 }}>
               {d.prefix}{price}
             </div>
-            <div style={{ fontSize:9, color:isUp?"#22d3a0":"#f43f5e" }}>
+            <div style={{ fontSize:11, fontWeight:700, color:isUp?"#22d3a0":"#f43f5e" }}>
               {isUp?"▲":"▼"}{Math.abs(d.change)}%
             </div>
           </div>
@@ -308,17 +309,18 @@ function AllStocksPanel({ stocks, loading, progress, ts, vix, usdJpy,
 
       {/* 2ペインレイアウト（デスクトップ） */}
       {isMobile ? cardList : (
-        <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
-          {/* ⑤ 左ペイン: スクロール時に突き抜けないよう高さ固定 */}
+        <div style={{ display:"flex", gap:12 }}>
+          {/* 左ペイン: 独立スクロール */}
           <div style={{ width:"40%", flexShrink:0,
-            maxHeight:"calc(100vh - 120px)",
+            height:"calc(100vh - 150px)",
             overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
             {cardList}
           </div>
-          {/* 右ペイン: 詳細 sticky */}
-          <div style={{ flex:1, position:"sticky", top:60,
-            maxHeight:"calc(100vh - 70px)",
-            overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
+          {/* 右ペイン: 高さ固定・独立スクロール（突き抜けなし） */}
+          <div style={{ flex:1,
+            height:"calc(100vh - 150px)",
+            overflowY:"auto", WebkitOverflowScrolling:"touch",
+            position:"sticky", top:95 }}>
             <StockDetail
               s={selectedStock}
               isFav={selectedStock && favs.indexOf(selectedStock.ticker) >= 0}
@@ -441,11 +443,16 @@ function FavPanel({ stocks, favs, toggleFav, vix, usdJpy, selectedStock, setSele
       )}
 
       {isMobile ? cardList : (
-        <div style={{ display:"flex", gap:12, alignItems:"flex-start" }}>
-          <div style={{ width:"40%", flexShrink:0 }}>{cardList}</div>
-          <div style={{ flex:1, position:"sticky", top:60,
-            maxHeight:"calc(100vh - 70px)",
+        <div style={{ display:"flex", gap:12 }}>
+          <div style={{ width:"40%", flexShrink:0,
+            height:"calc(100vh - 150px)",
             overflowY:"auto", WebkitOverflowScrolling:"touch" }}>
+            {cardList}
+          </div>
+          <div style={{ flex:1,
+            height:"calc(100vh - 150px)",
+            overflowY:"auto", WebkitOverflowScrolling:"touch",
+            position:"sticky", top:95 }}>
             <StockDetail
               s={selectedStock}
               isFav={selectedStock && favs.indexOf(selectedStock.ticker) >= 0}
@@ -893,25 +900,22 @@ export default function App() {
 
       {/* ヘッダー */}
       <div style={{ background:"linear-gradient(180deg,#071428,#050f20)",
-        borderBottom:"1px solid #0f2040", padding:"8px 12px",
+        borderBottom:"1px solid #0f2040", padding:"8px 12px 6px",
         position:"sticky", top:0, zIndex:20,
         marginLeft:isMobile?0:50 }}>
+        {/* 上段: タイトル + 開場時間 */}
         <div style={{ display:"flex", justifyContent:"space-between",
-          alignItems:"center", gap:8, minHeight:36 }}>
-          {/* 左: タイトル */}
-          <div style={{ fontSize:14, fontWeight:800, color:"#e0f0ff", flexShrink:0 }}>
+          alignItems:"center", marginBottom:6 }}>
+          <div style={{ fontSize:14, fontWeight:800, color:"#e0f0ff" }}>
             ScalpScreener
             <span style={{ fontSize:11, color:"#4a7090", fontWeight:400,
               marginLeft:6 }}>/ {{all:"全銘柄",fav:"お気に入り",
                 index:"リンク",market:"市場予測",sync:"同期"}[activeTab]}</span>
           </div>
-          {/* 中: 指数バー（ヘッダー右側） */}
-          <div style={{ flex:1, overflow:"hidden", margin:"0 8px" }}>
-            <MarketBar />
-          </div>
-          {/* 右: 開場時間 */}
           <MarketHours />
         </div>
+        {/* 下段: 指数バー（大きめ） */}
+        <MarketBar />
 
         {/* モバイルタブ */}
         {isMobile && (
