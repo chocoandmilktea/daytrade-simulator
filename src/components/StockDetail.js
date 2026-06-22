@@ -94,16 +94,18 @@ function BBGraph({ graphCloses, graphBB, graphMA5, graphMA25, currentPrice, isJP
         );
       })}
 
-      {/* BB上限・下限（白） */}
+      {/* BB上限・下限（白・点線） */}
       {allBB.length > 0 && (
         <>
           <polyline
             points={pts(allBB, function(b){ return b ? b.upper : null; })}
-            fill="none" stroke="#ffffff" strokeWidth={1} opacity={0.5}
+            fill="none" stroke="#ffffff" strokeWidth={0.8} opacity={0.4}
+            strokeDasharray="4,3"
             strokeLinejoin="round" strokeLinecap="round" />
           <polyline
             points={pts(allBB, function(b){ return b ? b.lower : null; })}
-            fill="none" stroke="#ffffff" strokeWidth={1} opacity={0.5}
+            fill="none" stroke="#ffffff" strokeWidth={0.8} opacity={0.4}
+            strokeDasharray="4,3"
             strokeLinejoin="round" strokeLinecap="round" />
           {/* BB帯塗りつぶし */}
           <polygon
@@ -111,28 +113,28 @@ function BBGraph({ graphCloses, graphBB, graphMA5, graphMA25, currentPrice, isJP
               allBB.map(function(b, i){ return b ? toX(i)+","+toY(b.upper) : ""; }).filter(Boolean).join(" ") + " " +
               allBB.slice().reverse().map(function(b, i, arr){ return b ? toX(arr.length-1-i)+","+toY(b.lower) : ""; }).filter(Boolean).join(" ")
             }
-            fill="#ffffff" opacity={0.04} />
+            fill="#ffffff" opacity={0.03} />
           {/* BB中央線（黄緑） */}
           <polyline
             points={pts(allBB, function(b){ return b ? b.mid : null; })}
-            fill="none" stroke="#86efac" strokeWidth={1.5}
+            fill="none" stroke="#86efac" strokeWidth={0.8}
             strokeLinejoin="round" strokeLinecap="round" />
         </>
       )}
 
-      {/* MA25（紫） */}
+      {/* MA25（紫・細く） */}
       {allMA25.length > 0 && (
         <polyline
           points={pts(allMA25, function(v){ return v; })}
-          fill="none" stroke="#a78bfa" strokeWidth={1.5}
+          fill="none" stroke="#a78bfa" strokeWidth={0.8}
           strokeLinejoin="round" strokeLinecap="round" />
       )}
 
-      {/* MA5（黄） */}
+      {/* MA5（黄・細く） */}
       {allMA5.length > 0 && (
         <polyline
           points={pts(allMA5, function(v){ return v; })}
-          fill="none" stroke="#fbbf24" strokeWidth={1.5}
+          fill="none" stroke="#fbbf24" strokeWidth={0.8}
           strokeLinejoin="round" strokeLinecap="round" />
       )}
 
@@ -142,26 +144,12 @@ function BBGraph({ graphCloses, graphBB, graphMA5, graphMA25, currentPrice, isJP
         fill="none" stroke="#4a7090" strokeWidth={1} opacity={0.6}
         strokeLinejoin="round" strokeLinecap="round" />
 
-      {/* 現在値縦線（シアン） */}
-      {curY !== null && (
-        <>
-          <line x1={curX} y1={PAD.t} x2={curX} y2={H-PAD.b}
-            stroke="#22d3e8" strokeWidth={1.5} strokeDasharray="4,3" opacity={0.8} />
-          <circle cx={curX} cy={curY} r={3} fill="#22d3e8" />
-          <text x={curX+4} y={curY-4} fill="#22d3e8"
-            style={{ fontSize:8, fontFamily:"monospace", fontWeight:700 }}>
-            {fmtPrice(currentPrice)}
-          </text>
-        </>
-      )}
-
-      {/* 凡例 */}
+      {/* 凡例（現在値なし） */}
       {[
         ["BB上下限", "#ffffff"],
-        ["BB中央", "#86efac"],
-        ["MA5", "#fbbf24"],
-        ["MA25", "#a78bfa"],
-        ["現在値", "#22d3e8"],
+        ["BB中央",   "#86efac"],
+        ["MA5",      "#fbbf24"],
+        ["MA25",     "#a78bfa"],
       ].map(function(item, i) {
         return (
           <g key={i} transform={"translate("+(PAD.l + i*76)+","+(H-8)+")"}>
@@ -479,20 +467,25 @@ export default function StockDetail({ s, isFav, toggleFav, vix, usdJpy }) {
 
       {/* 外部リンク */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
-        <a href={s.yahooUrl} target="_blank" rel="noreferrer"
+        <a href={
+            s.market === "JP"
+              ? "https://finance.yahoo.co.jp/quote/"+s.ticker.replace(".T","") + ".T"
+              : "https://finance.yahoo.co.jp/quote/"+s.ticker
+          }
+          target="_blank" rel="noreferrer"
           style={{ background:"#071428", border:"1px solid #4f46e5", borderRadius:8,
             color:"#a5b4fc", padding:"10px", fontSize:12, fontWeight:700,
             fontFamily:"monospace", textDecoration:"none", textAlign:"center",
             display:"block" }}>
-          🔗 Y!
+          🔗 Yahoo!
         </a>
-        <a href={"https://www.tradingview.com/chart/?symbol="+s.tvSymbol}
+        <a href="https://apps.apple.com/jp/app/ispeed/id352454697"
           target="_blank" rel="noreferrer"
           style={{ background:"#071428", border:"1px solid #22d3a0", borderRadius:8,
             color:"#22d3a0", padding:"10px", fontSize:12, fontWeight:700,
             fontFamily:"monospace", textDecoration:"none", textAlign:"center",
             display:"block" }}>
-          📊 TV
+          📱 iSpeed
         </a>
       </div>
     </div>
