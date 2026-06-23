@@ -966,7 +966,7 @@ function StockDetailPanel(p){
       <div>
         <div style={{fontSize:14,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
         <div style={{display:"flex",flexDirection:"column",gap:4}}>
-          {s.signals.map(function(sig,i){
+          {s.signals.filter(function(sig){return sig.label==="BB"||sig.label==="OBV"||sig.label==="出来高"||sig.label.startsWith("RSI");}).map(function(sig,i){
             return(
               <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
                 <span style={{fontSize:14,color:"#4a7090"}}>{sig.label}</span>
