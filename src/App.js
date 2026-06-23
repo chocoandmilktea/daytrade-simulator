@@ -167,11 +167,11 @@ function analyzeStock(stock,pd){
   if(volumes.length>0){
     var dayRange=highs[n]-lows[n]||1;
     var closePosition=(price-lows[n])/dayRange;
-    if(closePosition>=0.8){obScore+=8;signals.push({label:"板代替",val:"買い優勢",state:1});}
-    else if(closePosition>=0.6){obScore+=4;signals.push({label:"板代替",val:"やや買い優勢",state:1});}
-    else if(closePosition<=0.2){obScore-=8;signals.push({label:"板代替",val:"売り優勢",state:-1});}
-    else if(closePosition<=0.4){obScore-=4;signals.push({label:"板代替",val:"やや売り優勢",state:-1});}
-    else{signals.push({label:"板代替",val:"中立",state:0});}
+    if(closePosition>=0.8){obScore+=8;signals.push({label:"OBV",val:"買い優勢",state:1});}
+    else if(closePosition>=0.6){obScore+=4;signals.push({label:"OBV",val:"やや買い優勢",state:1});}
+    else if(closePosition<=0.2){obScore-=8;signals.push({label:"OBV",val:"売り優勢",state:-1});}
+    else if(closePosition<=0.4){obScore-=4;signals.push({label:"OBV",val:"やや売り優勢",state:-1});}
+    else{signals.push({label:"OBV",val:"中立",state:0});}
     var recentVols=volumes.slice(-21,-1);
     if(recentVols.length>0){
       var avgVol=recentVols.reduce(function(a,b){return a+b;},0)/recentVols.length;
@@ -519,7 +519,7 @@ function StockCard(p){
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var expandedS=useState(false);var expanded=expandedS[0],setExpanded=expandedS[1];
   var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
-  var showSimS=useState(true);var showSim=showSimS[0],setShowSim=showSimS[1];
+  var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   var simTargetS=useState(3);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
@@ -613,71 +613,21 @@ function StockCard(p){
         else{setExpanded(function(v){return !v;});}
       }}>
       {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);}}/>,document.body)}
-      <div style={{display:"flex",gap:6,alignItems:"center"}}>
-        <ScoreRing score={s.score}/>
+      <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{flex:1,minWidth:0}}>
-          <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap"}}>
-            <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
-            <span style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>{s.ticker.replace(".T","")}</span>
-            {s.tradeLabel&&<span style={bStyle("#0a0a1a","1px solid "+s.tradeColor,s.tradeColor)}>{s.tradeLabel}</span>}
-            {!s.real&&<span style={bStyle("#1a1200","#7c6010","#fbbf24")}>SIM</span>}
-          </div>
+          <div style={{fontSize:14,fontWeight:800,color:"#d8eeff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.ticker.replace(".T","")}</div>
           <div style={{fontSize:11,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.name}</div>
         </div>
         <button onClick={function(e){stopProp(e);toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060",flexShrink:0}}>{isFav(s.ticker)?"★":"☆"}</button>
       </div>
 
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-        <div>
-          <span style={{fontSize:14,color:"#d8eeff",fontWeight:800}}>{s.price}</span>
-          {s.market==="US"&&p.usdJpy&&(
-            <div style={{fontSize:11,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>
-          )}
-        </div>
-      </div>
-
       <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"space-between"}}>
+        <span style={{fontSize:14,color:"#d8eeff",fontWeight:800}}>{s.price}</span>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
           <span style={{fontSize:14,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
-          {cross&&cross.type!=="NONE"&&<span style={bStyle(cross.bg,cross.border,cross.color)}>{cross.label}</span>}
+          <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
         </div>
-        <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
       </div>
-
-      {s.overlapLabels&&s.overlapLabels.length>0&&(
-        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-          {s.overlapLabels.map(function(lb,i){return(<span key={i} style={{background:"#1a0a3a",border:"1px solid #a78bfa",color:"#a78bfa",fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:4}}>{lb}</span>);})}
-        </div>
-      )}
-      {pos52!=null&&(
-        <div style={{padding:"0 2px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:7,color:"#2a5070",marginBottom:2}}>
-            <span>52W安値</span>
-            <span style={{color:pos52Color,fontWeight:700}}>{pos52<=25?"安値圏":pos52<=75?"中間":"高値圏"}</span>
-            <span>52W高値</span>
-          </div>
-          <div style={{background:"#0a1828",borderRadius:3,height:4,position:"relative"}}>
-            <div style={{background:"linear-gradient(90deg,#22d3a0,#fbbf24,#f43f5e)",height:4,borderRadius:3,width:"100%",opacity:0.25}}/>
-            <div style={{position:"absolute",top:-2,left:"calc("+pos52+"% - 4px)",width:8,height:8,borderRadius:"50%",background:pos52Color,border:"1px solid #071428"}}/>
-          </div>
-        </div>
-      )}
-      {s.high52&&(
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:4}}>
-          <div style={{background:"#071428",borderRadius:5,padding:"4px 6px"}}>
-            <div style={{fontSize:8,color:"#2a6090"}}>高値比</div>
-            <div style={{fontSize:13,fontWeight:700,color:fromHighColor}}>{s.fromHigh.toFixed(1)}%</div>
-          </div>
-          <div style={{background:"#071428",borderRadius:5,padding:"4px 6px"}}>
-            <div style={{fontSize:8,color:"#2a6090"}}>安値比</div>
-            <div style={{fontSize:13,fontWeight:700,color:fromLowColor}}>+{s.fromLow.toFixed(1)}%</div>
-          </div>
-          <div style={{background:"#071428",borderRadius:5,padding:"4px 6px"}}>
-            <div style={{fontSize:8,color:"#2a6090"}}>VIX</div>
-            <div style={{fontSize:13,fontWeight:700,color:p.vix&&parseFloat(p.vix)>=20?"#f43f5e":"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div>
-          </div>
-        </div>
-      )}
 
       {isMobile&&<div style={{textAlign:"center",fontSize:11,color:"#2a4060"}}>{expanded?"▲ 閉じる":"▼ 詳細を見る"}</div>}
 
@@ -695,7 +645,7 @@ function StockCard(p){
           <div>
             <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
             <div style={{display:"flex",flexDirection:"column",gap:4}}>
-              {s.signals.map(function(sig,i){
+              {s.signals.filter(function(sig){return sig.label==="BB"||sig.label==="OBV"||sig.label==="出来高"||sig.label.startsWith("RSI");}).map(function(sig,i){
                 return(
                   <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
                     <span style={{fontSize:12,color:"#4a7090"}}>{sig.label}</span>
@@ -773,7 +723,12 @@ function StockCard(p){
             </div>
           )}
 
-          {showSim&&(function(){
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+            <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
+            <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
+          </div>
+
+          {showSim&&createPortal((function(){
             var bp=parseFloat(simBuy)||0;
             var sh=parseFloat(simShares)||0;
             var isJP=s.market==="JP";
@@ -793,56 +748,55 @@ function StockCard(p){
               {label:"目標価格",pct:simTarget,color:"#fbbf24"},
             ];
             return(
-              <div style={{background:"#040c18",border:"1px solid #a78bfa30",borderRadius:10,padding:"12px"}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",marginBottom:8}}>💹 損益シミュレーション</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-                  <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>買値</div><input style={inpSim} type="number" value={simBuy} onChange={function(e){setSimBuy(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseFloat(simBuy);if(!isNaN(v)&&v>0){setSimBuy(String(v));}else{setSimBuy("");}e.target.blur();}}}/></div>
-                  <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>株数</div><input style={inpSim} type="number" value={simShares} onChange={function(e){setSimShares(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseInt(simShares);if(!isNaN(v)&&v>0){setSimShares(String(v));}else{setSimShares("");}e.target.blur();}}}/></div>
-                </div>
-                {bp>0&&sh>0&&(
-                  <div>
-                    <div style={{background:"#071428",borderRadius:6,padding:"6px 10px",fontSize:12,color:"#4a7090",marginBottom:8}}>
-                      投資総額: <span style={{color:"#d8eeff",fontWeight:700}}>{fmtP(bp*sh)}</span>
-                      {(!isJP&&p.usdJpy)&&<span style={{color:"#4a7090",fontSize:11}}>  (¥{Math.round(bp*sh*p.usdJpy).toLocaleString()})</span>}
-                    </div>
-                    <div style={{marginBottom:6}}>
-                      <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#4a7090",marginBottom:3}}>
-                        <span style={{color:"#fbbf24"}}>{fmtP(bp*(1+simTarget/100))}</span>
-                      </div>
-                      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
-                        <span style={{fontSize:11,color:"#4a7090",flexShrink:0}}>目標</span>
-                        <input type="number" value={simTargetInput} onChange={function(e){setSimTargetInput(e.target.value);}} onBlur={function(){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}e.target.blur();}}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
-                        <span style={{fontSize:11,color:"#fbbf24"}}>%</span>
-                        <input type="range" min={1} max={200} value={simTarget} onChange={function(e){var v=parseInt(e.target.value);setSimTarget(v);setSimTargetInput(String(v));}} style={{flex:1,accentColor:"#fbbf24"}}/>
-                      </div>
-                    </div>
-                    <div style={{marginBottom:8}}>
-                      <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#4a7090",marginBottom:3}}>
-                        <span style={{color:"#f43f5e"}}>{fmtP(bp*(1+simStop/100))}</span>
-                      </div>
-                      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
-                        <span style={{fontSize:11,color:"#4a7090",flexShrink:0}}>損切り</span>
-                        <input type="number" value={simStopInput} onChange={function(e){setSimStopInput(e.target.value);}} onBlur={function(){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}e.target.blur();}}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
-                        <span style={{fontSize:11,color:"#f43f5e"}}>%</span>
-                        <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){var v=parseInt(e.target.value);setSimStop(v);setSimStopInput(String(v));}} style={{flex:1,accentColor:"#f43f5e"}}/>
-                      </div>
-                    </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                      {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){
-                        var pnl=(bp*(1+sc.pct/100)-bp)*sh;
-                        return(
-                          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"5px 8px"}}>
-                            <div><span style={{fontSize:12,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:11,color:"#4a7090",marginLeft:4}}>{sc.pct>=0?"+":""}{sc.pct}%</span></div>
-                            <span style={{fontSize:13,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
+              <div onClick={function(e){e.stopPropagation();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+                <div style={{background:"#040c18",border:"1px solid #a78bfa50",borderRadius:"16px 16px 0 0",padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"#a78bfa"}}>💹 損益シミュレーション</div>
+                    <button onClick={function(e){e.stopPropagation();setShowSim(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
                   </div>
-                )}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                    <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>買値</div><input style={inpSim} type="number" value={simBuy} onChange={function(e){setSimBuy(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseFloat(simBuy);if(!isNaN(v)&&v>0){setSimBuy(String(v));}else{setSimBuy("");}e.target.blur();}}}/></div>
+                    <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>株数</div><input style={inpSim} type="number" value={simShares} onChange={function(e){setSimShares(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseInt(simShares);if(!isNaN(v)&&v>0){setSimShares(String(v));}else{setSimShares("");}e.target.blur();}}}/></div>
+                  </div>
+                  {bp>0&&sh>0&&(
+                    <div>
+                      <div style={{background:"#071428",borderRadius:6,padding:"6px 10px",fontSize:12,color:"#4a7090",marginBottom:8}}>
+                        投資総額: <span style={{color:"#d8eeff",fontWeight:700}}>{fmtP(bp*sh)}</span>
+                        {(!isJP&&p.usdJpy)&&<span style={{color:"#4a7090",fontSize:11}}>  (¥{Math.round(bp*sh*p.usdJpy).toLocaleString()})</span>}
+                      </div>
+                      <div style={{marginBottom:6}}>
+                        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                          <span style={{fontSize:11,color:"#4a7090",flexShrink:0}}>目標</span>
+                          <input type="number" value={simTargetInput} onChange={function(e){setSimTargetInput(e.target.value);}} onBlur={function(){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}e.target.blur();}}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                          <span style={{fontSize:11,color:"#fbbf24"}}>%</span>
+                          <input type="range" min={1} max={200} value={simTarget} onChange={function(e){var v=parseInt(e.target.value);setSimTarget(v);setSimTargetInput(String(v));}} style={{flex:1,accentColor:"#fbbf24"}}/>
+                        </div>
+                      </div>
+                      <div style={{marginBottom:8}}>
+                        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                          <span style={{fontSize:11,color:"#4a7090",flexShrink:0}}>損切り</span>
+                          <input type="number" value={simStopInput} onChange={function(e){setSimStopInput(e.target.value);}} onBlur={function(){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}e.target.blur();}}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                          <span style={{fontSize:11,color:"#f43f5e"}}>%</span>
+                          <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){var v=parseInt(e.target.value);setSimStop(v);setSimStopInput(String(v));}} style={{flex:1,accentColor:"#f43f5e"}}/>
+                        </div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){
+                          var pnl=(bp*(1+sc.pct/100)-bp)*sh;
+                          return(
+                            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"5px 8px"}}>
+                              <div><span style={{fontSize:12,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:11,color:"#4a7090",marginLeft:4}}>{sc.pct>=0?"+":""}{sc.pct}%</span></div>
+                              <span style={{fontSize:13,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             );
-          })()}
+          })(),document.body)}
 
           {showAdd&&(
             <div style={{background:"#040c18",border:"1px solid #22d3a030",borderRadius:8,padding:"12px"}}>
@@ -858,10 +812,6 @@ function StockCard(p){
             </div>
           )}
 
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-            <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
-            <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
-          </div>
         </div>
       )}
     </div>
@@ -890,7 +840,7 @@ function StockDetailPanel(p){
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
 
-  var showSimS=useState(true);var showSim=showSimS[0],setShowSim=showSimS[1];
+  var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   useEffect(function(){var isJP=s.market==="JP";setSimBuy(s.rawPrice?(isJP?String(Math.round(s.rawPrice)):s.rawPrice.toFixed(2)):"");},[s.ticker]);
@@ -1223,44 +1173,19 @@ function CrossSection(sp){
 function AllStocksPanel(p){
   var stocks=p.stocks,loading=p.loading,toggleFav=p.toggleFav,favs=p.favs,vix=p.vix,onScan=p.onScan,ts=p.ts,progress=p.progress;
 
-  var viewModeS=useState("all");var viewMode=viewModeS[0],setViewMode=viewModeS[1];
   var filterMktS=useState("ALL");var filterMkt=filterMktS[0],setFilterMkt=filterMktS[1];
   var sortByS=useState("score");var sortBy=sortByS[0],setSortBy=sortByS[1];
-  var filterTradeS=useState("ALL");var filterTrade=filterTradeS[0],setFilterTrade=filterTradeS[1];
-  var showSortHelpS=useState(false);var showSortHelp=showSortHelpS[0],setShowSortHelp=showSortHelpS[1];
 
   function isFavRef(t){return favs.indexOf(t)>=0;}
 
   var displayStocks=stocks.filter(function(s){
     if(filterMkt!=="ALL"&&s.market!==filterMkt) return false;
-    if(filterTrade==="short"&&s.tradeType!=="short") return false;
-    if(filterTrade==="mid"&&s.tradeType!=="mid") return false;
-    if(filterTrade==="stable"&&s.tradeType!=="stable") return false;
     return true;
   }).slice().sort(function(a,b){
     if(sortBy==="score") return b.score-a.score;
     if(sortBy==="change") return parseFloat(b.change)-parseFloat(a.change);
-    if(sortBy==="apt") return (b.aptScore||0)-(a.aptScore||0);
     return 0;
   });
-
-  var filteredForCross=stocks.filter(function(s){
-    if(filterMkt!=="ALL"&&s.market!==filterMkt) return false;
-    if(filterTrade==="short"&&s.tradeType!=="short") return false;
-    if(filterTrade==="mid"&&s.tradeType!=="mid") return false;
-    if(filterTrade==="stable"&&s.tradeType!=="stable") return false;
-    return true;
-  });
-  var gcNow=[],dcNow=[],gcNear=[],dcNear=[],gcWatch=[];
-  filteredForCross.forEach(function(s){
-    var c=classifyStockFn(s);if(!c||c.type==="NONE")return;
-    if(c.type==="GC_NOW")gcNow.push({s:s,cross:c});
-    else if(c.type==="DC_NOW")dcNow.push({s:s,cross:c});
-    else if(c.type==="GC_NEAR")gcNear.push({s:s,cross:c});
-    else if(c.type==="DC_NEAR")dcNear.push({s:s,cross:c});
-    else if(c.type==="GC_WATCH")gcWatch.push({s:s,cross:c});
-  });
-  var hasAny=gcNow.length+dcNow.length+gcNear.length+dcNear.length+gcWatch.length>0;
 
   function fBtn(val,label,activeColor){
     var active=filterMkt===val;
@@ -1270,14 +1195,7 @@ function AllStocksPanel(p){
     var active=sortBy===val;
     return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
   }
-  function tBtn(val,label,color){
-    var active=filterTrade===val;
-    return(<button onClick={function(){setFilterTrade(val);}} style={{background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
-  function mBtn(val,label){
-    var active=viewMode===val;
-    return(<button onClick={function(){setViewMode(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
+
 
   if(loading){
     return(
@@ -1306,69 +1224,34 @@ function AllStocksPanel(p){
         <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
       </div>
 
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:8,display:"flex",gap:6,alignItems:"center"}}>
-        <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>モード:</span>
-        {mBtn("all","📋 全銘柄")}
-        {mBtn("cross","✨ クロス予測")}
-      </div>
-
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:8,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
         <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
         {fBtn("ALL","全て","#60a5fa")}
         {fBtn("US","US","#3b82f6")}
         {fBtn("JP","JP","#f87171")}
-        <span style={{fontSize:11,color:"#2a6090",marginLeft:8,marginRight:2}}>タイプ:</span>
-        {tBtn("ALL","全て","#60a5fa")}
-        {tBtn("short","⚡スキャル","#f43f5e")}
-        {tBtn("mid","📈デイトレ","#fbbf24")}
-        {tBtn("stable","🌊スイング","#22d3a0")}
       </div>
 
-      {viewMode==="all"&&(
-        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",position:"relative"}}>
-          <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>並替:</span>
-          {sBtn("score","スコア順")}
-          {sBtn("change","上昇率順")}
-          {sBtn("apt","適性順")}
-          <button onClick={function(){setShowSortHelp(!showSortHelp);}} style={{background:showSortHelp?"#0ea5e920":"transparent",border:"1px solid "+(showSortHelp?"#0ea5e9":"#1e3050"),borderRadius:"50%",color:showSortHelp?"#0ea5e9":"#4a6080",width:18,height:18,fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:0,fontFamily:"monospace",flexShrink:0}}>?</button>
-          <span style={{fontSize:11,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
-          {showSortHelp&&(<div onClick={function(){setShowSortHelp(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:999}}/>)}
-          {showSortHelp&&(
-            <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,background:"#071e38",border:"1px solid #1e4060",borderRadius:10,padding:"12px 14px",zIndex:1000,boxShadow:"0 8px 24px #000a"}}>
-              <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:10}}>並び替えの説明</div>
-              {[
-                {label:"スコア順",color:"#0ea5e9",desc:"MACD・RSI・ボリンジャーバンド・ストキャスティクスなど複数指標を総合した0〜100点のスコアで降順に並べます。買いシグナルが多いほど高スコアになります。"},
-                {label:"上昇率順",color:"#22d3a0",desc:"前日比の上昇率が高い順に並べます。当日モメンタムの強い銘柄が上位に来ます。下落銘柄は下位に並びます。"},
-                {label:"適性順",color:"#fbbf24",desc:"スキャル・デイトレ・スイングのトレードタイプを年間値幅・平均日次変動率・当日騰落率から判定し、選択中のタイプフィルターに最適な銘柄を優先表示します。"}
-              ].map(function(item){
-                return(
-                  <div key={item.label} style={{marginBottom:10,paddingBottom:10,borderBottom:"1px solid #0f2040"}}>
-                    <div style={{fontSize:12,fontWeight:700,color:item.color,marginBottom:4}}>{item.label}</div>
-                    <div style={{fontSize:11,color:"#8ab0cc",lineHeight:1.6}}>{item.desc}</div>
-                  </div>
-                );
-              })}
-              <button onClick={function(){setShowSortHelp(false);}} style={{marginTop:2,background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#4a6080",padding:"3px 12px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>閉じる</button>
-            </div>
-          )}
-        </div>
-      )}
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+        <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>並替:</span>
+        {sBtn("score","スコア順")}
+        {sBtn("change","上昇率順")}
+        <span style={{fontSize:11,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
+      </div>
 
-      {viewMode==="all"&&(function(){
+      {(function(){
         var isMobile=window.innerWidth<768;
-        var cardGrid2=(
+        var cardGrid=(
           <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
             {displayStocks.map(function(s){
-              var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-              return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock}/>;
+              return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock}/>;
             })}
           </div>
         );
         return(
           <>
-            {isMobile?cardGrid2:(
+            {isMobile?cardGrid:(
               <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-                <div style={{width:"60%",flexShrink:0}}>{cardGrid2}</div>
+                <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
                 <div style={{flex:1,position:"sticky",top:60,maxHeight:"calc(100vh - 70px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
                   <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
                 </div>
@@ -1380,17 +1263,6 @@ function AllStocksPanel(p){
           </>
         );
       })()}
-
-      {viewMode==="cross"&&(
-        <>
-          {!hasAny&&<div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>現在クロス条件に該当する銘柄がありません</div>}
-          <CrossSection title="⚡ GC接近中" items={gcNear} color="#fbbf24" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy} selectedStock={p.selectedStock} setSelectedStock={p.setSelectedStock}/>
-          <CrossSection title="🔥 GC発生中" items={gcNow} color="#22d3a0" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy} selectedStock={p.selectedStock} setSelectedStock={p.setSelectedStock}/>
-          <CrossSection title="👀 GC監視中" items={gcWatch} color="#60a5fa" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy} selectedStock={p.selectedStock} setSelectedStock={p.setSelectedStock}/>
-          <CrossSection title="⚠ DC接近中" items={dcNear} color="#fb923c" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy} selectedStock={p.selectedStock} setSelectedStock={p.setSelectedStock}/>
-          <CrossSection title="💀 DC発生中" items={dcNow} color="#f43f5e" toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={p.usdJpy} selectedStock={p.selectedStock} setSelectedStock={p.setSelectedStock}/>
-        </>
-      )}
     </div>
   );
 }
@@ -2097,13 +1969,13 @@ function HelpModal(p){
   var onClose=p.onClose;
   var SECTIONS=[
     {title:"📊 データ取得",items:["米国株：Yahoo Finance・15分遅延","日本株：Yahoo Finance・15分遅延","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
-    {title:"✨ クロス予測",items:["MACDヒストグラムとスコアで自動分類","GC発生：MACDがゴールデンクロス直後","GC接近：強気ゾーン＋スコア60以上","GC監視：強気ゾーン＋スコア50以上","DC発生・DC接近：逆のパターン"]},
-    {title:"📈 スコア計算",items:["トレンド（MA20・MA50）：最大20点","MACD：最大30点（GC発生で30点）","RSI：最大25点（売られすぎで25点）","ボリンジャーバンド：最大20点","ストキャスティクス：最大15点"]},
-    {title:"📉 スパークライン",items:["直近30本分（約1.5ヶ月）を表示","黄色ライン：MA5","青紫ライン：MA25","緑/赤ライン（半透明）：価格"]},
     {title:"🔗 デバイス同期",items:["お気に入り登録時にサーバーへ自動保存","起動時にサーバーからデータを自動取得","Pushoverでデバイスに同期IDを通知","同期タブでIDを入力して別デバイスと同期"]},
-    {title:"💼 ポートフォリオ",items:["損切りライン到達で枠が赤く変化","目標価格到達で枠が緑に変化","5分ごとに自動で価格更新"]},
-    {title:"📖 指標の見方",items:["PER（株価収益率）：株価が1株利益の何倍か → 業種平均より低ければ割安で買い候補","PBR（株価純資産倍率）：株価が純資産の何倍か → 1倍割れは理論上割安で買い候補","RSI（相対力指数）：0〜100で買われすぎ・売られすぎを表示 → 30以下で売られすぎ・反発狙いの買い候補","BB（ボリンジャーバンド）：移動平均線を中心に上下2本のバンドを表示 → 下限バンドに触れると売られすぎのサインで反発狙いの買い候補、上限バンドに触れると買われすぎで警戒","Stoch（ストキャスティクス）：0〜100で直近の高値・安値に対する現在値の位置を表示 → 20以下で売られすぎ・反発狙いの買い候補、80以上で買われすぎで警戒","MACD：トレンド転換を示す指標 → ゴールデンクロス発生時が買いシグナル","VIX（恐怖指数）：市場の不安度を示す指数 → 30〜40超の急騰後に低下し始めたら相場回復の買い候補"]},
-    {title:"⚡ トレードタイプの見方",items:["⚡ スキャル（スキャルピング）：数秒〜数分で決済。細かい値動きで何度も売買する短期手法","📈 デイトレ（デイトレード）：当日中に決済。翌日に持ち越さないのが基本ルール","🌊 スイング（スイングトレード）：数日〜2週間保有。トレンドに乗って利益を狙う中期手法","判定基準：年間値幅・直近の日次変動率・当日騰落率をもとに自動分類"]},
+    {title:"📖 指標の見方（BB・OBV・出来高・RSI）",items:[
+      "【メイン判断】BB（ボリンジャーバンド）：バンドの収縮＝エネルギー蓄積→ブレイクアウト狙いの買い準備。バンドの拡大＝トレンド発生中。下限タッチで反発買い候補、上限タッチで過熱感・利確検討",
+      "【方向確認】OBV（板代替）：終値の位置で買い・売り優勢を判定。高値引けに近いほど買い圧力が強い。BB判断と方向が一致しているか確認する",
+      "【勢い確認】出来高：平均比2倍以上の急増＋高値引けなら買いシグナル強化。出来高増＋安値引けなら売り圧力増大で警戒",
+      "【確認用】RSI（相対力指数）：30以下で売られすぎ・反発狙いの補助確認。70以上で買われすぎ・過熱感の補助確認。BBのシグナルと合わせて判断する"
+    ]},
     {title:"📉 下値サポート目安の見方",items:["S1（20日安値）：直近20日間の最安値。短期の下値サポートライン。ここを割ると次のS2が目安","S2（60日安値）：直近60日間の最安値。中期の強いサポートライン。S1を割り込んだ場合の次の目安","ATR×1.5下限：14日間の平均値幅（ATR）×1.5を現在値から引いた価格。統計的な下値の限界目安","活用法：S1割れで警戒、S2割れで損切り検討、ATR下限は最悪ケースの想定として使用"]},
   ];
   return(
@@ -2263,9 +2135,9 @@ export default function App(){
       .finally(function(){scan();});
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
-  var TABS=[["all","📋"],["fav","⭐"],["bottom","🌱"],["portfolio","💼"],["index","🌍"],["market","📡"],["news","📰"],["trend","🔥"],["sync","🔗"]];
-  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","bottom":"底値狩り","portfolio":"ポートフォリオ","index":"リンク","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"デバイス同期"};
-  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","bottom":"底値狩り","portfolio":"PF","index":"指数","market":"市場予測","news":"ニュース","trend":"トレンド","sync":"同期"};
+  var TABS=[["all","📋"],["fav","⭐"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"]];
+  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期"};
+  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","index":"リンク","market":"市場予測","news":"ニュース","sync":"同期"};
   var isMobile=window.innerWidth<768;
   return(
     <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0"}}>
@@ -2312,11 +2184,8 @@ export default function App(){
         <div style={{marginLeft:isMobile?0:50,padding:"10px 10px 120px"}}>
           {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock}/>}
           {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock}/>}
-          {activeTab==="bottom"&&<BottomFishPanel stocks={stocks} toggleFav={toggleFav} favs={favs}/>}
-          {activeTab==="portfolio"&&<PortfolioPanel stocks={stocks}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="news"&&<NewsPanel/>}
-          {activeTab==="trend"&&<TrendPanel/>}
           {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
         </div>
       </div>
