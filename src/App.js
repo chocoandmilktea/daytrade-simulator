@@ -1234,57 +1234,53 @@ function AllStocksPanel(p){
     );
   }
 
+  var isMobile=window.innerWidth<768;
+  var stickyTop=isMobile?105:50;
+  var cardGrid=(
+    <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
+      {displayStocks.map(function(s){
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock}/>;
+      })}
+    </div>
+  );
   return(
-    <div>
-      <MarketBar/>
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:8,display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
-        <div style={{fontSize:12,color:"#4a7090"}}>
-          <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
-          <span> / {stocks.length} 銘柄 リアルデータ</span>
-        </div>
-        {ts&&<span style={{fontSize:11,color:"#2a6090"}}>更新: {ts}</span>}
-        <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
-      </div>
-
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:8,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-        <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
-        {fBtn("ALL","全て","#60a5fa")}
-        {fBtn("US","US","#3b82f6")}
-        {fBtn("JP","JP","#f87171")}
-      </div>
-
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:14,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-        <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>並替:</span>
-        {sBtn("score","スコア順")}
-        {sBtn("change","上昇率順")}
-        <span style={{fontSize:11,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
-      </div>
-
-      {(function(){
-        var isMobile=window.innerWidth<768;
-        var cardGrid=(
-          <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
-            {displayStocks.map(function(s){
-              return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock}/>;
-            })}
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(isMobile?105:50)+"px)"}}>
+      <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4}}>
+        <MarketBar/>
+        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:8,display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
+          <div style={{fontSize:12,color:"#4a7090"}}>
+            <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
+            <span> / {stocks.length} 銘柄 リアルデータ</span>
           </div>
-        );
-        return(
-          <>
-            {isMobile?cardGrid:(
-              <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-                <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
-                <div style={{flex:1,position:"sticky",top:60,maxHeight:"calc(100vh - 70px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-                  <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
-                </div>
-              </div>
-            )}
-            {displayStocks.length===0&&(
-              <div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>該当する銘柄がありません</div>
-            )}
-          </>
-        );
-      })()}
+          {ts&&<span style={{fontSize:11,color:"#2a6090"}}>更新: {ts}</span>}
+          <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
+        </div>
+        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:8,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
+          {fBtn("ALL","全て","#60a5fa")}
+          {fBtn("US","US","#3b82f6")}
+          {fBtn("JP","JP","#f87171")}
+        </div>
+        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:4,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>並替:</span>
+          {sBtn("score","スコア順")}
+          {sBtn("change","上昇率順")}
+          <span style={{fontSize:11,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
+        </div>
+      </div>
+      <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8}}>
+        {isMobile?cardGrid:(
+          <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+            <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
+            <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
+            </div>
+          </div>
+        )}
+        {displayStocks.length===0&&(
+          <div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>該当する銘柄がありません</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1321,35 +1317,40 @@ function FavPanel(p){
       })}
     </div>
   );
+  var stickyTop=isMobile?105:50;
   return(
-    <div>
-      <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
-        <div style={{display:"flex",gap:8}}>
-          <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:14,fontFamily:"monospace",flex:1}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
-          <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"8px 16px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>追加</button>
-        </div>
-        {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
-      </div>
-      {favStocks.length>0&&(
-        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:10,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-          <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
-          {fBtn("ALL","全て","#60a5fa")}
-          {fBtn("US","US","#3b82f6")}
-          {fBtn("JP","JP","#f87171")}
-          <span style={{fontSize:11,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
-          {sBtn("score","スコア順")}
-          {sBtn("change","上昇率順")}
-        </div>
-      )}
-      {isMobile?cardGrid:(
-        <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-          <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
-          <div style={{flex:1,position:"sticky",top:60,maxHeight:"calc(100vh - 70px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-            <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(isMobile?105:50)+"px)"}}>
+      <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4}}>
+        <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+          <div style={{display:"flex",gap:8}}>
+            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:14,fontFamily:"monospace",flex:1}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
+            <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"8px 16px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>追加</button>
           </div>
+          {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
         </div>
-      )}
-      {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:13}}>ティッカーを入力して追加できます</div>}
+        {favStocks.length>0&&(
+          <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:4,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+            <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
+            {fBtn("ALL","全て","#60a5fa")}
+            {fBtn("US","US","#3b82f6")}
+            {fBtn("JP","JP","#f87171")}
+            <span style={{fontSize:11,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
+            {sBtn("score","スコア順")}
+            {sBtn("change","上昇率順")}
+          </div>
+        )}
+      </div>
+      <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8}}>
+        {isMobile?cardGrid:(
+          <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+            <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
+            <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
+            </div>
+          </div>
+        )}
+        {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:13}}>ティッカーを入力して追加できます</div>}
+      </div>
     </div>
   );
 }
