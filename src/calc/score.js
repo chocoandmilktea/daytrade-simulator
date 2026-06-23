@@ -1,6 +1,6 @@
 // calc/score.js
 // スキャルピング・デイトレ特化スコア計算（日足ベース）
-// 将来の分足対応: closes/highs/lows/volumes を分足配列に差し替えるだけで動作する設計
+// BBグラフ: 15分足データがあれば優先使用（過去2日間）、なければ日足60本にフォールバック
 
 // ── 指標計算ユーティリティ ───────────────────────────────────────────────────
 
@@ -47,7 +47,6 @@ function calcBB(arr, p, k) {
 }
 
 // ── モメンタム計算（線形回帰の傾き） ──────────────────────────────────────────
-// 直近N本の終値の線形回帰傾き > 0 → 上昇、< 0 → 下降
 function calcMomentum(closes, n) {
   n = n || 5;
   if (closes.length < n) return 0;
@@ -83,15 +82,11 @@ function calcATR(closes, highs, lows, p) {
   return len > 0 ? sum / len : closes[closes.length - 1] * 0.02;
 }
 
-// ── BB用データ（グラフ描画用に全系列を返す） ─────────────────────────────────
-function getBBSeries(closes) {
-  return calcBB(closes, 20, 2);
-}
-
 // ── メインスコア計算 ─────────────────────────────────────────────────────────
 // input:
 //   stock   : { ticker, name, market, tvSymbol }
-//   pd      : { closes, highs, lows, volumes, currentPrice, previousClose, real }
+//   pd      : { closes, highs, lows, volumes, currentPrice, previousClose, real,
+//               minuteCloses, minuteHighs, minuteLows, minuteVolumes }
 // output:
 //   銘柄スコアオブジェクト
 export function analyzeStock(stock, pd) {
@@ -108,7 +103,7 @@ export function analyzeStock(stock, pd) {
   var isJP = stock.market === "JP";
   var dispPrice = isJP ? "¥" + Math.round(price).toLocaleString() : "$" + price.toFixed(2);
 
-  // ── 52週レンジ ──────────────────────────────────────────────────────────────
+  // ── 52週レンジ（日足ベース） ────────────────────────────────────────────────
   var yearData = closes.slice(-252);
   var high52 = yearData.length > 0 ? Math.max.apply(null, yearData) : price;
   var low52 = yearData.length > 0 ? Math.min.apply(null, yearData) : price;
@@ -117,14 +112,14 @@ export function analyzeStock(stock, pd) {
   var fromHigh = high52 > 0 ? (price - high52) / high52 * 100 : 0;
   var fromLow = low52 > 0 ? (price - low52) / low52 * 100 : 0;
 
-  // ── 指標計算 ────────────────────────────────────────────────────────────────
+  // ── 指標計算（日足ベース） ──────────────────────────────────────────────────
   var rsiArr = calcRSI(closes, 14);
   var rsiVal = rsiArr[n] || 50;
   var bbArr = calcBB(closes, 20, 2);
   var bbVal = bbArr[n];
-  var momentum = calcMomentum(closes, 5);      // 線形回帰傾き
-  var momentumPlus = momentum > 0;             // true = 上昇方向
-  var surge = calcVolumeSurge(volumes);        // 出来高急増率（倍）
+  var momentum = calcMomentum(closes, 5);
+  var momentumPlus = momentum > 0;
+  var surge = calcVolumeSurge(volumes);
   var ma5 = calcSMA(closes, 5);
   var ma25 = calcSMA(closes, 25);
 
@@ -198,9 +193,6 @@ export function analyzeStock(stock, pd) {
   sc = Math.min(100, Math.max(0, sc));
 
   // ── BUY判定 ──────────────────────────────────────────────────────────────────
-  // BUY : 65点以上 かつ モメンタムプラス かつ 出来高1.5倍以上
-  // WATCH: 50〜64点
-  // SKIP : 49点以下 または モメンタムマイナス
   var timing;
   if (sc >= 65 && momentumPlus && surge >= 1.5) {
     timing = "BUY";
@@ -235,13 +227,17 @@ export function analyzeStock(stock, pd) {
     }
   }
 
-  // ── BB系列（グラフ描画用） ───────────────────────────────────────────────────
-  // 直近60本分のBB・MA5・MA25を返す（StockDetailのSVGグラフで使用）
-  var graphLen = 60;
-  var graphCloses = closes.slice(-graphLen);
-  var graphBB = calcBB(closes, 20, 2).slice(-graphLen);
-  var graphMA5 = calcSMA(closes, 5).slice(-graphLen);
-  var graphMA25 = calcSMA(closes, 25).slice(-graphLen);
+  // ── BBグラフ用データ ─────────────────────────────────────────────────────────
+  // 15分足データがあれば優先使用（過去2日間・約52本）
+  // なければ日足60本にフォールバック
+  var hasMinute = pd.minuteCloses && pd.minuteCloses.length >= 20;
+  var gCloses = hasMinute ? pd.minuteCloses : closes.slice(-60);
+
+  var graphCloses = gCloses;
+  var graphBB     = calcBB(gCloses, 20, 2);
+  var graphMA5    = calcSMA(gCloses, 5);
+  var graphMA25   = calcSMA(gCloses, 25);
+  var graphIsMinute = hasMinute; // BBグラフのデータ種別フラグ
 
   return {
     // 基本情報
@@ -254,11 +250,12 @@ export function analyzeStock(stock, pd) {
     rawPrice: price,
     change: change,
     real: pd.real,
+    dataWarn: pd.dataWarn || null,
     // スコア
     score: sc,
     timing: timing,
     signals: signals,
-    // モメンタム（BUY判定に使用）
+    // モメンタム
     momentumPlus: momentumPlus,
     surge: surge,
     // 52週
@@ -273,14 +270,14 @@ export function analyzeStock(stock, pd) {
     atrLower: atrLower,
     support: support,
     // BBグラフ用データ
-    graphCloses: graphCloses,
-    graphBB: graphBB,
-    graphMA5: graphMA5,
-    graphMA25: graphMA25,
+    graphCloses:   graphCloses,
+    graphBB:       graphBB,
+    graphMA5:      graphMA5,
+    graphMA25:     graphMA25,
+    graphIsMinute: graphIsMinute, // trueなら15分足、falseなら日足
     // 閲覧用URL
     yahooUrl: isJP
       ? "https://finance.yahoo.co.jp/quote/" + stock.ticker
       : "https://finance.yahoo.com/quote/" + stock.ticker,
   };
 }
-
