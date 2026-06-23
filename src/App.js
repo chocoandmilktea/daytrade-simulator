@@ -631,7 +631,7 @@ function StockCard(p){
   var cardBorder=isSelected?"#60a5fa":borderColor;
 
   return(
-    <div style={{background:isSelected?"#071e38":"#050e1c",border:"2px solid "+cardBorder,borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}}
+    <div style={{background:isSelected?"#071e38":"#050e1c",borderLeft:"3px solid "+cardBorder,borderTop:"1px solid transparent",borderRight:"1px solid transparent",borderBottom:"1px solid transparent",borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}}
       onClick={function(){
         if(!isMobile){if(p.setSelectedStock)p.setSelectedStock(s);}
         else{setExpanded(function(v){return !v;});}
@@ -904,7 +904,7 @@ function StockDetailPanel(p){
   }
 
   return(
-    <div style={{background:"#050e1c",border:"1px solid "+borderColor,borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
+    <div style={{background:"#050e1c",border:"1px solid transparent",borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
      {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);}}/>,document.body)}
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -1284,9 +1284,10 @@ function FavPanel(p){
       })}
     </div>
   );
+  var topOffset=isMobile?0:50;
   return(
-    <div style={{display:"flex",flexDirection:"column",minHeight:"100%",background:"#040c18"}}>
-      <div style={{position:"sticky",top:0,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4,zIndex:10}}>
+    <div style={{display:"flex",flexDirection:"column",position:"fixed",top:topOffset,left:isMobile?0:50,right:0,bottom:0,background:"#040c18",overflow:"hidden"}}>
+      <div style={{flexShrink:0,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4,zIndex:10}}>
         <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
           <div style={{display:"flex",gap:8}}>
             <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:14,fontFamily:"monospace",flex:1}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
@@ -1322,7 +1323,7 @@ function FavPanel(p){
           )
         )}
       </div>
-      <div style={{paddingTop:8,paddingLeft:10,paddingRight:10,paddingBottom:120}}>
+      <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8,paddingLeft:10,paddingRight:10,paddingBottom:120}}>
         {isMobile?cardGrid:(
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
@@ -2147,7 +2148,7 @@ export default function App(){
   var isMobile=window.innerWidth<768;
   return(
     <div style={{minHeight:"100vh",background:"#040c18",backgroundAttachment:"fixed",fontFamily:"monospace",color:"#b8cce0"}}>
-      <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",marginLeft:isMobile?0:50,position:"sticky",top:0,zIndex:20}}>
+      <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",marginLeft:isMobile?0:50}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>
             DaySimulator <span style={{fontSize:12,color:"#4a7090",fontWeight:400}}>/ {TAB_LABELS[activeTab]}</span>
