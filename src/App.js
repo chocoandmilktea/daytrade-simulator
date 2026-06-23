@@ -901,6 +901,7 @@ function StockDetailPanel(p){
   .trim()||"分析できませんでした。");
     }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
     setAiLoading(false);
+  }
 
   return(
     <div style={{background:"#050e1c",border:"1px solid "+borderColor,borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
