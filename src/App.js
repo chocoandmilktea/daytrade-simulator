@@ -654,18 +654,20 @@ function StockCard(p){
       {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);}}/>,document.body)}
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:17,fontWeight:800,color:"#d8eeff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.ticker.replace(".T","")}</div>
+          <div style={{display:"flex",gap:4,alignItems:"center"}}>
+            <div style={{fontSize:17,fontWeight:800,color:"#d8eeff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.ticker.replace(".T","")}</div>
+            <button onClick={function(e){stopProp(e);toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060",flexShrink:0}}>{isFav(s.ticker)?"★":"☆"}</button>
+          </div>
           <div style={{fontSize:11,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.name}</div>
         </div>
-        <button onClick={function(e){stopProp(e);toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060",flexShrink:0}}>{isFav(s.ticker)?"★":"☆"}</button>
       </div>
 
-      <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"space-between"}}>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-          <span style={{fontSize:14,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
-          <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
+      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between"}}>
+        <span style={{fontSize:14,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:17,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
+          <div style={{fontSize:12,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>
         </div>
-        <span style={{fontSize:17,color:"#d8eeff",fontWeight:800}}>{s.price}</span>
       </div>
 
       {isMobile&&<div style={{textAlign:"center",fontSize:11,color:"#2a4060"}}>{expanded?"▲ 閉じる":"▼ 詳細を見る"}</div>}
@@ -978,26 +980,9 @@ function StockDetailPanel(p){
           <div style={{marginTop:4}}><span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span></div>
         </div>
       </div>
-      {pos52!=null&&s.high52&&(
-        <div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:13,color:"#4a7090",marginBottom:4}}>
-            <span>52W安値</span>
-            <span>52W高値</span>
-          </div>
-          <div style={{background:"#0a1828",borderRadius:3,height:5,position:"relative",marginBottom:8}}>
-            <div style={{background:"linear-gradient(90deg,#22d3a0,#fbbf24,#f43f5e)",height:5,borderRadius:3,width:"100%",opacity:0.25}}/>
-            <div style={{position:"absolute",top:-2,left:"calc("+pos52+"% - 5px)",width:10,height:10,borderRadius:"50%",background:pos52Color,border:"1px solid #071428"}}/>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>高値比</div><div style={{fontSize:15,fontWeight:700,color:fromHighColor}}>{s.fromHigh.toFixed(1)}%</div></div>
-            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>安値比</div><div style={{fontSize:15,fontWeight:700,color:fromLowColor}}>+{s.fromLow.toFixed(1)}%</div></div>
-            <div style={{background:"#071428",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:13,color:"#2a6090"}}>VIX</div><div style={{fontSize:15,fontWeight:700,color:p.vix&&parseFloat(p.vix)>=20?"#f43f5e":"#d8eeff"}}>{p.vix?parseFloat(p.vix).toFixed(2):"─"}</div></div>
-          </div>
-        </div>
-      )}
+
       <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"flex-end"}}>
         <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
-        <button onClick={function(){setShowAdd(function(v){return !v;});}} style={{background:showAdd?"#052e16":"transparent",border:"1px solid "+(showAdd?"#22d3a0":added?"#22d3a0":"#2a4060"),borderRadius:6,color:showAdd?"#22d3a0":added?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>{added?"✅":"💼"}</button>
         <button onClick={function(){setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
       </div>
       {/* シグナル詳細 */}
@@ -2008,11 +1993,12 @@ function HelpModal(p){
   var SECTIONS=[
     {title:"📊 データ取得",items:["米国株：Yahoo Finance・15分遅延","日本株：Yahoo Finance・15分遅延","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
     {title:"🔗 デバイス同期",items:["お気に入り登録時にサーバーへ自動保存","起動時にサーバーからデータを自動取得","Pushoverでデバイスに同期IDを通知","同期タブでIDを入力して別デバイスと同期"]},
-    {title:"📖 指標の見方（BB・OBV・出来高・RSI）",items:[
+    {title:"📖 指標の見方（RSI・BB・BB収束・OBV・出来高）",items:[
+      "【確認用】RSI（相対力指数）：30以下で売られすぎ・反発狙いの補助確認。70以上で買われすぎ・過熱感の補助確認。BBのシグナルと合わせて判断する",
       "【メイン判断】BB（ボリンジャーバンド）：バンドの収縮＝エネルギー蓄積→ブレイクアウト狙いの買い準備。バンドの拡大＝トレンド発生中。下限タッチで反発買い候補、上限タッチで過熱感・利確検討",
+      "【収束確認】BB収束：バンドが狭まっている状態＝エネルギー蓄積中。収束率が高いほどブレイクアウトの可能性が高まる",
       "【方向確認】OBV（板代替）：終値の位置で買い・売り優勢を判定。高値引けに近いほど買い圧力が強い。BB判断と方向が一致しているか確認する",
-      "【勢い確認】出来高：平均比2倍以上の急増＋高値引けなら買いシグナル強化。出来高増＋安値引けなら売り圧力増大で警戒",
-      "【確認用】RSI（相対力指数）：30以下で売られすぎ・反発狙いの補助確認。70以上で買われすぎ・過熱感の補助確認。BBのシグナルと合わせて判断する"
+      "【勢い確認】出来高：平均比2倍以上の急増＋高値引けなら買いシグナル強化。出来高増＋安値引けなら売り圧力増大で警戒"
     ]},
     {title:"📉 下値サポート目安の見方",items:["S1（20日安値）：直近20日間の最安値。短期の下値サポートライン。ここを割ると次のS2が目安","S2（60日安値）：直近60日間の最安値。中期の強いサポートライン。S1を割り込んだ場合の次の目安","ATR×1.5下限：14日間の平均値幅（ATR）×1.5を現在値から引いた価格。統計的な下値の限界目安","活用法：S1割れで警戒、S2割れで損切り検討、ATR下限は最悪ケースの想定として使用"]},
   ];
