@@ -1249,22 +1249,22 @@ function AllStocksPanel(p){
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(isMobile?105:50)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4}}>
         <MarketBar/>
-        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 10px",marginBottom:4,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-          <span style={{fontSize:11,color:"#2a6090"}}>市場:</span>
+        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",marginBottom:4,display:"flex",gap:4,alignItems:"center",flexWrap:"nowrap",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+          <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>市場:</span>
           {fBtn("ALL","全て","#60a5fa")}
           {fBtn("US","US","#3b82f6")}
           {fBtn("JP","JP","#f87171")}
-          <span style={{fontSize:11,color:"#1e3050",margin:"0 2px"}}>|</span>
-          <span style={{fontSize:11,color:"#2a6090"}}>並替:</span>
+          <span style={{fontSize:10,color:"#1e3050",margin:"0 1px",flexShrink:0}}>|</span>
+          <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>並替:</span>
           {sBtn("score","スコア順")}
           {sBtn("change","上昇率順")}
-          <span style={{fontSize:11,color:"#1e3050",margin:"0 2px"}}>|</span>
-          <span style={{fontSize:11,color:"#4a7090"}}>
+          <span style={{fontSize:10,color:"#1e3050",margin:"0 1px",flexShrink:0}}>|</span>
+          <span style={{fontSize:10,color:"#4a7090",flexShrink:0}}>
             <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
             <span>/{stocks.length}</span>
           </span>
-          {ts&&<span style={{fontSize:10,color:"#2a6090"}}>{ts}</span>}
-          <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
+          {ts&&<span style={{fontSize:10,color:"#2a6090",flexShrink:0,whiteSpace:"nowrap"}}>{ts}</span>}
+          <button onClick={onScan} style={{marginLeft:"auto",flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
         </div>
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8}}>
