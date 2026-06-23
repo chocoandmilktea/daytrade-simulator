@@ -565,10 +565,6 @@ function StockCard(p){
   var simStopS=useState(-5);var simStop=simStopS[0],setSimStop=simStopS[1];
   var simTargetInputS=useState("3");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
   var simStopInputS=useState("-5");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
-  var showAddS=useState(false);var showAdd=showAddS[0],setShowAdd=showAddS[1];
-  var buyPriceS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var buyPrice=buyPriceS[0],setBuyPrice=buyPriceS[1];
-  var sharesS=useState("");var shares=sharesS[0],setShares=sharesS[1];
-  var addedS=useState(false);var added=addedS[0],setAdded=addedS[1];
   var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
   var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
@@ -630,17 +626,6 @@ function StockCard(p){
     setAiLoading(false);
   }
 
-  function submitAdd(){
-    if(!buyPrice||!shares) return;
-    var portfolio=(function(){try{var v=localStorage.getItem("portfolio_v1");return v?JSON.parse(v):[];}catch(e){return[];}}());
-    var pos={id:Date.now(),ticker:s.ticker,name:s.name,market:s.market,buyPrice:parseFloat(buyPrice),shares:parseFloat(shares),stopLoss:null,target:null,addedAt:new Date().toLocaleDateString("ja-JP")};
-    try{localStorage.setItem("portfolio_v1",JSON.stringify(portfolio.concat([pos])));}catch(e){}
-    setShowAdd(false);setShares("");setAdded(true);
-    setTimeout(function(){setAdded(false);},2000);
-  }
-
-  var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
-
   var isMobile=window.innerWidth<768;
   var isSelected=!isMobile&&p.selectedStock&&p.selectedStock.ticker===s.ticker;
   var cardBorder=isSelected?"#60a5fa":borderColor;
@@ -674,7 +659,6 @@ function StockCard(p){
           <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"flex-end"}}>
             <button onClick={function(e){stopProp(e);setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:28,height:28,fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
             <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
-            <button onClick={function(e){stopProp(e);setShowAdd(function(v){return !v;});}} style={{background:showAdd?"#052e16":"transparent",border:"1px solid "+(showAdd?"#22d3a0":added?"#22d3a0":"#2a4060"),borderRadius:6,color:showAdd?"#22d3a0":added?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>{added?"✅":"💼"}</button>
             <button onClick={function(e){stopProp(e);setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
           </div>
 
@@ -785,7 +769,7 @@ function StockCard(p){
               {label:"目標価格",pct:simTarget,color:"#fbbf24"},
             ];
             return(
-              <div onClick={function(e){e.stopPropagation();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <div onClick={function(e){if(e.target===e.currentTarget)setShowSim(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
                 <div style={{background:"#040c18",border:"1px solid #a78bfa50",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                     <div style={{fontSize:13,fontWeight:700,color:"#a78bfa"}}>💹 損益シミュレーション</div>
@@ -834,20 +818,6 @@ function StockCard(p){
               </div>
             );
           })(),document.body)}
-
-          {showAdd&&(
-            <div style={{background:"#040c18",border:"1px solid #22d3a030",borderRadius:8,padding:"12px"}}>
-              <div style={{fontSize:12,fontWeight:700,color:"#22d3a0",marginBottom:8}}>💼 ポートフォリオに追加</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-                <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>買値</div><input style={inp} type="number" value={buyPrice} onChange={function(e){setBuyPrice(e.target.value);}} placeholder="150.00"/></div>
-                <div><div style={{fontSize:11,color:"#2a6090",marginBottom:3}}>株数</div><input style={inp} type="number" value={shares} onChange={function(e){setShares(e.target.value);}} placeholder="100"/></div>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <button onClick={function(){setShowAdd(false);}} style={{background:"transparent",border:"1px solid #2a3050",borderRadius:6,color:"#4a7090",padding:"7px",fontSize:13,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
-                <button onClick={submitAdd} disabled={!buyPrice||!shares} style={{background:buyPrice&&shares?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:6,color:"#fff",padding:"7px",fontSize:13,fontWeight:700,cursor:buyPrice&&shares?"pointer":"not-allowed",fontFamily:"monospace"}}>追加</button>
-              </div>
-            </div>
-          )}
 
         </div>
       )}
@@ -1210,7 +1180,7 @@ function AllStocksPanel(p){
   }
 
   var isMobile=window.innerWidth<768;
-  var stickyTop=isMobile?105:50;
+  var stickyTop=isMobile?0:50;
   var cardGrid=(
     <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
       {displayStocks.map(function(s){
@@ -1219,26 +1189,50 @@ function AllStocksPanel(p){
     </div>
   );
   return(
-    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(isMobile?105:50)+"px)"}}>
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(isMobile?0:50)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4}}>
         <MarketBar/>
-        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",marginBottom:4,display:"flex",gap:4,alignItems:"center",flexWrap:"nowrap",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-          <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>市場:</span>
-          {fBtn("ALL","全て","#60a5fa")}
-          {fBtn("US","US","#3b82f6")}
-          {fBtn("JP","JP","#f87171")}
-          <span style={{fontSize:10,color:"#1e3050",margin:"0 1px",flexShrink:0}}>|</span>
-          <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>並替:</span>
-          {sBtn("score","スコア順")}
-          {sBtn("change","上昇率順")}
-          <span style={{fontSize:10,color:"#1e3050",margin:"0 1px",flexShrink:0}}>|</span>
-          <span style={{fontSize:10,color:"#4a7090",flexShrink:0}}>
-            <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
-            <span>/{stocks.length}</span>
-          </span>
-          {ts&&<span style={{fontSize:10,color:"#2a6090",flexShrink:0,whiteSpace:"nowrap"}}>{ts}</span>}
-          <button onClick={onScan} style={{marginLeft:"auto",flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
-        </div>
+        {isMobile?(
+          <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",marginBottom:4,display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+            <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+              <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>市場:</span>
+              {fBtn("ALL","全て","#60a5fa")}
+              {fBtn("US","US","#3b82f6")}
+              {fBtn("JP","JP","#f87171")}
+            </div>
+            <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+              <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>並替:</span>
+              {sBtn("score","スコア")}
+              {sBtn("change","上昇率")}
+            </div>
+            <div style={{gridColumn:"1 / -1",display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:10,color:"#4a7090"}}>
+                <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
+                <span>/{stocks.length}</span>
+              </span>
+              {ts&&<span style={{fontSize:10,color:"#2a6090",whiteSpace:"nowrap"}}>{ts}</span>}
+              <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
+            </div>
+          </div>
+        ):(
+          <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",marginBottom:4,display:"flex",gap:4,alignItems:"center",flexWrap:"nowrap",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+            <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>市場:</span>
+            {fBtn("ALL","全て","#60a5fa")}
+            {fBtn("US","US","#3b82f6")}
+            {fBtn("JP","JP","#f87171")}
+            <span style={{fontSize:10,color:"#1e3050",margin:"0 1px",flexShrink:0}}>|</span>
+            <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>並替:</span>
+            {sBtn("score","スコア順")}
+            {sBtn("change","上昇率順")}
+            <span style={{fontSize:10,color:"#1e3050",margin:"0 1px",flexShrink:0}}>|</span>
+            <span style={{fontSize:10,color:"#4a7090",flexShrink:0}}>
+              <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
+              <span>/{stocks.length}</span>
+            </span>
+            {ts&&<span style={{fontSize:10,color:"#2a6090",flexShrink:0,whiteSpace:"nowrap"}}>{ts}</span>}
+            <button onClick={onScan} style={{marginLeft:"auto",flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
+          </div>
+        )}
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8}}>
         {isMobile?cardGrid:(
@@ -1289,7 +1283,7 @@ function FavPanel(p){
       })}
     </div>
   );
-  var topOffset=isMobile?105:50;
+  var topOffset=isMobile?0:50;
   return(
     <div style={{display:"flex",flexDirection:"column",position:"fixed",top:topOffset,left:isMobile?0:50,right:0,bottom:0,background:"#040c18",overflow:"hidden"}}>
       <div style={{flexShrink:0,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4,zIndex:10}}>
@@ -1301,15 +1295,31 @@ function FavPanel(p){
           {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
         </div>
         {favStocks.length>0&&(
-          <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:4,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-            <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
-            {fBtn("ALL","全て","#60a5fa")}
-            {fBtn("US","US","#3b82f6")}
-            {fBtn("JP","JP","#f87171")}
-            <span style={{fontSize:11,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
-            {sBtn("score","スコア順")}
-            {sBtn("change","上昇率順")}
-          </div>
+          isMobile?(
+            <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:4,display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
+              <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{fontSize:11,color:"#2a6090",flexShrink:0}}>市場:</span>
+                {fBtn("ALL","全て","#60a5fa")}
+                {fBtn("US","US","#3b82f6")}
+                {fBtn("JP","JP","#f87171")}
+              </div>
+              <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+                <span style={{fontSize:11,color:"#2a6090",flexShrink:0}}>並替:</span>
+                {sBtn("score","スコア")}
+                {sBtn("change","上昇率")}
+              </div>
+            </div>
+          ):(
+            <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:4,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
+              {fBtn("ALL","全て","#60a5fa")}
+              {fBtn("US","US","#3b82f6")}
+              {fBtn("JP","JP","#f87171")}
+              <span style={{fontSize:11,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
+              {sBtn("score","スコア順")}
+              {sBtn("change","上昇率順")}
+            </div>
+          )
         )}
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8,paddingLeft:10,paddingRight:10,paddingBottom:120}}>
@@ -2137,7 +2147,7 @@ export default function App(){
   var isMobile=window.innerWidth<768;
   return(
     <div style={{minHeight:"100vh",background:"#040c18",backgroundAttachment:"fixed",fontFamily:"monospace",color:"#b8cce0"}}>
-      <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",position:"sticky",top:0,zIndex:20,marginLeft:isMobile?0:50}}>
+      <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",marginLeft:isMobile?0:50}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>
             DaySimulator <span style={{fontSize:12,color:"#4a7090",fontWeight:400}}>/ {TAB_LABELS[activeTab]}</span>
