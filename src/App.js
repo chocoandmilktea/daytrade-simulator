@@ -1284,9 +1284,8 @@ function FavPanel(p){
       })}
     </div>
   );
-  var topOffset=isMobile?0:50;
   return(
-    <div style={{display:"flex",flexDirection:"column",position:"fixed",top:topOffset,left:isMobile?0:50,right:0,bottom:0,background:"#040c18",overflow:"hidden"}}>
+    <div style={{display:"flex",flexDirection:"column",minHeight:"100%",background:"#040c18"}}>
       <div style={{flexShrink:0,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4,zIndex:10}}>
         <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
           <div style={{display:"flex",gap:8}}>
@@ -1323,7 +1322,7 @@ function FavPanel(p){
           )
         )}
       </div>
-      <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8,paddingLeft:10,paddingRight:10,paddingBottom:120}}>
+      <div style={{paddingTop:8,paddingLeft:10,paddingRight:10,paddingBottom:120}}>
         {isMobile?cardGrid:(
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
