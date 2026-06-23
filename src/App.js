@@ -904,7 +904,7 @@ function StockDetailPanel(p){
   }
 
   return(
-    <div style={{background:"#050e1c",border:"1px solid "+borderColor,borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
+    <div style={{background:"#050e1c",border:"none",borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
      {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);}}/>,document.body)}
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
