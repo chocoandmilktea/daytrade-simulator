@@ -1316,10 +1316,10 @@ function FavPanel(p){
       })}
     </div>
   );
-  var stickyTop=isMobile?105:50;
+  var topOffset=isMobile?105:50;
   return(
-    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(isMobile?105:50)+"px)"}}>
-      <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4}}>
+    <div style={{display:"flex",flexDirection:"column",position:"fixed",top:topOffset,left:isMobile?0:50,right:0,bottom:0,background:"#040c18",overflow:"hidden"}}>
+      <div style={{flexShrink:0,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4,zIndex:10}}>
         <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
           <div style={{display:"flex",gap:8}}>
             <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:14,fontFamily:"monospace",flex:1}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
@@ -1339,11 +1339,11 @@ function FavPanel(p){
           </div>
         )}
       </div>
-      <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8}}>
+      <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8,paddingLeft:10,paddingRight:10,paddingBottom:120}}>
         {isMobile?cardGrid:(
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
-            <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+            <div style={{flex:1,position:"sticky",top:0,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
               <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
             </div>
           </div>
