@@ -1036,7 +1036,7 @@ function StockDetailPanel(p){
           <div style={{fontSize:11,color:"#2a5070",marginTop:5}}>S1割れ→S2、S2割れ→ATR下限が次の下値目安</div>
         </div>
       )}
-      {showSim&&(function(){
+      {showSim&&createPortal((function(){
         var bp=parseFloat(simBuy)||0;var sh=parseFloat(simShares)||0;
         var isJP=s.market==="JP";
         function fmtP(v){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);}
@@ -1048,41 +1048,46 @@ function StockDetailPanel(p){
         var inpSim={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
         var scenarios=[{label:"損切りライン",pct:simStop,color:"#f43f5e"},{label:"-5%",pct:-5,color:"#fb923c"},{label:"+5%",pct:5,color:"#22d3a0"},{label:"+10%",pct:10,color:"#22d3a0"},{label:"+20%",pct:20,color:"#22d3a0"},{label:"目標価格",pct:simTarget,color:"#fbbf24"}];
         return(
-          <div style={{background:"#040c18",border:"1px solid #a78bfa30",borderRadius:10,padding:"12px"}}>
-            <div style={{fontSize:14,fontWeight:700,color:"#a78bfa",marginBottom:8}}>💹 損益シミュレーション</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-              <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>買値</div><input style={inpSim} type="number" value={simBuy} onChange={function(e){setSimBuy(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseFloat(simBuy);if(!isNaN(v)&&v>0){setSimBuy(String(v));}else{setSimBuy("");}e.target.blur();}}}/></div>
-              <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>株数</div><input style={inpSim} type="number" value={simShares} onChange={function(e){setSimShares(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseInt(simShares);if(!isNaN(v)&&v>0){setSimShares(String(v));}else{setSimShares("");}e.target.blur();}}}/></div>
-            </div>
-            {bp>0&&sh>0&&(
-              <div>
-                <div style={{background:"#071428",borderRadius:6,padding:"6px 10px",fontSize:14,color:"#4a7090",marginBottom:8}}>投資総額: <span style={{color:"#d8eeff",fontWeight:700}}>{fmtP(bp*sh)}</span>{(!isJP&&p.usdJpy)&&<span style={{color:"#4a7090",fontSize:12}}>  (¥{Math.round(bp*sh*p.usdJpy).toLocaleString()})</span>}</div>
-                <div style={{marginBottom:6}}>
-                  <div style={{fontSize:13,color:"#fbbf24",marginBottom:3}}>{fmtP(bp*(1+simTarget/100))}</div>
-                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
-                    <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>目標</span>
-                    <input type="number" value={simTargetInput} onChange={function(e){setSimTargetInput(e.target.value);}} onBlur={function(){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}e.target.blur();}}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
-                    <span style={{fontSize:13,color:"#fbbf24"}}>%</span>
-                    <input type="range" min={1} max={200} value={simTarget} onChange={function(e){var v=parseInt(e.target.value);setSimTarget(v);setSimTargetInput(String(v));}} style={{flex:1,accentColor:"#fbbf24"}}/>
-                  </div>
-                </div>
-                <div style={{marginBottom:8}}>
-                  <div style={{fontSize:13,color:"#f43f5e",marginBottom:3}}>{fmtP(bp*(1+simStop/100))}</div>
-                  <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
-                    <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>損切り</span>
-                    <input type="number" value={simStopInput} onChange={function(e){setSimStopInput(e.target.value);}} onBlur={function(){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}e.target.blur();}}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
-                    <span style={{fontSize:13,color:"#f43f5e"}}>%</span>
-                    <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){var v=parseInt(e.target.value);setSimStop(v);setSimStopInput(String(v));}} style={{flex:1,accentColor:"#f43f5e"}}/>
-                  </div>
-                </div>
-                <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                  {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){var pnl=(bp*(1+sc.pct/100)-bp)*sh;return(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"5px 8px"}}><div><span style={{fontSize:14,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:13,color:"#4a7090",marginLeft:4}}>{sc.pct>=0?"+":""}{sc.pct}%</span></div><span style={{fontSize:15,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span></div>);})}
-                </div>
+          <div onClick={function(e){if(e.target===e.currentTarget)setShowSim(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+            <div style={{background:"#040c18",border:"1px solid #a78bfa50",borderRadius:"16px 16px 0 0",padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <div style={{fontSize:14,fontWeight:700,color:"#a78bfa"}}>💹 損益シミュレーション</div>
+                <button onClick={function(){setShowSim(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
               </div>
-            )}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>買値</div><input style={inpSim} type="number" value={simBuy} onChange={function(e){setSimBuy(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseFloat(simBuy);if(!isNaN(v)&&v>0){setSimBuy(String(v));}else{setSimBuy("");}e.target.blur();}}}/></div>
+                <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>株数</div><input style={inpSim} type="number" value={simShares} onChange={function(e){setSimShares(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseInt(simShares);if(!isNaN(v)&&v>0){setSimShares(String(v));}else{setSimShares("");}e.target.blur();}}}/></div>
+              </div>
+              {bp>0&&sh>0&&(
+                <div>
+                  <div style={{background:"#071428",borderRadius:6,padding:"6px 10px",fontSize:14,color:"#4a7090",marginBottom:8}}>投資総額: <span style={{color:"#d8eeff",fontWeight:700}}>{fmtP(bp*sh)}</span>{(!isJP&&p.usdJpy)&&<span style={{color:"#4a7090",fontSize:12}}>  (¥{Math.round(bp*sh*p.usdJpy).toLocaleString()})</span>}</div>
+                  <div style={{marginBottom:6}}>
+                    <div style={{fontSize:13,color:"#fbbf24",marginBottom:3}}>{fmtP(bp*(1+simTarget/100))}</div>
+                    <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                      <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>目標</span>
+                      <input type="number" value={simTargetInput} onChange={function(e){setSimTargetInput(e.target.value);}} onBlur={function(){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}e.target.blur();}}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                      <span style={{fontSize:13,color:"#fbbf24"}}>%</span>
+                      <input type="range" min={1} max={200} value={simTarget} onChange={function(e){var v=parseInt(e.target.value);setSimTarget(v);setSimTargetInput(String(v));}} style={{flex:1,accentColor:"#fbbf24"}}/>
+                    </div>
+                  </div>
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:13,color:"#f43f5e",marginBottom:3}}>{fmtP(bp*(1+simStop/100))}</div>
+                    <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                      <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>損切り</span>
+                      <input type="number" value={simStopInput} onChange={function(e){setSimStopInput(e.target.value);}} onBlur={function(){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}e.target.blur();}}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                      <span style={{fontSize:13,color:"#f43f5e"}}>%</span>
+                      <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){var v=parseInt(e.target.value);setSimStop(v);setSimStopInput(String(v));}} style={{flex:1,accentColor:"#f43f5e"}}/>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){var pnl=(bp*(1+sc.pct/100)-bp)*sh;return(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"5px 8px"}}><div><span style={{fontSize:14,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:13,color:"#4a7090",marginLeft:4}}>{sc.pct>=0?"+":""}{sc.pct}%</span></div><span style={{fontSize:15,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span></div>);})}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         );
-      })()}
+      })(),document.body)}
       {showAdd&&(
         <div style={{background:"#040c18",border:"1px solid #22d3a030",borderRadius:8,padding:"12px"}}>
           <div style={{fontSize:14,fontWeight:700,color:"#22d3a0",marginBottom:8}}>💼 ポートフォリオに追加</div>
