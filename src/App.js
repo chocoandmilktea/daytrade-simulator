@@ -662,8 +662,7 @@ function StockCard(p){
         </div>
       </div>
 
-      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between"}}>
-        <span style={{fontSize:14,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
+      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"flex-end"}}>
         <div style={{textAlign:"right"}}>
           <div style={{fontSize:17,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
           <div style={{fontSize:12,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>
@@ -2164,7 +2163,7 @@ export default function App(){
   var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","index":"リンク","market":"市場予測","news":"ニュース","sync":"同期"};
   var isMobile=window.innerWidth<768;
   return(
-    <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0"}}>
+    <div style={{minHeight:"100vh",background:"#040c18",backgroundAttachment:"fixed",fontFamily:"monospace",color:"#b8cce0"}}>
       <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",position:"sticky",top:0,zIndex:20,marginLeft:isMobile?0:50}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>
