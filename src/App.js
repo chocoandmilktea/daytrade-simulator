@@ -1192,7 +1192,6 @@ function AllStocksPanel(p){
   return(
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(isMobile?0:50)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4}}>
-        <MarketBar/>
         {isMobile?(
           <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",marginBottom:4,display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
             <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
@@ -1236,6 +1235,7 @@ function AllStocksPanel(p){
         )}
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8}}>
+        <MarketBar/>
         {isMobile?cardGrid:(
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
