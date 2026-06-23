@@ -658,12 +658,9 @@ function StockCard(p){
             <div style={{fontSize:17,fontWeight:800,color:"#d8eeff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.ticker.replace(".T","")}</div>
             <button onClick={function(e){stopProp(e);toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060",flexShrink:0}}>{isFav(s.ticker)?"★":"☆"}</button>
           </div>
-          <div style={{fontSize:11,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{s.name}</div>
+          <div style={{fontSize:11,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
         </div>
-      </div>
-
-      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"flex-end"}}>
-        <div style={{textAlign:"right"}}>
+        <div style={{textAlign:"right",flexShrink:0}}>
           <div style={{fontSize:17,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
           <div style={{fontSize:12,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>
         </div>
@@ -1252,25 +1249,22 @@ function AllStocksPanel(p){
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(isMobile?105:50)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4}}>
         <MarketBar/>
-        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px 14px",marginBottom:8,display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
-          <div style={{fontSize:12,color:"#4a7090"}}>
-            <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
-            <span> / {stocks.length} 銘柄 リアルデータ</span>
-          </div>
-          {ts&&<span style={{fontSize:11,color:"#2a6090"}}>更新: {ts}</span>}
-          <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
-        </div>
-        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:8,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-          <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
+        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 10px",marginBottom:4,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+          <span style={{fontSize:11,color:"#2a6090"}}>市場:</span>
           {fBtn("ALL","全て","#60a5fa")}
           {fBtn("US","US","#3b82f6")}
           {fBtn("JP","JP","#f87171")}
-        </div>
-        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:4,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-          <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>並替:</span>
+          <span style={{fontSize:11,color:"#1e3050",margin:"0 2px"}}>|</span>
+          <span style={{fontSize:11,color:"#2a6090"}}>並替:</span>
           {sBtn("score","スコア順")}
           {sBtn("change","上昇率順")}
-          <span style={{fontSize:11,color:"#2a6090",marginLeft:"auto"}}>{displayStocks.length}銘柄</span>
+          <span style={{fontSize:11,color:"#1e3050",margin:"0 2px"}}>|</span>
+          <span style={{fontSize:11,color:"#4a7090"}}>
+            <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
+            <span>/{stocks.length}</span>
+          </span>
+          {ts&&<span style={{fontSize:10,color:"#2a6090"}}>{ts}</span>}
+          <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>再スキャン</button>
         </div>
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8}}>
