@@ -53,17 +53,16 @@ export default async function handler(req, res) {
     // ────────────────────────────────────────────────────────────────────
 
     // ── PER・PBR・アナリスト目標株価・業種を複数の方法で取得 ─────────────
-    let per = null, pbr = null, analystTarget = null, sector = null; // [追加] sector
+    let per = null, pbr = null, analystTarget = null, sector = null;
 
     // 方法①: chart APIのmetaから直接取得
     const chartMeta = data?.chart?.result?.[0]?.meta || {};
     if (chartMeta.trailingPE) per = chartMeta.trailingPE;
     if (chartMeta.priceToBook) pbr = chartMeta.priceToBook;
 
-    // 方法②: quoteSummary v10
-    if (!per || !pbr || !analystTarget) {
+    // 方法②: quoteSummary v10（sectorは常に取得するため条件を変更）
+    if (!per || !pbr || !analystTarget || !sector) {
       try {
-        // [変更] assetProfile を modules に追加
         const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics,summaryDetail,financialData,assetProfile`;
         const summaryRes = await fetch(summaryUrl, {
           headers: {
@@ -88,11 +87,9 @@ export default async function handler(req, res) {
           if (!pbr) {
             pbr = detail?.defaultKeyStatistics?.priceToBook?.raw || null;
           }
-          // アナリスト目標株価
           if (detail?.financialData?.targetMeanPrice?.raw) {
             analystTarget = detail.financialData.targetMeanPrice.raw;
           }
-          // [追加] 業種
           if (detail?.assetProfile?.sector) {
             sector = detail.assetProfile.sector;
           }
@@ -133,7 +130,7 @@ export default async function handler(req, res) {
       data.chart.result[0].per = per;
       data.chart.result[0].pbr = pbr;
       data.chart.result[0].analystTarget = analystTarget;
-      data.chart.result[0].sector = sector; // [追加]
+      data.chart.result[0].sector = sector;
     }
 
     return res.status(200).json(data);
