@@ -14,7 +14,7 @@ var MKT = {
 function scoreColor(n){ return n>=68?"#22d3a0":n>=42?"#fbbf24":"#f43f5e"; }
 function bStyle(bg,border,text){ return{background:bg,border:"1px solid "+border,color:text,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:4}; }
 
-var CACHE={}, CACHE_TTL=30*60*1000;
+var CACHE={}, CACHE_TTL=15*60*1000; // 15分足に合わせてTTLを15分に短縮
 var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 
@@ -41,20 +41,40 @@ async function buildStockUniverse(){
   return out;
 }
 
+// 15分足データ取得（メイン分析用・60日分）
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per||null,pbr:cached.pbr||null,analystTarget:cached.analystTarget||null,sector:cached.sector||null};}
-  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=2y",{signal:AbortSignal.timeout(15000)});
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real};}
+  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(15000)});
   if(!res.ok) throw new Error("HTTP "+res.status);
   var json=await res.json();
   var result=json&&json.chart&&json.chart.result&&json.chart.result[0];
   if(!result) throw new Error("empty");
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
-  var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,sector=result.sector||null;
-  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,sector:sector};
+  var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null;
+  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,sector:data.sector};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget};
+}
+
+// 日足データ取得（バックテスト専用・2年分）
+var CACHE_DAILY={};
+async function fetchYahooDaily(ticker){
+  var now=Date.now();
+  if(CACHE_DAILY[ticker]&&now-CACHE_DAILY[ticker].ts<60*60*1000){var c=CACHE_DAILY[ticker].data;return{closes:c.closes.slice()};}
+  try{
+    var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=2y",{signal:AbortSignal.timeout(15000)});
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    var json=await res.json();
+    var result=json&&json.chart&&json.chart.result&&json.chart.result[0];
+    if(!result) throw new Error("empty");
+    var q=result.indicators.quote[0];
+    function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
+    var data={closes:fill(q.close)};
+    CACHE_DAILY[ticker]={ts:now,data:data};
+    return{closes:data.closes.slice()};
+  }catch(e){return null;}
 }
 
 function genSim(ticker){
@@ -86,7 +106,20 @@ function analyzeStock(stock,pd){
   var closes=pd.closes.slice(),highs=pd.highs.slice(),lows=pd.lows.slice();
   var volumes=pd.volumes?pd.volumes.slice():[];
   var n=closes.length-1;
-  var s20=calcSMA(closes,20)[n],s50=calcSMA(closes,50)[n];
+  // ── 15分足換算：1日≒26本（6.5時間×4本/時）────────────────────────────
+  // 日足20日→15分足520本、日足50日→15分足1300本
+  // ただし60日データ=約1560本なので、SMA50≒1300本は計算可能
+  var SMA_S=520,SMA_L=1300; // 20日・50日相当
+  var RSI_P=364;             // 14日相当（14×26）
+  var BB_P=520;              // 20日相当
+  var STOCH_P=364;           // 14日相当
+  var RECENT_BARS=520;       // 直近20日相当（出来高平均・変動率用）
+  var BB_LOOKBACK_S=130;     // short: 5日相当
+  var BB_LOOKBACK_M=260;     // mid: 10日相当
+  var BB_LOOKBACK_L=520;     // stable: 20日相当
+  var YEAR_BARS=closes.length; // 60日分全体を52週相当として使用
+  // ───────────────────────────────────────────────────────────────────────
+  var s20=calcSMA(closes,SMA_S)[n],s50=calcSMA(closes,SMA_L)[n];
   var macdArr=calcMACD(closes),rsiVal=calcRSI(closes)[n];
   var bollVal=calcBoll(closes)[n],stochVal=calcStoch(closes,highs,lows)[n];
   var mNow=macdArr[n],mPrev=macdArr[n-1],price=pd.currentPrice||closes[n];
@@ -94,7 +127,8 @@ function analyzeStock(stock,pd){
 
   var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
   var dispPrice=stock.market==="JP"?"¥"+Math.round(price).toLocaleString():"$"+price.toFixed(2);
-  var yearData=closes.slice(-252);
+  // 52週相当: 60日分データの全体を使用
+  var yearData=closes.slice(-YEAR_BARS);
   var high52=yearData.length>0?Math.max.apply(null,yearData):price;
   var low52=yearData.length>0?Math.min.apply(null,yearData):price;
   var fromHigh=high52>0?((price-high52)/high52*100):0;
@@ -102,17 +136,17 @@ function analyzeStock(stock,pd){
   var range52=high52-low52||1;
   var position52=((price-low52)/range52*100);
 
-  // ── トレードタイプ先行判定（BB収束日数に使用）────────────────────────────
-  var yearData0=closes.slice(-252);
+  // ── トレードタイプ先行判定（BB収束本数に使用）──────────────────────────
+  var yearData0=closes.slice(-YEAR_BARS);
   var high52_0=yearData0.length>0?Math.max.apply(null,yearData0):price;
   var low52_0=yearData0.length>0?Math.min.apply(null,yearData0):price;
   var yearRange0=high52_0>0?(high52_0-low52_0)/low52_0*100:0;
-  var recentC0=closes.slice(-20);
+  var recentC0=closes.slice(-RECENT_BARS);
   var avgDC0=0;
   if(recentC0.length>1){var tc0=0;for(var di=1;di<recentC0.length;di++)tc0+=Math.abs((recentC0[di]-recentC0[di-1])/recentC0[di-1]*100);avgDC0=tc0/(recentC0.length-1);}
   var absChg0=Math.abs(pd.previousClose?((price-pd.previousClose)/pd.previousClose*100):0);
   var tradeType0=yearRange0>=60||avgDC0>=2||absChg0>=5?"short":yearRange0>=25||avgDC0>=1||absChg0>=2?"mid":"stable";
-  var bbLookback=tradeType0==="short"?5:tradeType0==="mid"?10:20;
+  var bbLookback=tradeType0==="short"?BB_LOOKBACK_S:tradeType0==="mid"?BB_LOOKBACK_M:BB_LOOKBACK_L;
 
   // ── ① トレンド（サブ・15点）────────────────────────────────────────────
   if(s20&&s50){
@@ -209,7 +243,7 @@ function analyzeStock(stock,pd){
 
   // 出来高は常に表示
   if(volumes.length>0){
-    var recentVols=volumes.slice(-21,-1);
+    var recentVols=volumes.slice(-(RECENT_BARS+1),-1); // 20日相当の本数で平均
     var avgVol=recentVols.length>0?recentVols.reduce(function(a,b){return a+b;})/recentVols.length:0;
     var surge=avgVol>0?volumes[n]/avgVol:1;
     if(surge>=2.0){
@@ -230,7 +264,7 @@ function analyzeStock(stock,pd){
 
   sc=Math.min(scoreCap,Math.max(0,sc));
 
-  var recentCloses=closes.slice(-20);
+  var recentCloses=closes.slice(-RECENT_BARS); // 20日相当
   var avgDailyChange=0;
   if(recentCloses.length>1){
     var totalChange=0;
@@ -280,11 +314,11 @@ function analyzeStock(stock,pd){
   var atrLower=Math.round(price-atr);
   // ── サポートレベル（下値目安）──────────────────────────────────────────────
   var support=null;
-  if(lows.length>=20){
+  if(lows.length>=BB_P){
     var validLows=lows.filter(function(v){return v!=null&&v>0&&!isNaN(v)&&isFinite(v);});
     var isJPfmt=stock.market==="JP";
-    var s1v=validLows.length>=20?Math.min.apply(null,validLows.slice(-20)):null;
-    var s2v=validLows.length>=1?Math.min.apply(null,validLows.slice(-60)):null;
+    var s1v=validLows.length>=BB_P?Math.min.apply(null,validLows.slice(-BB_P)):null; // 20日相当
+    var s2v=validLows.length>=1?Math.min.apply(null,validLows.slice(-YEAR_BARS)):null; // 全期間
     var atrFv=price-atr*1.5;
     if(s1v!==null&&s2v!==null&&isFinite(s1v)&&isFinite(s2v)){
       support={
@@ -335,7 +369,7 @@ function analyzeStock(stock,pd){
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
-    real:pd.real,closes:closes,per:pd.per||null,pbr:pd.pbr||null,sector:pd.sector||null,
+    real:pd.real,closes:closes,per:pd.per||null,pbr:pd.pbr||null,
     high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
@@ -1152,7 +1186,6 @@ function AllStocksPanel(p){
   }).slice().sort(function(a,b){
     if(sortBy==="score") return b.score-a.score;
     if(sortBy==="change") return parseFloat(b.change)-parseFloat(a.change);
-    if(sortBy==="sector") return (a.sector||"\u305d\u306e\u4ed6").localeCompare(b.sector||"\u305d\u306e\u4ed6");
     return 0;
   });
 
@@ -1205,7 +1238,6 @@ function AllStocksPanel(p){
               <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>並替:</span>
               {sBtn("score","スコア")}
               {sBtn("change","上昇率")}
-              {sBtn("sector","業種")}
             </div>
             <div style={{gridColumn:"1 / -1",display:"flex",alignItems:"center",gap:6}}>
               <span style={{fontSize:10,color:"#4a7090"}}>
@@ -1226,7 +1258,6 @@ function AllStocksPanel(p){
             <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>並替:</span>
             {sBtn("score","スコア順")}
             {sBtn("change","上昇率順")}
-            {sBtn("sector","業種順")}
             <span style={{fontSize:10,color:"#1e3050",margin:"0 1px",flexShrink:0}}>|</span>
             <span style={{fontSize:10,color:"#4a7090",flexShrink:0}}>
               <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
@@ -1515,9 +1546,22 @@ function BacktestPanel(p){
   var selS=useState("");var sel=selS[0],setSel=selS[1];
   var resS=useState(null);var result=resS[0],setResult=resS[1];
   var sellDaysS=useState(5);var sellDays=sellDaysS[0],setSellDays=sellDaysS[1];
+  var btLoadingS=useState(false);var btLoading=btLoadingS[0],setBtLoading=btLoadingS[1];
   var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
   var otherStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)<0;});
-  function run(){var found=stocks.find(function(s){return s.ticker===sel;});if(!found||!found.closes)return;setResult(runBacktest(found.closes,sellDays));}
+  async function run(){
+    if(!sel||btLoading) return;
+    setBtLoading(true);setResult(null);
+    var daily=await fetchYahooDaily(sel);
+    if(daily&&daily.closes&&daily.closes.length>30){
+      setResult(runBacktest(daily.closes,sellDays));
+    }else{
+      // 日足取得失敗時はメモリ上の日足closeを流用（精度は落ちる）
+      var found=stocks.find(function(s){return s.ticker===sel;});
+      if(found&&found.closes) setResult(runBacktest(found.closes,sellDays));
+    }
+    setBtLoading(false);
+  }
   var SELL_DAYS=[1,3,5,10,20];
   return(
     <div>
@@ -1543,7 +1587,7 @@ function BacktestPanel(p){
             );
           })}
         </div>
-        <button onClick={run} disabled={!sel} style={{background:sel?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"12px",fontSize:14,fontWeight:700,cursor:sel?"pointer":"not-allowed",fontFamily:"monospace",width:"100%"}}>実行</button>
+        <button onClick={run} disabled={!sel||btLoading} style={{background:(sel&&!btLoading)?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"12px",fontSize:14,fontWeight:700,cursor:(sel&&!btLoading)?"pointer":"not-allowed",fontFamily:"monospace",width:"100%"}}>{btLoading?"日足データ取得中...":"実行（日足2年）"}</button>
       </div>
       {result&&(
         <div>
