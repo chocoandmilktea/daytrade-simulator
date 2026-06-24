@@ -862,7 +862,7 @@ function StockCard(p){
 
 // ── StockDetailPanel ─────────────────────────────────────────────────────────
 function StockDetailPanel(p){
-  var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav;
+  var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   if(!s){
     return(
       <div style={{textAlign:"center",padding:"60px 20px",color:"#2a6090"}}>
@@ -970,6 +970,7 @@ function StockDetailPanel(p){
       </div>
 
       <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"flex-end"}}>
+        <button onClick={function(){if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} style={{background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
         <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
         <button onClick={function(){setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
       </div>
@@ -1165,7 +1166,7 @@ function CrossSection(sp){
         <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
           <div style={{width:"60%",flexShrink:0}}>{cards}</div>
           <div style={{flex:1,position:"sticky",top:60,maxHeight:"calc(100vh - 70px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-            <StockDetailPanel s={sp.selectedStock&&sp.items.find(function(it){return it.s.ticker===sp.selectedStock.ticker;})?sp.selectedStock:null} toggleFav={sp.toggleFav} isFav={isFavFn} vix={sp.vix} usdJpy={sp.usdJpy}/>
+            <StockDetailPanel s={sp.selectedStock&&sp.items.find(function(it){return it.s.ticker===sp.selectedStock.ticker;})?sp.selectedStock:null} toggleFav={sp.toggleFav} isFav={isFavFn} vix={sp.vix} usdJpy={sp.usdJpy} onRescan={sp.onRescan} rescanLoading={sp.rescanLoading&&sp.selectedStock&&sp.rescanLoading[sp.selectedStock.ticker]}/>
           </div>
         </div>
       )}
@@ -1275,7 +1276,7 @@ function AllStocksPanel(p){
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]}/>
             </div>
           </div>
         )}
@@ -1363,7 +1364,7 @@ function FavPanel(p){
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy}/>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]}/>
             </div>
           </div>
         )}
