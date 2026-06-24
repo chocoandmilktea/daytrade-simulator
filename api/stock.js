@@ -52,8 +52,8 @@ export default async function handler(req, res) {
     }
     // ────────────────────────────────────────────────────────────────────
 
-    // ── PER・PBR・アナリスト目標株価を複数の方法で取得 ───────────────────
-    let per = null, pbr = null, analystTarget = null;
+    // ── PER・PBR・アナリスト目標株価・業種を複数の方法で取得 ─────────────
+    let per = null, pbr = null, analystTarget = null, sector = null; // [追加] sector
 
     // 方法①: chart APIのmetaから直接取得
     const chartMeta = data?.chart?.result?.[0]?.meta || {};
@@ -63,7 +63,8 @@ export default async function handler(req, res) {
     // 方法②: quoteSummary v10
     if (!per || !pbr || !analystTarget) {
       try {
-        const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics,summaryDetail,financialData`;
+        // [変更] assetProfile を modules に追加
+        const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics,summaryDetail,financialData,assetProfile`;
         const summaryRes = await fetch(summaryUrl, {
           headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -90,6 +91,10 @@ export default async function handler(req, res) {
           // アナリスト目標株価
           if (detail?.financialData?.targetMeanPrice?.raw) {
             analystTarget = detail.financialData.targetMeanPrice.raw;
+          }
+          // [追加] 業種
+          if (detail?.assetProfile?.sector) {
+            sector = detail.assetProfile.sector;
           }
         }
       } catch(e) {}
@@ -123,11 +128,12 @@ export default async function handler(req, res) {
     if (analystTarget && (!isFinite(analystTarget) || analystTarget <= 0)) analystTarget = null;
     // ─────────────────────────────────────────────────────────────────────
 
-    // chartデータにPER・PBR・アナリスト目標株価を付加
+    // chartデータにPER・PBR・アナリスト目標株価・業種を付加
     if (data?.chart?.result?.[0]) {
       data.chart.result[0].per = per;
       data.chart.result[0].pbr = pbr;
       data.chart.result[0].analystTarget = analystTarget;
+      data.chart.result[0].sector = sector; // [追加]
     }
 
     return res.status(200).json(data);
