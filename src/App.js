@@ -51,10 +51,10 @@ async function fetchYahoo(ticker){
   if(!result) throw new Error("empty");
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
-  var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null;
-  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget};
+  var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,sector=result.sector||null;
+  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,sector:sector};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,sector:data.sector};
 }
 
 function genSim(ticker){
@@ -335,7 +335,7 @@ function analyzeStock(stock,pd){
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
-    real:pd.real,closes:closes,per:pd.per||null,pbr:pd.pbr||null,
+    real:pd.real,closes:closes,per:pd.per||null,pbr:pd.pbr||null,sector:pd.sector||null,
     high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
@@ -1152,6 +1152,7 @@ function AllStocksPanel(p){
   }).slice().sort(function(a,b){
     if(sortBy==="score") return b.score-a.score;
     if(sortBy==="change") return parseFloat(b.change)-parseFloat(a.change);
+    if(sortBy==="sector") return (a.sector||"\u305d\u306e\u4ed6").localeCompare(b.sector||"\u305d\u306e\u4ed6");
     return 0;
   });
 
@@ -1204,6 +1205,7 @@ function AllStocksPanel(p){
               <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>並替:</span>
               {sBtn("score","スコア")}
               {sBtn("change","上昇率")}
+              {sBtn("sector","業種")}
             </div>
             <div style={{gridColumn:"1 / -1",display:"flex",alignItems:"center",gap:6}}>
               <span style={{fontSize:10,color:"#4a7090"}}>
@@ -1224,6 +1226,7 @@ function AllStocksPanel(p){
             <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>並替:</span>
             {sBtn("score","スコア順")}
             {sBtn("change","上昇率順")}
+            {sBtn("sector","業種順")}
             <span style={{fontSize:10,color:"#1e3050",margin:"0 1px",flexShrink:0}}>|</span>
             <span style={{fontSize:10,color:"#4a7090",flexShrink:0}}>
               <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
