@@ -588,7 +588,7 @@ function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.activ
 
 // ── StockCard ────────────────────────────────────────────────────────────────
 function StockCard(p){
-  var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross;
+  var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var expandedS=useState(false);var expanded=expandedS[0],setExpanded=expandedS[1];
   var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
@@ -692,6 +692,7 @@ function StockCard(p){
 
           <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"flex-end"}}>
             <button onClick={function(e){stopProp(e);setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:28,height:28,fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
+            <button onClick={function(e){stopProp(e);if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} style={{background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
             <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
             <button onClick={function(e){stopProp(e);setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
           </div>
@@ -1219,7 +1220,7 @@ function AllStocksPanel(p){
   var cardGrid=(
     <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
       {displayStocks.map(function(s){
-        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock}/>;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]}/>;
       })}
     </div>
   );
@@ -1314,7 +1315,7 @@ function FavPanel(p){
     <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
       {displayStocks.map(function(s){
         var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock}/>;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]}/>;
       })}
     </div>
   );
@@ -2161,6 +2162,22 @@ export default function App(){
       setLoading(false);
     }
   },[]);
+  var rescanLoadingS=useState({});var rescanLoading=rescanLoadingS[0],setRescanLoading=rescanLoadingS[1];
+  var rescanOne=useCallback(async function(ticker){
+    setRescanLoading(function(prev){var n=Object.assign({},prev);n[ticker]=true;return n;});
+    delete CACHE[ticker];
+    delete CACHE_DAILY[ticker];
+    try{
+      var existing=stocks.find(function(s){return s.ticker===ticker;});
+      if(!existing) return;
+      var pd;
+      try{pd=await fetchYahoo(ticker);}catch(e){pd=genSim(ticker);}
+      var updated=analyzeStock(existing,pd);
+      setStocks(function(prev){return prev.map(function(s){return s.ticker===ticker?updated:s;});});
+    }finally{
+      setRescanLoading(function(prev){var n=Object.assign({},prev);delete n[ticker];return n;});
+    }
+  },[stocks]);
   useEffect(function(){
     fetch(VERCEL_API+"?ticker="+encodeURIComponent("^VIX")+"&range=5d")
       .then(function(r){return r.json();})
@@ -2236,8 +2253,8 @@ export default function App(){
           </div>
         )}
         <div style={{marginLeft:isMobile?0:50,padding:"10px 10px 120px"}}>
-          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock}/>}
-          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock}/>}
+          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading}/>}
+          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
