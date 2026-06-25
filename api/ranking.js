@@ -144,23 +144,26 @@ function getTargetBusinessDay() {
   return `${y}-${m}-${day}`;
 }
 
+// J-Quants bars/daily には前日終値(PC)フィールドが存在しないため、
+// 変化率は当日始値(O)比で計算する（API仕様上これが最善）
+function calcChangeRate(bar) {
+  const open = bar.O || 0;
+  const close = bar.C || 0;
+  return open > 0 ? (close - open) / open : 0;
+}
+
 function mapJPBar(bar, names) {
   const code = String(bar.Code || "").replace(/0$/, "");
-  const close = bar.C || 0;
-  const open = bar.O || 0;
-  const vol = bar.Vo || 0;
-  const avgVol = bar.AvgVo || 0; // J-Quants v2 移動平均出来高（なければ0）
-  const change = open > 0 ? ((close - open) / open * 100) : 0;
   const name = names[code] || JP_NAMES_FALLBACK[code] || code;
   return {
     ticker: code + ".T",
     name: name,
     market: "JP",
     tvSymbol: "TSE:" + code,
-    volume: vol,
-    avgVolume: avgVol,
-    price: close,
-    change: parseFloat(change.toFixed(2)),
+    volume: bar.Vo || 0,
+    avgVolume: bar.AvgVo || 0,
+    price: bar.C || 0,
+    change: parseFloat((calcChangeRate(bar) * 100).toFixed(2)),
   };
 }
 
@@ -202,16 +205,12 @@ async function getJPRanking(req) {
 
   // 値上がり率上位：出来高フィルター通過後20件
   // avgVolumeが取れない場合は当日全銘柄の中央値で代替
-  const allVols = bars.map(function(b) { return b.Vo || 0; }).sort(function(a,b){return a-b;});
+  const allVols = bars.map(function(b) { return b.Vo || 0; }).sort(function(a, b) { return a - b; });
   const medianVol = allVols[Math.floor(allVols.length / 2)] || 0;
 
   const byChange = bars
     .slice()
-    .sort(function(a, b) {
-      const ca = a.O > 0 ? (a.C - a.O) / a.O : 0;
-      const cb = b.O > 0 ? (b.C - b.O) / b.O : 0;
-      return cb - ca;
-    })
+    .sort(function(a, b) { return calcChangeRate(b) - calcChangeRate(a); })
     .filter(function(bar) {
       const avg = bar.AvgVo || medianVol;
       return isVolumeAboveAvg(bar.Vo || 0, avg);
