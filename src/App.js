@@ -118,11 +118,18 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
     var aiData=await res.json();
     if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
     var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
-    try{
-      var jsonMatch=aiText2.match(/\{[^}]*"entry"[^}]*\}/);
-      if(jsonMatch){var parsed=JSON.parse(jsonMatch[0]);setAiEntry(parsed);}
-    }catch(je){}
-    setAiText(aiText2.replace(/```json[\s\S]*?```/g,"").replace(/\{[^}]*"entry"[^}]*\}/,"").trim()||"分析できませんでした。");
+    // 末尾の{...}ブロックを探してJSON.parseする（ネスト・配列値にも対応）
+    var cleanText=aiText2.replace(/```json[\s\S]*?```/g,"");
+    var braceIdx=cleanText.lastIndexOf("{");
+    var parsed=null;
+    if(braceIdx!==-1){
+      try{parsed=JSON.parse(cleanText.slice(braceIdx));}catch(je){}
+    }
+    if(parsed&&typeof parsed.entry!=="undefined"){
+      setAiEntry(parsed);
+      cleanText=cleanText.slice(0,braceIdx);
+    }
+    setAiText(cleanText.trim()||"分析できませんでした。");
   }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
   setAiLoading(false);
 }
