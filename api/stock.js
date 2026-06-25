@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   return handleUS(ticker, range, res);
 }
 
-// ── JP: J-Quants 1分足（過去30営業日）───────────────────────────────────────
+// ── JP: J-Quants 1分足（from/toで期間指定・1リクエスト）────────────────────
 async function handleJP(ticker, res) {
   try {
     const apiKey = process.env.JQUANTS_API_KEY;
@@ -19,30 +19,30 @@ async function handleJP(ticker, res) {
 
     const code = ticker.replace(".T", "") + "0";
 
-    // 古い順（時系列順）で日付リストを生成
-    const dates = getPastBusinessDays(10).reverse();
+    // 過去10営業日のfrom/toを計算（JSTで今日から10営業日前）
+    const today = getJSTDate(0);
+    const from  = getJSTDate(16); // 土日祝を考慮して多めに16日前
 
-    // 全日付を並列取得しつつ、インデックスで順序を保証
-    const barsPerDate = await Promise.all(dates.map(async (date) => {
-      try {
-        const url = `https://api.jquants.com/v2/equities/bars/minute?code=${code}&date=${date}`;
-        const r = await fetch(url, {
-          headers: { "x-api-key": apiKey },
-          signal: AbortSignal.timeout(8000),
-        });
-        if (!r.ok) return [];
-        const json = await r.json();
-        return json.data || [];
-      } catch (e) { return []; }
-    }));
-
-    // インデックス順（古い日付から）に結合
-    const allBars = [];
-    barsPerDate.forEach(function(bars) {
-      bars.forEach(function(b) { allBars.push(b); });
+    const url = `https://api.jquants.com/v2/equities/bars/minute?code=${code}&from=${from}&to=${today}`;
+    const r = await fetch(url, {
+      headers: { "x-api-key": apiKey },
+      signal: AbortSignal.timeout(9000),
     });
+    if (!r.ok) {
+      const errText = await r.text();
+      throw new Error(`J-Quants ${r.status}: ${errText}`);
+    }
+    const json = await r.json();
+    const allBars = json.data || [];
 
     if (!allBars.length) throw new Error("no JP minute data");
+
+    // 日付昇順でソート（念のため）
+    allBars.sort(function(a, b) {
+      const ka = a.Date + a.Time;
+      const kb = b.Date + b.Time;
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
 
     const closes  = allBars.map(function(b) { return b.C  || 0; });
     const highs   = allBars.map(function(b) { return b.H  || 0; });
@@ -69,7 +69,7 @@ async function handleJP(ticker, res) {
             regularMarketPrice: currentPrice,
             chartPreviousClose: previousClose,
             dataInterval: "1m",
-            dataRange: "30d",
+            dataRange: "10d",
           },
           indicators: {
             quote: [{ close: closes, high: highs, low: lows, volume: volumes }],
@@ -83,22 +83,15 @@ async function handleJP(ticker, res) {
   }
 }
 
-// ── 過去N営業日の日付リストを生成（今日含む・新しい順）─────────────────────
-function getPastBusinessDays(n) {
-  const dates = [];
+// ── JST日付文字列を取得（daysAgo日前、YYYYMMDD形式）────────────────────────
+function getJSTDate(daysAgo) {
   const d = new Date();
   d.setTime(d.getTime() + 9 * 60 * 60 * 1000);
-  while (dates.length < n) {
-    const dow = d.getUTCDay();
-    if (dow !== 0 && dow !== 6) {
-      const y = d.getUTCFullYear();
-      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-      const day = String(d.getUTCDate()).padStart(2, "0");
-      dates.push(`${y}${m}${day}`);
-    }
-    d.setUTCDate(d.getUTCDate() - 1);
-  }
-  return dates;
+  d.setUTCDate(d.getUTCDate() - daysAgo);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}${m}${day}`;
 }
 
 // ── US: Yahoo Finance（既存コードそのまま）──────────────────────────────────
@@ -125,9 +118,7 @@ async function handleUS(ticker, range, res) {
       const validCloses = closes.filter(v => v != null && !isNaN(v));
       const previousClose =
         (validCloses.length >= 2 ? validCloses[validCloses.length - 2] : null)
-        || meta.chartPreviousClose
-        || meta.regularMarketPreviousClose
-        || 0;
+        || meta.chartPreviousClose || meta.regularMarketPreviousClose || 0;
       result.meta.chartPreviousClose = previousClose;
       result.meta.dataInterval = interval;
       result.meta.dataRange = r;
