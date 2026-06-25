@@ -20,7 +20,7 @@ async function handleJP(ticker, res) {
     const code = ticker.replace(".T", "") + "0";
 
     // 古い順（時系列順）で日付リストを生成
-    const dates = getPastBusinessDays(30).reverse();
+    const dates = getPastBusinessDays(10).reverse();
 
     // 全日付を並列取得しつつ、インデックスで順序を保証
     const barsPerDate = await Promise.all(dates.map(async (date) => {
