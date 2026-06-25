@@ -118,15 +118,17 @@ function analyzeStock(stock,pd){
   //     実用上はバー数上限に合わせて縮小定義
   // US: Yahoo Finance 15分足（1日≒26本）・60日分≒1560本
   var isJP=stock.market==="JP";
-  var SMA_S      =isJP?400 :520;   // JP:約20日 / US:約20日
-  var SMA_L      =isJP?1000:1300;  // JP:約50日 / US:約50日
-  var RSI_P      =isJP?280 :364;   // JP:14日相当 / US:14日相当
-  var BB_P       =isJP?400 :520;   // JP:約20日 / US:約20日
-  var STOCH_P    =isJP?280 :364;   // JP:14日相当 / US:14日相当
-  var RECENT_BARS=isJP?400 :520;   // JP:約20日 / US:約20日
-  var BB_LOOKBACK_S=isJP?100:130;  // short: 約5日相当
-  var BB_LOOKBACK_M=isJP?200:260;  // mid:   約10日相当
-  var BB_LOOKBACK_L=isJP?400:520;  // stable: 約20日相当
+  // JP:1分足/20日(1日≒390本) / US:5分足/30日(1日≒78本)
+  var DAY_BARS   =isJP?390 :78;    // 1日あたりのバー数
+  var SMA_S      =isJP?7800:1560;  // JP:20日 / US:20日
+  var SMA_L      =isJP?19500:3900; // JP:50日 / US:50日
+  var RSI_P      =isJP?5460:1092;  // JP:14日相当 / US:14日相当
+  var BB_P       =isJP?7800:1560;  // JP:20日 / US:20日
+  var STOCH_P    =isJP?5460:1092;  // JP:14日相当 / US:14日相当
+  var RECENT_BARS=isJP?7800:1560;  // JP:20日 / US:20日
+  var BB_LOOKBACK_S=isJP?1950:390; // short: 約5日相当
+  var BB_LOOKBACK_M=isJP?3900:780; // mid:   約10日相当
+  var BB_LOOKBACK_L=isJP?7800:1560;// stable: 約20日相当
   var YEAR_BARS=closes.length;     // 取得全期間を52週相当として使用
   // ───────────────────────────────────────────────────────────────────────
   var s20=calcSMA(closes,SMA_S)[n],s50=calcSMA(closes,SMA_L)[n];
@@ -265,19 +267,24 @@ function analyzeStock(stock,pd){
 
   // ── ⑦ OBV・出来高（メイン・最大25点）─────────────────────────────────
   var obScore=0;
-  var dayRange=highs[n]-lows[n]||1;
-  var closePosition=(price-lows[n])/dayRange;
+  // OBV: 直近1日分のバーの終値位置平均で判定
+  var obvBars=Math.min(DAY_BARS,n+1);
+  var cpSum=0;
+  for(var oi=n-obvBars+1;oi<=n;oi++){var dr=highs[oi]-lows[oi]||1;cpSum+=(closes[oi]-lows[oi])/dr;}
+  var closePosition=cpSum/obvBars;
   if(closePosition>=0.8){obScore+=12;signals.push({label:"OBV",val:"買い優勢",state:1});}
   else if(closePosition>=0.6){obScore+=6;signals.push({label:"OBV",val:"やや買い優勢",state:1});}
   else if(closePosition<=0.2){obScore-=10;signals.push({label:"OBV",val:"売り優勢",state:-1});}
   else if(closePosition<=0.4){obScore-=5;signals.push({label:"OBV",val:"やや売り優勢",state:-1});}
   else{signals.push({label:"OBV",val:"中立",state:0});}
 
-  // 出来高は常に表示
+  // 出来高: 直近5日分合計 vs 長期20日平均（同期間）で比較
   if(volumes.length>0){
-    var recentVols=volumes.slice(-(RECENT_BARS+1),-1); // 20日相当の本数で平均
-    var avgVol=recentVols.length>0?recentVols.reduce(function(a,b){return a+b;})/recentVols.length:0;
-    var surge=avgVol>0?volumes[n]/avgVol:1;
+    var volDay5=DAY_BARS*5,volDay20=DAY_BARS*20;
+    var recentSum=volumes.slice(-volDay5).reduce(function(a,b){return a+b;},0);
+    var longVols=volumes.slice(-volDay20,-volDay5);
+    var avgSum=longVols.length>0?longVols.reduce(function(a,b){return a+b;},0)/longVols.length*volDay5:0;
+    var surge=avgSum>0?recentSum/avgSum:1;
     if(surge>=2.0){
       obScore+=(closePosition>=0.6?13:closePosition<=0.4?-13:3);
       signals.push({label:"出来高",val:surge.toFixed(1)+"倍"+(closePosition>=0.6?"(買い)":closePosition<=0.4?"(売り)":"(中立)"),state:closePosition>=0.6?1:closePosition<=0.4?-1:0});
