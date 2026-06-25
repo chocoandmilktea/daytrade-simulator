@@ -112,18 +112,22 @@ function analyzeStock(stock,pd){
   var closes=pd.closes.slice(),highs=pd.highs.slice(),lows=pd.lows.slice();
   var volumes=pd.volumes?pd.volumes.slice():[];
   var n=closes.length-1;
-  // ── 15分足換算：1日≒26本（6.5時間×4本/時）────────────────────────────
-  // 日足20日→15分足520本、日足50日→15分足1300本
-  // ただし60日データ=約1560本なので、SMA50≒1300本は計算可能
-  var SMA_S=520,SMA_L=1300; // 20日・50日相当
-  var RSI_P=364;             // 14日相当（14×26）
-  var BB_P=520;              // 20日相当
-  var STOCH_P=364;           // 14日相当
-  var RECENT_BARS=520;       // 直近20日相当（出来高平均・変動率用）
-  var BB_LOOKBACK_S=130;     // short: 5日相当
-  var BB_LOOKBACK_M=260;     // mid: 10日相当
-  var BB_LOOKBACK_L=520;     // stable: 20日相当
-  var YEAR_BARS=closes.length; // 60日分全体を52週相当として使用
+  // ── 足種別パラメータ切替 ──────────────────────────────────────────────────
+  // JP: J-Quants 1分足・30営業日（1日≒390本 東証9:00-15:30）
+  //     20日相当=390×20=7800本だが取得は30日≒11700本
+  //     実用上はバー数上限に合わせて縮小定義
+  // US: Yahoo Finance 15分足（1日≒26本）・60日分≒1560本
+  var isJP=stock.market==="JP";
+  var SMA_S      =isJP?400 :520;   // JP:約20日 / US:約20日
+  var SMA_L      =isJP?1000:1300;  // JP:約50日 / US:約50日
+  var RSI_P      =isJP?280 :364;   // JP:14日相当 / US:14日相当
+  var BB_P       =isJP?400 :520;   // JP:約20日 / US:約20日
+  var STOCH_P    =isJP?280 :364;   // JP:14日相当 / US:14日相当
+  var RECENT_BARS=isJP?400 :520;   // JP:約20日 / US:約20日
+  var BB_LOOKBACK_S=isJP?100:130;  // short: 約5日相当
+  var BB_LOOKBACK_M=isJP?200:260;  // mid:   約10日相当
+  var BB_LOOKBACK_L=isJP?400:520;  // stable: 約20日相当
+  var YEAR_BARS=closes.length;     // 取得全期間を52週相当として使用
   // ───────────────────────────────────────────────────────────────────────
   var s20=calcSMA(closes,SMA_S)[n],s50=calcSMA(closes,SMA_L)[n];
   var macdArr=calcMACD(closes),rsiVal=calcRSI(closes)[n];
