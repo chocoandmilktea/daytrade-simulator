@@ -14,7 +14,7 @@ var MKT = {
 function scoreColor(n){ return n>=68?"#22d3a0":n>=42?"#fbbf24":"#f43f5e"; }
 function bStyle(bg,border,text){ return{background:bg,border:"1px solid "+border,color:text,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:4}; }
 
-var CACHE={}, CACHE_TTL=15*60*1000; // 15分足に合わせてTTLを15分に短縮
+var CACHE={}, CACHE_TTL=5*60*1000; // 5分足に合わせてTTLを5分に設定
 var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 
@@ -41,11 +41,11 @@ async function buildStockUniverse(){
   return out;
 }
 
-// 15分足データ取得（メイン分析用・60日分）
+// JP:1分足/20営業日・US:5分足/30日固定
 async function fetchYahoo(ticker){
   var now=Date.now();
   if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real};}
-  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(15000)});
+  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(15000)});
   if(!res.ok) throw new Error("HTTP "+res.status);
   var json=await res.json();
   var result=json&&json.chart&&json.chart.result&&json.chart.result[0];
@@ -113,10 +113,9 @@ function analyzeStock(stock,pd){
   var volumes=pd.volumes?pd.volumes.slice():[];
   var n=closes.length-1;
   // ── 足種別パラメータ切替 ──────────────────────────────────────────────────
-  // JP: J-Quants 1分足・30営業日（1日≒390本 東証9:00-15:30）
-  //     20日相当=390×20=7800本だが取得は30日≒11700本
-  //     実用上はバー数上限に合わせて縮小定義
-  // US: Yahoo Finance 15分足（1日≒26本）・60日分≒1560本
+  // JP: J-Quants 1分足・20営業日（1日≒390本 東証9:00-15:30）
+  //     20日相当=390×20=7800本
+  // US: Yahoo Finance 5分足（1日≒78本）・30日分≒2340本
   var isJP=stock.market==="JP";
   var SMA_S      =isJP?400 :520;   // JP:約20日 / US:約20日
   var SMA_L      =isJP?1000:1300;  // JP:約50日 / US:約50日
@@ -2073,7 +2072,7 @@ function SyncPanel(p){
 function HelpModal(p){
   var onClose=p.onClose;
   var SECTIONS=[
-    {title:"📊 データ取得",items:["米国株：Yahoo Finance・15分足（直近60日）","日本株：J-Quants・1分足（直近10営業日）","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
+    {title:"📊 データ取得",items:["米国株：Yahoo Finance・5分足（直近30日）","日本株：J-Quants・1分足（直近20営業日）","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
     {title:"🔗 デバイス同期",items:["お気に入り登録時にサーバーへ自動保存","起動時にサーバーからデータを自動取得","Pushoverでデバイスに同期IDを通知","同期タブでIDを入力して別デバイスと同期"]},
     {title:"📖 指標の見方（RSI・BB・BB収束・OBV・出来高）",items:[
       "【確認用】RSI（相対力指数）：30以下で売られすぎ・反発狙いの補助確認。70以上で買われすぎ・過熱感の補助確認。BBのシグナルと合わせて判断する",
