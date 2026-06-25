@@ -4,14 +4,14 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const { ticker, range } = req.query;
+  const { ticker } = req.query;
   if (!ticker) return res.status(400).json({ error: "ticker is required" });
 
   if (ticker.endsWith(".T")) return handleJP(ticker, res);
-  return handleUS(ticker, range, res);
+  return handleUS(ticker, res);
 }
 
-// ── JP: J-Quants 1分足（from/toで期間指定・1リクエスト）────────────────────
+// ── JP: J-Quants 1分足（20営業日 / バッファ込み30日）────────────────────
 async function handleJP(ticker, res) {
   try {
     const apiKey = process.env.JQUANTS_API_KEY;
@@ -19,9 +19,8 @@ async function handleJP(ticker, res) {
 
     const code = ticker.replace(".T", "") + "0";
 
-    // 過去10営業日のfrom/toを計算（JSTで今日から10営業日前）
     const today = getJSTDate(0);
-    const from  = getJSTDate(16); // 土日祝を考慮して多めに16日前
+    const from  = getJSTDate(30); // 土日祝込みで約20営業日カバー
 
     const url = `https://api.jquants.com/v2/equities/bars/minute?code=${code}&from=${from}&to=${today}`;
     const r = await fetch(url, {
@@ -37,7 +36,6 @@ async function handleJP(ticker, res) {
 
     if (!allBars.length) throw new Error("no JP minute data");
 
-    // 日付昇順でソート（念のため）
     allBars.sort(function(a, b) {
       const ka = a.Date + a.Time;
       const kb = b.Date + b.Time;
@@ -49,10 +47,8 @@ async function handleJP(ticker, res) {
     const lows    = allBars.map(function(b) { return b.L  || 0; });
     const volumes = allBars.map(function(b) { return b.Vo || 0; });
 
-    // currentPrice: 当日最終バーの終値
     const currentPrice = closes[closes.length - 1];
 
-    // previousClose: 前営業日の最終バー終値
     const todayDate = allBars[allBars.length - 1]?.Date;
     let previousClose = currentPrice;
     for (let i = allBars.length - 1; i >= 0; i--) {
@@ -69,7 +65,7 @@ async function handleJP(ticker, res) {
             regularMarketPrice: currentPrice,
             chartPreviousClose: previousClose,
             dataInterval: "1m",
-            dataRange: "10d",
+            dataRange: "20d",
           },
           indicators: {
             quote: [{ close: closes, high: highs, low: lows, volume: volumes }],
@@ -94,12 +90,9 @@ function getJSTDate(daysAgo) {
   return `${y}${m}${day}`;
 }
 
-// ── US: Yahoo Finance（既存コードそのまま）──────────────────────────────────
-async function handleUS(ticker, range, res) {
-  const r = range || "60d";
-  const isIntraday = ["1d","5d","1mo","60d"].includes(r);
-  const interval = isIntraday ? "15m" : "1d";
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${r}`;
+// ── US: Yahoo Finance 5分足 / 30日固定 ──────────────────────────────────
+async function handleUS(ticker, res) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=5m&range=30d`;
 
   try {
     const response = await fetch(url, {
@@ -120,8 +113,8 @@ async function handleUS(ticker, range, res) {
         (validCloses.length >= 2 ? validCloses[validCloses.length - 2] : null)
         || meta.chartPreviousClose || meta.regularMarketPreviousClose || 0;
       result.meta.chartPreviousClose = previousClose;
-      result.meta.dataInterval = interval;
-      result.meta.dataRange = r;
+      result.meta.dataInterval = "5m";
+      result.meta.dataRange = "30d";
     }
 
     let per = null, pbr = null, analystTarget = null, sector = null;
