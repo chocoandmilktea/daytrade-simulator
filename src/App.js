@@ -58,24 +58,6 @@ async function fetchYahoo(ticker){
   return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget};
 }
 
-// 日足データ取得（バックテスト専用・2年分）
-var CACHE_DAILY={};
-async function fetchYahooDaily(ticker){
-  var now=Date.now();
-  if(CACHE_DAILY[ticker]&&now-CACHE_DAILY[ticker].ts<60*60*1000){var c=CACHE_DAILY[ticker].data;return{closes:c.closes.slice()};}
-  try{
-    var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=2y",{signal:AbortSignal.timeout(15000)});
-    if(!res.ok) throw new Error("HTTP "+res.status);
-    var json=await res.json();
-    var result=json&&json.chart&&json.chart.result&&json.chart.result[0];
-    if(!result) throw new Error("empty");
-    var q=result.indicators.quote[0];
-    function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
-    var data={closes:fill(q.close)};
-    CACHE_DAILY[ticker]={ts:now,data:data};
-    return{closes:data.closes.slice()};
-  }catch(e){return null;}
-}
 
 function genSim(ticker){
   var h=0;for(var i=0;i<ticker.length;i++)h=(Math.imul(31,h)+ticker.charCodeAt(i))|0;
@@ -1594,21 +1576,13 @@ function BacktestPanel(p){
   var selS=useState("");var sel=selS[0],setSel=selS[1];
   var resS=useState(null);var result=resS[0],setResult=resS[1];
   var sellDaysS=useState(5);var sellDays=sellDaysS[0],setSellDays=sellDaysS[1];
-  var btLoadingS=useState(false);var btLoading=btLoadingS[0],setBtLoading=btLoadingS[1];
   var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
   var otherStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)<0;});
-  async function run(){
-    if(!sel||btLoading) return;
-    setBtLoading(true);setResult(null);
-    var daily=await fetchYahooDaily(sel);
-    if(daily&&daily.closes&&daily.closes.length>30){
-      setResult(runBacktest(daily.closes,sellDays));
-    }else{
-      // 日足取得失敗時はメモリ上の日足closeを流用（精度は落ちる）
-      var found=stocks.find(function(s){return s.ticker===sel;});
-      if(found&&found.closes) setResult(runBacktest(found.closes,sellDays));
-    }
-    setBtLoading(false);
+  function run(){
+    if(!sel) return;
+    setResult(null);
+    var found=stocks.find(function(s){return s.ticker===sel;});
+    if(found&&found.closes) setResult(runBacktest(found.closes,sellDays));
   }
   var SELL_DAYS=[1,3,5,10,20];
   return(
@@ -1635,7 +1609,7 @@ function BacktestPanel(p){
             );
           })}
         </div>
-        <button onClick={run} disabled={!sel||btLoading} style={{background:(sel&&!btLoading)?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"12px",fontSize:14,fontWeight:700,cursor:(sel&&!btLoading)?"pointer":"not-allowed",fontFamily:"monospace",width:"100%"}}>{btLoading?"日足データ取得中...":"実行（日足2年）"}</button>
+        <button onClick={run} disabled={!sel} style={{background:sel?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"12px",fontSize:14,fontWeight:700,cursor:sel?"pointer":"not-allowed",fontFamily:"monospace",width:"100%"}}>実行</button>
       </div>
       {result&&(
         <div>
@@ -2212,7 +2186,6 @@ export default function App(){
   var rescanOne=useCallback(async function(ticker){
     setRescanLoading(function(prev){var n=Object.assign({},prev);n[ticker]=true;return n;});
     delete CACHE[ticker];
-    delete CACHE_DAILY[ticker];
     try{
       var existing=stocks.find(function(s){return s.ticker===ticker;});
       if(!existing) return;
