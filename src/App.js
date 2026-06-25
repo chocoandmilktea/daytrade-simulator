@@ -2103,7 +2103,8 @@ function MarketHours(){
   var isSummer=(month>3&&month<11)||(month===3&&day>=8)||(month===11&&day<=7);
   var usStartMin=isSummer?22*60+30:23*60+30;
   var usEndMin=isSummer?5*60:6*60;
-  var usOpen=isWeekday&&(timeMin>=usStartMin||timeMin<usEndMin);
+  // 月曜早朝(0:00〜usEndMin)は日曜夜の続きなので閉場
+  var usOpen=isWeekday&&(timeMin>=usStartMin||timeMin<usEndMin)&&!(dow===1&&timeMin<usEndMin);
   if(dow===6&&timeMin<usEndMin) usOpen=true;
   if(dow===0&&timeMin>=usStartMin) usOpen=false;
   var isMobile=window.innerWidth<768;
