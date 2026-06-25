@@ -2,24 +2,107 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
+  if (req.method === "OPTIONS") return res.status(200).end();
 
   const { ticker, range } = req.query;
+  if (!ticker) return res.status(400).json({ error: "ticker is required" });
 
-  if (!ticker) {
-    return res.status(400).json({ error: "ticker is required" });
+  // ── JP銘柄はJ-Quants分足APIへ ────────────────────────────────────────────
+  if (ticker.endsWith(".T")) {
+    return handleJP(ticker, res);
   }
 
-  // ── [変更] 15分足対応：rangeに応じてintervalを自動切替 ──────────────────
-  // range=60d以下 → 15分足、それ以外 → 日足（バックテスト用2yなど）
+  // ── US銘柄はYahoo Finance（現状維持）────────────────────────────────────
+  return handleUS(ticker, range, res);
+}
+
+// ── JP: J-Quants 1分足（過去30営業日）───────────────────────────────────────
+async function handleJP(ticker, res) {
+  try {
+    const apiKey = process.env.JQUANTS_API_KEY;
+    if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
+
+    // .T を除いて5桁コードに変換（例: 7203.T → 72030）
+    const code = ticker.replace(".T", "") + "0";
+
+    // 過去30営業日分の日付リストを生成
+    const dates = getPastBusinessDays(30);
+
+    // 日付ごとに並列取得（5件ずつ）
+    const allBars = [];
+    const BATCH = 5;
+    for (let i = 0; i < dates.length; i += BATCH) {
+      const batch = dates.slice(i, i + BATCH);
+      const results = await Promise.all(batch.map(async (date) => {
+        try {
+          const url = `https://api.jquants.com/v2/equities/bars/minute?code=${code}&date=${date}`;
+          const r = await fetch(url, {
+            headers: { "x-api-key": apiKey },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!r.ok) return [];
+          const json = await r.json();
+          return json.data || [];
+        } catch (e) { return []; }
+      }));
+      results.forEach(function(bars) { bars.forEach(function(b) { allBars.push(b); }); });
+    }
+
+    if (!allBars.length) throw new Error("no JP minute data");
+
+    // App.jsが期待する形式に変換
+    const closes  = allBars.map(function(b) { return b.C  || 0; });
+    const highs   = allBars.map(function(b) { return b.H  || 0; });
+    const lows    = allBars.map(function(b) { return b.L  || 0; });
+    const volumes = allBars.map(function(b) { return b.Vo || 0; });
+
+    const currentPrice  = closes[closes.length - 1];
+    const previousClose = closes[closes.length - 2] || currentPrice;
+
+    // Yahoo Finance互換レスポンスに整形
+    return res.status(200).json({
+      chart: {
+        result: [{
+          meta: {
+            regularMarketPrice: currentPrice,
+            chartPreviousClose: previousClose,
+            dataInterval: "1m",
+            dataRange: "30d",
+          },
+          indicators: {
+            quote: [{ close: closes, high: highs, low: lows, volume: volumes }],
+          },
+          per: null, pbr: null, analystTarget: null, sector: null,
+        }],
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+// ── 過去N営業日の日付リストを生成（土日除外）────────────────────────────────
+function getPastBusinessDays(n) {
+  const dates = [];
+  const d = new Date();
+  d.setTime(d.getTime() + 9 * 60 * 60 * 1000); // JST変換
+  while (dates.length < n) {
+    d.setUTCDate(d.getUTCDate() - 1);
+    const dow = d.getUTCDay();
+    if (dow === 0 || dow === 6) continue; // 土日スキップ
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    dates.push(`${y}${m}${day}`);
+  }
+  return dates;
+}
+
+// ── US: Yahoo Finance（既存コードそのまま）──────────────────────────────────
+async function handleUS(ticker, range, res) {
   const r = range || "60d";
   const isIntraday = ["1d","5d","1mo","60d"].includes(r);
   const interval = isIntraday ? "15m" : "1d";
-  // ─────────────────────────────────────────────────────────────────────────
-
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${r}`;
 
   try {
@@ -29,48 +112,29 @@ export default async function handler(req, res) {
         "Accept": "application/json",
       },
     });
-
-    if (!response.ok) {
-      throw new Error(`Yahoo Finance returned ${response.status}`);
-    }
-
+    if (!response.ok) throw new Error(`Yahoo Finance returned ${response.status}`);
     const data = await response.json();
 
-    // ── previousClose を終値配列の最後から2番目で正確に計算 ─────────────────
     const result = data?.chart?.result?.[0];
     if (result) {
       const closes = result.indicators?.quote?.[0]?.close || [];
       const meta = result.meta || {};
-
       const validCloses = closes.filter(v => v != null && !isNaN(v));
-
-      const prevFromCloses = validCloses.length >= 2
-        ? validCloses[validCloses.length - 2]
-        : null;
-
       const previousClose =
-        prevFromCloses ||
-        meta.chartPreviousClose ||
-        meta.regularMarketPreviousClose ||
-        0;
-
+        (validCloses.length >= 2 ? validCloses[validCloses.length - 2] : null)
+        || meta.chartPreviousClose
+        || meta.regularMarketPreviousClose
+        || 0;
       result.meta.chartPreviousClose = previousClose;
-
-      // ── [追加] 15分足モードの場合はinterval情報をレスポンスに付加 ──────────
       result.meta.dataInterval = interval;
       result.meta.dataRange = r;
-      // ────────────────────────────────────────────────────────────────────
     }
 
-    // ── PER・PBR・アナリスト目標株価・業種を複数の方法で取得 ────────────────
     let per = null, pbr = null, analystTarget = null, sector = null;
-
-    // 方法①: chart APIのmetaから直接取得
     const chartMeta = data?.chart?.result?.[0]?.meta || {};
     if (chartMeta.trailingPE) per = chartMeta.trailingPE;
     if (chartMeta.priceToBook) pbr = chartMeta.priceToBook;
 
-    // 方法②: quoteSummary v10
     if (!per || !pbr || !analystTarget || !sector) {
       try {
         const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics,summaryDetail,financialData,assetProfile`;
@@ -86,28 +150,19 @@ export default async function handler(req, res) {
           const summary = await summaryRes.json();
           const detail = summary?.quoteSummary?.result?.[0];
           if (!per) {
-            per = detail?.summaryDetail?.trailingPE?.raw
-              || detail?.defaultKeyStatistics?.trailingEps?.raw
-              || null;
+            per = detail?.summaryDetail?.trailingPE?.raw || null;
             if (!per && detail?.defaultKeyStatistics?.trailingEps?.raw && chartMeta.regularMarketPrice) {
               const eps = detail.defaultKeyStatistics.trailingEps.raw;
               if (eps > 0) per = chartMeta.regularMarketPrice / eps;
             }
           }
-          if (!pbr) {
-            pbr = detail?.defaultKeyStatistics?.priceToBook?.raw || null;
-          }
-          if (detail?.financialData?.targetMeanPrice?.raw) {
-            analystTarget = detail.financialData.targetMeanPrice.raw;
-          }
-          if (detail?.assetProfile?.sector) {
-            sector = detail.assetProfile.sector;
-          }
+          if (!pbr) pbr = detail?.defaultKeyStatistics?.priceToBook?.raw || null;
+          if (detail?.financialData?.targetMeanPrice?.raw) analystTarget = detail.financialData.targetMeanPrice.raw;
+          if (detail?.assetProfile?.sector) sector = detail.assetProfile.sector;
         }
       } catch(e) {}
     }
 
-    // 方法③: quote APIから取得
     if (!per || !pbr) {
       try {
         const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}&fields=trailingPE,priceToBook`;
@@ -129,12 +184,10 @@ export default async function handler(req, res) {
       } catch(e) {}
     }
 
-    // null/NaN/Inf のガード
     if (per && (!isFinite(per) || per <= 0 || per > 10000)) per = null;
     if (pbr && (!isFinite(pbr) || pbr <= 0 || pbr > 1000)) pbr = null;
     if (analystTarget && (!isFinite(analystTarget) || analystTarget <= 0)) analystTarget = null;
 
-    // chartデータにPER・PBR・アナリスト目標株価・業種を付加
     if (data?.chart?.result?.[0]) {
       data.chart.result[0].per = per;
       data.chart.result[0].pbr = pbr;
