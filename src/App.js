@@ -92,6 +92,12 @@ function calcRSI(arr){var p=14,out=[];for(var x=0;x<p;x++)out.push(null);var ag=
 function calcBoll(arr){var p=20,k=2;return arr.map(function(_,i){if(i<p-1)return null;var bl=arr.slice(i-p+1,i+1),m=bl.reduce(function(a,b){return a+b;})/p,sd=Math.sqrt(bl.reduce(function(a,b){return a+(b-m)*(b-m);},0)/p);return{upper:m+k*sd,lower:m-k*sd};});}
 function calcStoch(closes,highs,lows){var p=14;return closes.map(function(_,i){if(i<p-1)return null;var hi=Math.max.apply(null,highs.slice(i-p+1,i+1)),lo=Math.min.apply(null,lows.slice(i-p+1,i+1));if(lo===hi)return 50;return((closes[i]-lo)/(hi-lo))*100;});}
 
+// VWAP（出来高加重平均価格）
+function calcVWAP(closes,highs,lows,volumes){var cumTPV=0,cumVol=0;for(var i=0;i<closes.length;i++){var tp=(highs[i]+lows[i]+closes[i])/3,v=volumes[i]||0;cumTPV+=tp*v;cumVol+=v;}return cumVol>0?cumTPV/cumVol:null;}
+
+// ピボットポイント（前日相当26本から計算）
+function calcPivot(closes,highs,lows){var DAY=26,len=closes.length;if(len<DAY*2)return null;var ph=highs.slice(len-DAY*2,len-DAY),pl=lows.slice(len-DAY*2,len-DAY);var prevH=Math.max.apply(null,ph),prevL=Math.min.apply(null,pl),prevC=closes[len-DAY-1];var pp=(prevH+prevL+prevC)/3;return{pp:pp,r1:pp*2-prevL,s1:pp*2-prevH,r2:pp+(prevH-prevL),s2:pp-(prevH-prevL),prevHigh:prevH,prevLow:prevL,prevClose:prevC};}
+
 function runBacktest(closes,sellDays){
   var days=sellDays||5;
   var results=[],wins=0,total=0;
@@ -124,6 +130,28 @@ function analyzeStock(stock,pd){
   var bollVal=calcBoll(closes)[n],stochVal=calcStoch(closes,highs,lows)[n];
   var mNow=macdArr[n],mPrev=macdArr[n-1],price=pd.currentPrice||closes[n];
   var sc=0,signals=[];
+
+  // ── VWAP・ピボット計算 ─────────────────────────────────────────────────────
+  var vwap=volumes.length>0?calcVWAP(closes,highs,lows,volumes):null;
+  var pivot=calcPivot(closes,highs,lows);
+
+  // ── ⑧ VWAP シグナル（補助・最大12点）────────────────────────────────────
+  if(vwap!==null){
+    var vwapDiff=(price-vwap)/vwap*100;
+    if(price>vwap&&vwapDiff<=1.0){sc+=12;signals.push({label:"VWAP",val:"上抜け直後",state:1});}
+    else if(price>vwap){sc+=6;signals.push({label:"VWAP",val:"上方乖離(+"+vwapDiff.toFixed(1)+"%)",state:1});}
+    else if(price<vwap&&vwapDiff>=-1.0){sc+=8;signals.push({label:"VWAP",val:"下抜け直後",state:-1});}
+    else{sc-=6;signals.push({label:"VWAP",val:"下方乖離("+vwapDiff.toFixed(1)+"%)",state:-1});}
+  }
+
+  // ── ⑨ ピボットポイント シグナル（補助・最大10点）────────────────────────
+  if(pivot!==null){
+    if(price>pivot.r1){sc-=5;signals.push({label:"Pivot",val:"R1上抜け(過熱)",state:-1});}
+    else if(price>pivot.pp&&price<=pivot.r1){sc+=10;signals.push({label:"Pivot",val:"PP〜R1(上昇ゾーン)",state:1});}
+    else if(price>=pivot.s1&&price<=pivot.pp){sc+=5;signals.push({label:"Pivot",val:"S1〜PP(中立)",state:0});}
+    else{sc-=8;signals.push({label:"Pivot",val:"S1下(弱気)",state:-1});}
+  }
+  // ────────────────────────────────────────────────────────────────────────────
 
   var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
   var dispPrice=stock.market==="JP"?"¥"+Math.round(price).toLocaleString():"$"+price.toFixed(2);
@@ -376,6 +404,8 @@ function analyzeStock(stock,pd){
     aptScore:aptScore,
     atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,
     scoreHist:scoreHist,bottomScore:bottomScore,
+    vwap:vwap?parseFloat(vwap.toFixed(stock.market==="JP"?0:2)):null,
+    pivot:pivot?{pp:parseFloat(pivot.pp.toFixed(stock.market==="JP"?0:2)),r1:parseFloat(pivot.r1.toFixed(stock.market==="JP"?0:2)),s1:parseFloat(pivot.s1.toFixed(stock.market==="JP"?0:2)),r2:parseFloat(pivot.r2.toFixed(stock.market==="JP"?0:2)),s2:parseFloat(pivot.s2.toFixed(stock.market==="JP"?0:2)),prevHigh:parseFloat(pivot.prevHigh.toFixed(stock.market==="JP"?0:2)),prevLow:parseFloat(pivot.prevLow.toFixed(stock.market==="JP"?0:2)),prevClose:parseFloat(pivot.prevClose.toFixed(stock.market==="JP"?0:2))}:null,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
 }
 
