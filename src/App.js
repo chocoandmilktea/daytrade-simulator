@@ -85,6 +85,49 @@ function genSim(ticker){
   return{closes:closes,highs:highs,lows:lows,currentPrice:price,previousClose:closes[closes.length-2],real:false};
 }
 
+// ── AI分析 共通ユーティリティ ────────────────────────────────────────────────
+var AI_API_URL="https://daytrade-simulator.vercel.app/api/ai";
+function buildAiPrompt(s){
+  var isJP=s.market==="JP";
+  var histPart="";
+  if(s.scoreHist&&s.scoreHist.length>=2){
+    var days=s.tradeType==="short"?5:s.tradeType==="mid"?7:10;
+    var slice=s.scoreHist.slice(-days);
+    var trend=slice[slice.length-1].s-slice[0].s;
+    var atrTrend=slice[slice.length-1].atr-slice[0].atr;
+    histPart="スコア推移(直近"+slice.length+"日):\n"+
+      slice.map(function(x){return"  "+x.d+": "+x.s+"点 ATR:"+x.atr;}).join("\n")+"\n"+
+      "スコアトレンド: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"\n"+
+      "ATRトレンド: "+(atrTrend>0?"↑拡大中(ボラ増)":"↓縮小中(ボラ減)")+"\n";
+  }
+  return "あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
+    "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
+    "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
+    "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
+    "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
+    "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
+    histPart+
+    "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
+    "以下のトレード判断を数値で答えてください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n\n"+
+    "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+"}";
+}
+async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
+  try{
+    var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({prompt:buildAiPrompt(s)}),signal:AbortSignal.timeout(30000)});
+    var aiData=await res.json();
+    if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
+    var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
+    try{
+      var jsonMatch=aiText2.match(/\{[^}]*"entry"[^}]*\}/);
+      if(jsonMatch){var parsed=JSON.parse(jsonMatch[0]);setAiEntry(parsed);}
+    }catch(je){}
+    setAiText(aiText2.replace(/```json[\s\S]*?```/g,"").replace(/\{[^}]*"entry"[^}]*\}/,"").trim()||"分析できませんでした。");
+  }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
+  setAiLoading(false);
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 function calcSMA(arr,p){return arr.map(function(_,i){if(i<p-1)return null;var s=0;for(var j=i-p+1;j<=i;j++)s+=arr[j];return s/p;});}
 function calcEMA(arr,p){var k=2/(p+1),out=[arr[0]];for(var i=1;i<arr.length;i++)out.push(arr[i]*k+out[i-1]*(1-k));return out;}
 function calcMACD(arr){var e12=calcEMA(arr,12),e26=calcEMA(arr,26),ml=e12.map(function(v,i){return v-e26[i];}),sig=calcEMA(ml,9);return ml.map(function(v,i){return{hist:v-sig[i]};});}
@@ -676,45 +719,7 @@ function StockCard(p){
     stopProp(e);
     if(aiLoading) return;
     setShowAi(true);setAiLoading(true);setAiText("");setAiEntry(null);
-    var isJP=s.market==="JP";
-    var prompt="あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
-      "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
-      "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
-      "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
-      "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
-      "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
-      (function(){
-        if(!s.scoreHist||s.scoreHist.length<2) return "";
-        var days=s.tradeType==="short"?5:s.tradeType==="mid"?7:10;
-        var slice=s.scoreHist.slice(-days);
-        var trend=slice[slice.length-1].s-slice[0].s;
-        var atrTrend=slice[slice.length-1].atr-slice[0].atr;
-        return "スコア推移(直近"+slice.length+"日):\n"+
-          slice.map(function(x){return"  "+x.d+": "+x.s+"点 ATR:"+x.atr;}).join("\n")+"\n"+
-          "スコアトレンド: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"\n"+
-          "ATRトレンド: "+(atrTrend>0?"↑拡大中(ボラ増)":"↓縮小中(ボラ減)")+"\n";
-      })()+
-      "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
-      "以下のトレード判断を数値で答えてください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n\n"+
-      "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+"}";
-    try{
-      var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({prompt:prompt}),signal:AbortSignal.timeout(30000)
-      });
-      var aiData=await res.json();
-      if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
-      var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
-      try{
-        var jsonMatch=aiText2.match(/\{[^}]*"entry"[^}]*\}/);
-        if(jsonMatch){var parsed=JSON.parse(jsonMatch[0]);setAiEntry(parsed);}
-      }catch(je){}
-      setAiText(aiText2
-  .replace(/```json[\s\S]*?```/g,"")   // コードフェンスごと除去
-  .replace(/\{[^}]*"entry"[^}]*\}/,"") // JSONオブジェクト除去
-  .trim()||"分析できませんでした。");
-    }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
-    setAiLoading(false);
+    await callAiAnalysis(s,setAiText,setAiEntry,setAiLoading);
   }
 
   var isMobile=window.innerWidth<768;
@@ -957,42 +962,7 @@ function StockDetailPanel(p){
   async function runAiAnalysis(){
     if(aiLoading) return;
     setShowAi(true);setAiLoading(true);setAiText("");setAiEntry(null);
-    var isJP=s.market==="JP";
-    var prompt="あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
-      "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
-      "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
-      "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
-      "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
-      "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
-      (function(){
-        if(!s.scoreHist||s.scoreHist.length<2) return "";
-        var days=s.tradeType==="short"?5:s.tradeType==="mid"?7:10;
-        var slice=s.scoreHist.slice(-days);
-        var trend=slice[slice.length-1].s-slice[0].s;
-        var atrTrend=slice[slice.length-1].atr-slice[0].atr;
-        return "スコア推移(直近"+slice.length+"日):\n"+
-          slice.map(function(x){return"  "+x.d+": "+x.s+"点 ATR:"+x.atr;}).join("\n")+"\n"+
-          "スコアトレンド: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"\n"+
-          "ATRトレンド: "+(atrTrend>0?"↑拡大中(ボラ増)":"↓縮小中(ボラ減)")+"\n";
-      })()+
-      "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
-      "以下のトレード判断を数値で答えてください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n\n"+
-      "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+"}";
-    try{
-      var res=await fetch("https://daytrade-simulator.vercel.app/api/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:prompt}),signal:AbortSignal.timeout(30000)});
-      var aiData=await res.json();
-      if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
-      var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
-      try{
-        var jsonMatch=aiText2.match(/\{[^}]*"entry"[^}]*\}/);
-        if(jsonMatch){var parsed=JSON.parse(jsonMatch[0]);setAiEntry(parsed);}
-      }catch(je){}
-      setAiText(aiText2
-  .replace(/```json[\s\S]*?```/g,"")   // コードフェンスごと除去
-  .replace(/\{[^}]*"entry"[^}]*\}/,"") // JSONオブジェクト除去
-  .trim()||"分析できませんでした。");
-    }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
-    setAiLoading(false);
+    await callAiAnalysis(s,setAiText,setAiEntry,setAiLoading);
   }
 
   return(
@@ -2182,11 +2152,10 @@ export default function App(){
   var predLoadS=useState(false);var predictionLoading=predLoadS[0],setPredictionLoading=predLoadS[1];
   var selStockS=useState(null);var selectedStock=selStockS[0],setSelectedStock=selStockS[1];
   var k=useState("all");var activeTab=k[0],setActiveTab=k[1];
-  var userId=(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}})();
+  var userIdS=useState(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}});var userId=userIdS[0];
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
   function getAllScoreHist(){var result={};try{Object.keys(localStorage).forEach(function(k){if(k.startsWith("sh_"))result[k.slice(3)]=JSON.parse(localStorage.getItem(k)||"[]");});}catch(e){}return result;}
-  var favInit=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
-  var fvS=useState(favInit);var favs=fvS[0],setFavs=fvS[1];
+  var fvS=useState(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}});var favs=fvS[0],setFavs=fvS[1];
   var NOTIFY_API="https://daytrade-simulator.vercel.app/api/notify";
   function toggleFav(ticker){setFavs(function(prev){
     var isAdding=prev.indexOf(ticker)<0;
