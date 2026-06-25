@@ -22,21 +22,25 @@ async function handleJP(ticker, res) {
     // 古い順（時系列順）で日付リストを生成
     const dates = getPastBusinessDays(30).reverse();
 
-    // 日付ごとに順番に取得（順序を保証するため直列処理）
-    const allBars = [];
-    for (const date of dates) {
+    // 全日付を並列取得しつつ、インデックスで順序を保証
+    const barsPerDate = await Promise.all(dates.map(async (date) => {
       try {
         const url = `https://api.jquants.com/v2/equities/bars/minute?code=${code}&date=${date}`;
         const r = await fetch(url, {
           headers: { "x-api-key": apiKey },
           signal: AbortSignal.timeout(8000),
         });
-        if (!r.ok) continue;
+        if (!r.ok) return [];
         const json = await r.json();
-        const bars = json.data || [];
-        bars.forEach(function(b) { allBars.push(b); });
-      } catch (e) { continue; }
-    }
+        return json.data || [];
+      } catch (e) { return []; }
+    }));
+
+    // インデックス順（古い日付から）に結合
+    const allBars = [];
+    barsPerDate.forEach(function(bars) {
+      bars.forEach(function(b) { allBars.push(b); });
+    });
 
     if (!allBars.length) throw new Error("no JP minute data");
 
