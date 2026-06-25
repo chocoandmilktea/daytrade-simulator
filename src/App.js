@@ -2073,7 +2073,7 @@ function SyncPanel(p){
 function HelpModal(p){
   var onClose=p.onClose;
   var SECTIONS=[
-    {title:"📊 データ取得",items:["米国株：Yahoo Finance・15分遅延","日本株：Yahoo Finance・15分遅延","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
+    {title:"📊 データ取得",items:["米国株：Yahoo Finance・15分足（直近60日）","日本株：J-Quants・1分足（直近10営業日）","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
     {title:"🔗 デバイス同期",items:["お気に入り登録時にサーバーへ自動保存","起動時にサーバーからデータを自動取得","Pushoverでデバイスに同期IDを通知","同期タブでIDを入力して別デバイスと同期"]},
     {title:"📖 指標の見方（RSI・BB・BB収束・OBV・出来高）",items:[
       "【確認用】RSI（相対力指数）：30以下で売られすぎ・反発狙いの補助確認。70以上で買われすぎ・過熱感の補助確認。BBのシグナルと合わせて判断する",
