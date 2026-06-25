@@ -7,12 +7,7 @@ export default async function handler(req, res) {
   const { ticker, range } = req.query;
   if (!ticker) return res.status(400).json({ error: "ticker is required" });
 
-  // ── JP銘柄はJ-Quants分足APIへ ────────────────────────────────────────────
-  if (ticker.endsWith(".T")) {
-    return handleJP(ticker, res);
-  }
-
-  // ── US銘柄はYahoo Finance（現状維持）────────────────────────────────────
+  if (ticker.endsWith(".T")) return handleJP(ticker, res);
   return handleUS(ticker, range, res);
 }
 
@@ -22,13 +17,11 @@ async function handleJP(ticker, res) {
     const apiKey = process.env.JQUANTS_API_KEY;
     if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
 
-    // .T を除いて5桁コードに変換（例: 7203.T → 72030）
     const code = ticker.replace(".T", "") + "0";
 
-    // 過去30営業日分の日付リストを生成
-    const dates = getPastBusinessDays(30);
+    // 古い順（時系列順）で日付リストを生成
+    const dates = getPastBusinessDays(30).reverse();
 
-    // 日付ごとに並列取得（5件ずつ）
     const allBars = [];
     const BATCH = 5;
     for (let i = 0; i < dates.length; i += BATCH) {
@@ -50,16 +43,24 @@ async function handleJP(ticker, res) {
 
     if (!allBars.length) throw new Error("no JP minute data");
 
-    // App.jsが期待する形式に変換
     const closes  = allBars.map(function(b) { return b.C  || 0; });
     const highs   = allBars.map(function(b) { return b.H  || 0; });
     const lows    = allBars.map(function(b) { return b.L  || 0; });
     const volumes = allBars.map(function(b) { return b.Vo || 0; });
 
-    const currentPrice  = closes[closes.length - 1];
-    const previousClose = closes[closes.length - 2] || currentPrice;
+    // currentPrice: 当日最終バーの終値
+    const currentPrice = closes[closes.length - 1];
 
-    // Yahoo Finance互換レスポンスに整形
+    // previousClose: 前営業日の最終バー終値（当日Dateと異なる最後のバー）
+    const todayDate = allBars[allBars.length - 1]?.Date;
+    let previousClose = currentPrice;
+    for (let i = allBars.length - 1; i >= 0; i--) {
+      if (allBars[i].Date !== todayDate) {
+        previousClose = allBars[i].C || currentPrice;
+        break;
+      }
+    }
+
     return res.status(200).json({
       chart: {
         result: [{
@@ -81,15 +82,15 @@ async function handleJP(ticker, res) {
   }
 }
 
-// ── 過去N営業日の日付リストを生成（土日除外）────────────────────────────────
+// ── 過去N営業日の日付リストを生成（新しい順）────────────────────────────────
 function getPastBusinessDays(n) {
   const dates = [];
   const d = new Date();
-  d.setTime(d.getTime() + 9 * 60 * 60 * 1000); // JST変換
+  d.setTime(d.getTime() + 9 * 60 * 60 * 1000);
   while (dates.length < n) {
     d.setUTCDate(d.getUTCDate() - 1);
     const dow = d.getUTCDay();
-    if (dow === 0 || dow === 6) continue; // 土日スキップ
+    if (dow === 0 || dow === 6) continue;
     const y = d.getUTCFullYear();
     const m = String(d.getUTCMonth() + 1).padStart(2, "0");
     const day = String(d.getUTCDate()).padStart(2, "0");
