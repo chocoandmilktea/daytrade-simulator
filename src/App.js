@@ -290,6 +290,22 @@ function analyzeStock(stock,pd){
   else if(hasDC){scoreCap=30;}
   else if(hasBearTrend){scoreCap=35;}
 
+  // ── VWAP乖離・出来高低調によるスコア上限抑制 ─────────────────────────────
+  if(vwap!==null){
+    var vwapDeviation=(price-vwap)/vwap*100;
+    var hasLowVolume=signals.find(function(sig){return sig.label==="出来高"&&sig.state===-1;});
+    var hasPivotWeak=signals.find(function(sig){return sig.label==="Pivot"&&sig.state===-1;});
+    if(vwapDeviation<=-5&&hasLowVolume&&hasPivotWeak){
+      scoreCap=Math.min(scoreCap,35);
+      signals.push({label:"警戒",val:"VWAP乖離+出来高低調",state:-1});
+    }else if(vwapDeviation<=-5&&(hasLowVolume||hasPivotWeak)){
+      scoreCap=Math.min(scoreCap,50);
+    }else if(vwapDeviation<=-3&&hasLowVolume){
+      scoreCap=Math.min(scoreCap,55);
+    }
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
   sc=Math.min(scoreCap,Math.max(0,sc));
 
   var recentCloses=closes.slice(-RECENT_BARS); // 20日相当
