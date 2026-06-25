@@ -22,23 +22,20 @@ async function handleJP(ticker, res) {
     // 古い順（時系列順）で日付リストを生成
     const dates = getPastBusinessDays(30).reverse();
 
+    // 日付ごとに順番に取得（順序を保証するため直列処理）
     const allBars = [];
-    const BATCH = 5;
-    for (let i = 0; i < dates.length; i += BATCH) {
-      const batch = dates.slice(i, i + BATCH);
-      const results = await Promise.all(batch.map(async (date) => {
-        try {
-          const url = `https://api.jquants.com/v2/equities/bars/minute?code=${code}&date=${date}`;
-          const r = await fetch(url, {
-            headers: { "x-api-key": apiKey },
-            signal: AbortSignal.timeout(8000),
-          });
-          if (!r.ok) return [];
-          const json = await r.json();
-          return json.data || [];
-        } catch (e) { return []; }
-      }));
-      results.forEach(function(bars) { bars.forEach(function(b) { allBars.push(b); }); });
+    for (const date of dates) {
+      try {
+        const url = `https://api.jquants.com/v2/equities/bars/minute?code=${code}&date=${date}`;
+        const r = await fetch(url, {
+          headers: { "x-api-key": apiKey },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!r.ok) continue;
+        const json = await r.json();
+        const bars = json.data || [];
+        bars.forEach(function(b) { allBars.push(b); });
+      } catch (e) { continue; }
     }
 
     if (!allBars.length) throw new Error("no JP minute data");
@@ -51,7 +48,7 @@ async function handleJP(ticker, res) {
     // currentPrice: 当日最終バーの終値
     const currentPrice = closes[closes.length - 1];
 
-    // previousClose: 前営業日の最終バー終値（当日Dateと異なる最後のバー）
+    // previousClose: 前営業日の最終バー終値
     const todayDate = allBars[allBars.length - 1]?.Date;
     let previousClose = currentPrice;
     for (let i = allBars.length - 1; i >= 0; i--) {
@@ -86,7 +83,7 @@ async function handleJP(ticker, res) {
 function getPastBusinessDays(n) {
   const dates = [];
   const d = new Date();
-  d.setTime(d.getTime() + 9 * 60 * 60 * 1000); // JST変換
+  d.setTime(d.getTime() + 9 * 60 * 60 * 1000);
   while (dates.length < n) {
     const dow = d.getUTCDay();
     if (dow !== 0 && dow !== 6) {
