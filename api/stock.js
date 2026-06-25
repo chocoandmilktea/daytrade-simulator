@@ -82,19 +82,20 @@ async function handleJP(ticker, res) {
   }
 }
 
-// ── 過去N営業日の日付リストを生成（新しい順）────────────────────────────────
+// ── 過去N営業日の日付リストを生成（今日含む・新しい順）─────────────────────
 function getPastBusinessDays(n) {
   const dates = [];
   const d = new Date();
-  d.setTime(d.getTime() + 9 * 60 * 60 * 1000);
+  d.setTime(d.getTime() + 9 * 60 * 60 * 1000); // JST変換
   while (dates.length < n) {
-    d.setUTCDate(d.getUTCDate() - 1);
     const dow = d.getUTCDay();
-    if (dow === 0 || dow === 6) continue;
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(d.getUTCDate()).padStart(2, "0");
-    dates.push(`${y}${m}${day}`);
+    if (dow !== 0 && dow !== 6) {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(d.getUTCDate()).padStart(2, "0");
+      dates.push(`${y}${m}${day}`);
+    }
+    d.setUTCDate(d.getUTCDate() - 1);
   }
   return dates;
 }
