@@ -18,6 +18,43 @@ var CACHE={}, CACHE_TTL=15*60*1000; // 15分足に合わせてTTLを15分に短�
 var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 
+// ── LightGBM予測API ──────────────────────────────────────────────────────────
+var LGBM_API="https://lgbm-predict-server.onrender.com";
+
+async function fetchLgbmPredictions(stocks){
+  try{
+    var requests=stocks.map(function(s){
+      var closes=s.closes||[];
+      var highs=s.highs||closes;
+      var lows=s.lows||closes;
+      var volumes=s.volumes||[];
+      var barsArr=closes.map(function(_,i){
+        var daysAgo=closes.length-1-i;
+        var d=new Date(Date.now()-daysAgo*86400000);
+        return{date:d.toISOString().slice(0,10),
+          open:lows[i]||closes[i],high:highs[i]||closes[i],
+          low:lows[i]||closes[i],close:closes[i],volume:volumes[i]||0};
+      });
+      return{ticker:s.ticker,market:s.market,bars:barsArr};
+    }).filter(function(r){return r.bars.length>=30;});
+    if(!requests.length) return {};
+    var res=await fetch(LGBM_API+"/predict/batch",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(requests),
+      signal:AbortSignal.timeout(30000)
+    });
+    if(!res.ok) return {};
+    var json=await res.json();
+    var map={};
+    (json.results||[]).forEach(function(r){if(!r.error) map[r.ticker]=r;});
+    return map;
+  }catch(e){
+    console.warn("LGBM API error:",e);
+    return {};
+  }
+}
+
 async function fetchRanking(market){
   try{
     var res=await fetch(RANKING_API+"?market="+market,{signal:AbortSignal.timeout(15000)});
@@ -733,6 +770,15 @@ function StockCard(p){
         <div style={{textAlign:"right",flexShrink:0}}>
           <div style={{fontSize:17,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
           <div style={{fontSize:12,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>
+          {s.lgbm&&(
+            <div style={{fontSize:9,fontWeight:700,
+              color:s.lgbm.prediction===1?"#22d3a0":"#f43f5e",
+              background:s.lgbm.prediction===1?"#052e16":"#1f0010",
+              border:"1px solid "+(s.lgbm.prediction===1?"#22d3a0":"#f43f5e"),
+              borderRadius:4,padding:"1px 4px",marginTop:2,textAlign:"center"}}>
+              LGB {s.lgbm.prediction===1?"📈":"📉"}{Math.round(s.lgbm.probability*100)}% {s.lgbm.confidence}
+            </div>
+          )}
         </div>
       </div>
 
@@ -2175,6 +2221,10 @@ export default function App(){
         if(i+BATCH<universe.length)await new Promise(function(r){setTimeout(r,300);});
       }
       results.sort(function(x,y){return y.score-x.score;});
+      // LGBM予測を取得して各銘柄にマージ
+      setProgress({done:0,total:0,msg:"🤖 LGB予測取得中..."});
+      var lgbmMap=await fetchLgbmPredictions(results);
+      results.forEach(function(s){if(lgbmMap[s.ticker])s.lgbm=lgbmMap[s.ticker];});
       setStocks(results);
       setTs(new Date().toLocaleTimeString("ja-JP"));
     }catch(err){
