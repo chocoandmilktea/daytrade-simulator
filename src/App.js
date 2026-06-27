@@ -38,6 +38,7 @@ async function fetchLgbmPredictions(stocks){
       return{ticker:s.ticker,market:s.market,bars:barsArr};
     }).filter(function(r){return r.bars.length>=10;});
     if(!requests.length){console.warn("LGBM: no valid requests");return {};}
+    console.log("LGBM: sending",requests.length,"requests to",LGBM_API+"/predict/batch");
     var ctrl=new AbortController();
     var tid=setTimeout(function(){ctrl.abort();},30000);
     var res=await fetch(LGBM_API+"/predict/batch",{
@@ -53,7 +54,7 @@ async function fetchLgbmPredictions(stocks){
     (json.results||[]).forEach(function(r){if(!r.error) map[r.ticker]=r;});
     return map;
   }catch(e){
-    console.warn("LGBM API error:",e);
+    console.warn("LGBM API error:",e.name, e.message, e.stack);
     return {};
   }
 }
