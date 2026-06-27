@@ -2221,10 +2221,15 @@ export default function App(){
         if(i+BATCH<universe.length)await new Promise(function(r){setTimeout(r,300);});
       }
       results.sort(function(x,y){return y.score-x.score;});
-      // LGBM予測を取得して各銘柄にマージ
+      // LGBM予測を取得（失敗してもスキャン結果は表示する）
       setProgress({done:0,total:0,msg:"🤖 LGB予測取得中..."});
-      var lgbmMap=await fetchLgbmPredictions(results);
-      results.forEach(function(s){if(lgbmMap[s.ticker])s.lgbm=lgbmMap[s.ticker];});
+      try{
+        var lgbmMap=await Promise.race([
+          fetchLgbmPredictions(results),
+          new Promise(function(r){setTimeout(function(){r({});},25000);})
+        ]);
+        results.forEach(function(s){if(lgbmMap[s.ticker])s.lgbm=lgbmMap[s.ticker];});
+      }catch(e){console.warn("LGBM skip:",e);}
       setStocks(results);
       setTs(new Date().toLocaleTimeString("ja-JP"));
     }catch(err){
