@@ -36,8 +36,8 @@ async function fetchLgbmPredictions(stocks){
           low:lows[i]||closes[i],close:closes[i],volume:volumes[i]||0};
       });
       return{ticker:s.ticker,market:s.market,bars:barsArr};
-    }).filter(function(r){return r.bars.length>=30;});
-    if(!requests.length) return {};
+    }).filter(function(r){return r.bars.length>=10;});
+    if(!requests.length){console.warn("LGBM: no valid requests");return {};}
     var res=await fetch(LGBM_API+"/predict/batch",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
