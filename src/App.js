@@ -19,7 +19,7 @@ var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 
 // ── LightGBM予測API ──────────────────────────────────────────────────────────
-var LGBM_API="https://lgbm-predict-server.onrender.com";
+var LGBM_API="https://chocoandmilktea-lgbm-stock-server.hf.space";
 
 async function fetchLgbmPredictions(stocks){
   try{
@@ -40,7 +40,7 @@ async function fetchLgbmPredictions(stocks){
     if(!requests.length){console.warn("LGBM: no valid requests");return {};}
     console.log("LGBM: sending",requests.length,"requests to",LGBM_API+"/predict/batch");
     var ctrl=new AbortController();
-    var tid=setTimeout(function(){ctrl.abort();},30000);
+    var tid=setTimeout(function(){ctrl.abort();},60000);
     var res=await fetch(LGBM_API+"/predict/batch",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -2230,7 +2230,7 @@ export default function App(){
       try{
         var lgbmMap=await Promise.race([
           fetchLgbmPredictions(results),
-          new Promise(function(r){setTimeout(function(){r({});},25000);})
+          new Promise(function(r){setTimeout(function(){r({});},55000);})
         ]);
         results.forEach(function(s){if(lgbmMap[s.ticker])s.lgbm=lgbmMap[s.ticker];});
       }catch(e){console.warn("LGBM skip:",e);}
