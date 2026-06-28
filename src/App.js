@@ -19,7 +19,7 @@ var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 
 // ── LightGBM予測API ──────────────────────────────────────────────────────────
-var LGBM_API="https://chocoandmilktea-lgbm-stock-server.hf.space";
+var LGBM_API="https://lgbm-predict-server.onrender.com";
 
 async function fetchLgbmPredictions(stocks){
   try{
@@ -40,7 +40,7 @@ async function fetchLgbmPredictions(stocks){
     if(!requests.length){console.warn("LGBM: no valid requests");return {};}
     console.log("LGBM: sending",requests.length,"requests to",LGBM_API+"/predict/batch");
     var ctrl=new AbortController();
-    var tid=setTimeout(function(){ctrl.abort();},60000);
+    var tid=setTimeout(function(){ctrl.abort();},30000);
     var res=await fetch(LGBM_API+"/predict/batch",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -1288,7 +1288,13 @@ function AllStocksPanel(p){
         </div>
         <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:8,padding:"12px 16px",margin:"0 4px"}}>
           <div style={{fontSize:12,color:"#4a7090",marginBottom:6}}>{progress.msg||("分析中... "+progress.done+" / "+progress.total+" 銘柄")}</div>
-          <div style={{background:"#0a1828",borderRadius:4,height:4}}><div style={{background:"linear-gradient(90deg,#0ea5e9,#22d3a0)",height:4,borderRadius:4,width:(progress.total?(progress.done/progress.total)*100:5)+"%",transition:"width .3s"}}/></div>
+          <div style={{background:"#0a1828",borderRadius:4,height:4,overflow:"hidden"}}>
+            {progress.total>0
+              ?<div style={{background:"linear-gradient(90deg,#0ea5e9,#22d3a0)",height:4,borderRadius:4,width:(progress.done/progress.total*100)+"%",transition:"width .3s"}}/>
+              :<div style={{background:"linear-gradient(90deg,#0ea5e9,#22d3a0,#0ea5e9)",height:4,backgroundSize:"200% 100%",animation:"lgbSlide 1.2s linear infinite"}}/>
+            }
+          </div>
+          <style>{`@keyframes lgbSlide{from{background-position:100% 0}to{background-position:-100% 0}}`}</style>
         </div>
       </div>
     );
@@ -2227,15 +2233,16 @@ export default function App(){
       results.sort(function(x,y){return y.score-x.score;});
       // LGBM予測を取得（失敗してもスキャン結果は表示する）
       setProgress({done:0,total:0,msg:"🤖 LGB予測取得中..."});
+      var lgbmCount=0;
       try{
         var lgbmMap=await Promise.race([
           fetchLgbmPredictions(results),
-          new Promise(function(r){setTimeout(function(){r({});},55000);})
+          new Promise(function(r){setTimeout(function(){r({});},25000);})
         ]);
-        results.forEach(function(s){if(lgbmMap[s.ticker])s.lgbm=lgbmMap[s.ticker];});
+        results.forEach(function(s){if(lgbmMap[s.ticker]){s.lgbm=lgbmMap[s.ticker];lgbmCount++;}});
       }catch(e){console.warn("LGBM skip:",e);}
       setStocks(results);
-      setTs(new Date().toLocaleTimeString("ja-JP"));
+      setTs(new Date().toLocaleTimeString("ja-JP")+" LGB:"+lgbmCount+"/"+results.length);
     }catch(err){
       setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
     }finally{
