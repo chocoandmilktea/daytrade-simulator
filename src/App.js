@@ -47,7 +47,7 @@ async function fetchLgbmPredictions(stocks){
       });
       var barsArr=Object.keys(dailyMap).sort().map(function(k){return dailyMap[k];});
       return{ticker:s.ticker,market:s.market,bars:barsArr};
-    }).filter(function(r){return r.bars.length>=30;});
+    }).filter(function(r){return r.market==="JP"||r.bars.length>=30;});
     if(!requests.length){console.warn("LGBM: no valid requests");return {};}
     console.log("LGBM: sending",requests.length,"requests to",LGBM_API+"/predict/batch");
     var ctrl=new AbortController();
