@@ -192,6 +192,27 @@ function runBacktest(closes,sellDays){
   return{results:results.slice(-20),winRate:total>0?(wins/total*100).toFixed(1):"0",total:total};
 }
 
+// スコア高銘柄の翌日実績を算出
+// scoreHist: [{d,s,p},...] pは記録日の終値
+// threshold: 対象スコア下限（デフォルト60）
+// 戻り値: {winRate, total, byBand}
+function calcActualWinRate(scoreHist,threshold){
+  threshold=threshold||60;
+  var wins=0,total=0;
+  var byBand={"60":{w:0,t:0},"80":{w:0,t:0},"100":{w:0,t:0}};
+  for(var i=0;i<scoreHist.length-1;i++){
+    var cur=scoreHist[i],nxt=scoreHist[i+1];
+    if(cur.s<threshold||cur.p==null||nxt.p==null) continue;
+    var won=nxt.p>cur.p;
+    wins+=won?1:0;
+    total++;
+    var band=cur.s>=100?"100":cur.s>=80?"80":"60";
+    byBand[band].t++;
+    if(won) byBand[band].w++;
+  }
+  return{winRate:total>0?Math.round(wins/total*100):null,total:total,byBand:byBand};
+}
+
 function analyzeStock(stock,pd){
   var closes=pd.closes.slice(),highs=pd.highs.slice(),lows=pd.lows.slice();
   var volumes=pd.volumes?pd.volumes.slice():[];
@@ -423,7 +444,9 @@ function analyzeStock(stock,pd){
     tradeType="stable";tradeLabel="🌊スイング";tradeColor="#22d3a0";
   }
 
-  var winRate=Math.min(88,Math.max(28,sc*0.72));
+  var winRateRaw=Math.min(88,Math.max(28,sc*0.72));
+  // 実績winRateは後でactualWinRateが揃ってから上書き（表示用は暫定値）
+  var winRate=winRateRaw;
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
   var timing=sc>=68?"BUY":sc>=42?"WATCH":"SKIP";
 
@@ -476,9 +499,9 @@ function analyzeStock(stock,pd){
       var hist=JSON.parse(localStorage.getItem(key)||"[]");
       var today=new Date().toISOString().slice(0,10);
       if(hist.length&&hist[hist.length-1].d===today){
-        hist[hist.length-1]={d:today,s:sc,atr:atr};
+        hist[hist.length-1]={d:today,s:sc,atr:atr,p:price};
       }else{
-        hist.push({d:today,s:sc,atr:atr});
+        hist.push({d:today,s:sc,atr:atr,p:price});
         if(hist.length>20)hist.shift();
       }
       localStorage.setItem(key,JSON.stringify(hist));
@@ -515,6 +538,7 @@ function analyzeStock(stock,pd){
     aptScore:aptScore,
     atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,
     scoreHist:scoreHist,bottomScore:bottomScore,
+    actualWinRate:calcActualWinRate(scoreHist),
     vwap:vwap?parseFloat(vwap.toFixed(stock.market==="JP"?0:2)):null,
     pivot:pivot?{pp:parseFloat(pivot.pp.toFixed(stock.market==="JP"?0:2)),r1:parseFloat(pivot.r1.toFixed(stock.market==="JP"?0:2)),s1:parseFloat(pivot.s1.toFixed(stock.market==="JP"?0:2)),r2:parseFloat(pivot.r2.toFixed(stock.market==="JP"?0:2)),s2:parseFloat(pivot.s2.toFixed(stock.market==="JP"?0:2)),prevHigh:parseFloat(pivot.prevHigh.toFixed(stock.market==="JP"?0:2)),prevLow:parseFloat(pivot.prevLow.toFixed(stock.market==="JP"?0:2)),prevClose:parseFloat(pivot.prevClose.toFixed(stock.market==="JP"?0:2))}:null,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
