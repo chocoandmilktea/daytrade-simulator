@@ -19,7 +19,7 @@ var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 
 // ── LightGBM予測API ──────────────────────────────────────────────────────────
-var LGBM_API="https://lgbm-predict-server.onrender.com";
+var LGBM_API="https://chocoandmilktea-lgbm-stock-server.hf.space";
 
 async function fetchLgbmPredictions(stocks){
   try{
