@@ -771,18 +771,20 @@ function StockCard(p){
           </div>
           <div style={{fontSize:11,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
         </div>
-        <div style={{textAlign:"right",flexShrink:0}}>
-          <div style={{fontSize:17,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
-          <div style={{fontSize:12,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
           {s.lgbm&&(
             <div style={{fontSize:9,fontWeight:700,
               color:s.lgbm.prediction===1?"#22d3a0":"#f43f5e",
               background:s.lgbm.prediction===1?"#052e16":"#1f0010",
               border:"1px solid "+(s.lgbm.prediction===1?"#22d3a0":"#f43f5e"),
-              borderRadius:4,padding:"1px 4px",marginTop:2,textAlign:"center"}}>
+              borderRadius:4,padding:"1px 4px",textAlign:"center",whiteSpace:"nowrap"}}>
               LGB {s.lgbm.prediction===1?"📈":"📉"}{Math.round(s.lgbm.probability*100)}% {s.lgbm.confidence}
             </div>
           )}
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:17,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
+            <div style={{fontSize:12,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>
+          </div>
         </div>
       </div>
 
