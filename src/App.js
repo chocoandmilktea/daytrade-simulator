@@ -28,13 +28,24 @@ async function fetchLgbmPredictions(stocks){
       var highs=s.highs||closes;
       var lows=s.lows||closes;
       var volumes=s.volumes||[];
-      var barsArr=closes.map(function(_,i){
+      // 15分足→日足に変換（同じ日付のバーを1本に集約・土日除外）
+      var dailyMap={};
+      closes.forEach(function(_,i){
         var daysAgo=closes.length-1-i;
         var d=new Date(Date.now()-daysAgo*86400000);
-        return{date:d.toISOString().slice(0,10),
-          open:lows[i]||closes[i],high:highs[i]||closes[i],
-          low:lows[i]||closes[i],close:closes[i],volume:volumes[i]||0};
+        if(d.getDay()===0||d.getDay()===6) return;
+        var key=d.toISOString().slice(0,10);
+        if(!dailyMap[key]){
+          dailyMap[key]={date:key,open:closes[i],high:highs[i]||closes[i],low:lows[i]||closes[i],close:closes[i],volume:volumes[i]||0};
+        } else {
+          var day=dailyMap[key];
+          if((highs[i]||closes[i])>day.high) day.high=highs[i]||closes[i];
+          if((lows[i]||closes[i])<day.low)   day.low=lows[i]||closes[i];
+          day.close=closes[i];
+          day.volume+=volumes[i]||0;
+        }
       });
+      var barsArr=Object.keys(dailyMap).sort().map(function(k){return dailyMap[k];});
       return{ticker:s.ticker,market:s.market,bars:barsArr};
     }).filter(function(r){return r.bars.length>=30;});
     if(!requests.length){console.warn("LGBM: no valid requests");return {};}
