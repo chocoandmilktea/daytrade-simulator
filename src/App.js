@@ -816,11 +816,19 @@ function StockCard(p){
             <button onClick={function(e){stopProp(e);toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060",flexShrink:0}}>{isFav(s.ticker)?"★":"☆"}</button>
           </div>
           <div style={{fontSize:11,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
-          {s.actualWinRate&&s.actualWinRate.winRate!==null&&(
-            <div style={{fontSize:9,color:s.actualWinRate.winRate>=60?"#22d3a0":s.actualWinRate.winRate>=50?"#fbbf24":"#f43f5e",marginTop:2}}>
-              実績勝率 {s.actualWinRate.winRate}%<span style={{color:"#2a4060"}}>({s.actualWinRate.total}回)</span>
-            </div>
-          )}
+          {(function(){
+            var aw=s.actualWinRate;
+            var hasReal=aw&&aw.winRate!==null&&aw.total>=3;
+            var dispRate=hasReal?aw.winRate:parseFloat(s.winRate);
+            var label=hasReal?"実績":"推定";
+            var col=hasReal?(dispRate>=60?"#22d3a0":dispRate>=50?"#fbbf24":"#f43f5e"):"#4a7090";
+            var sub=hasReal?"("+aw.total+"回)":"";
+            return(
+              <div style={{fontSize:9,color:col,marginTop:2}}>
+                {label} {dispRate}%<span style={{color:"#2a4060"}}>{sub}</span>
+              </div>
+            );
+          })()}
         </div>
         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
           {s.lgbm&&(
