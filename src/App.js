@@ -782,8 +782,8 @@ function StockCard(p){
             </div>
           )}
           <div style={{textAlign:"right"}}>
-            <div style={{fontSize:17,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
-            <div style={{fontSize:12,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>
+            <div style={{fontSize:14,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
+            <div style={{fontSize:11,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>
           </div>
         </div>
       </div>
