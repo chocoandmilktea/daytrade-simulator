@@ -213,7 +213,7 @@ function calcActualWinRate(scoreHist,threshold){
   return{winRate:total>0?Math.round(wins/total*100):null,total:total,byBand:byBand};
 }
 
-function analyzeStock(stock,pd){
+function analyzeStock(stock,pd,vixVal){
   var closes=pd.closes.slice(),highs=pd.highs.slice(),lows=pd.lows.slice();
   var volumes=pd.volumes?pd.volumes.slice():[];
   var n=closes.length-1;
@@ -423,6 +423,17 @@ function analyzeStock(stock,pd){
   // ────────────────────────────────────────────────────────────────────────────
 
   sc=Math.min(scoreCap,Math.max(0,sc));
+
+  // ── VIX連動スコアキャップ（スキャル・デイトレ向け）────────────────────────
+  if(vixVal!=null){
+    var vn=parseFloat(vixVal);
+    var vixCap=vn>=30?45:vn>=25?65:vn>=20?80:100;
+    if(vixCap<100){
+      sc=Math.min(vixCap,sc);
+      signals.push({label:"VIX",val:"警戒("+vn.toFixed(1)+")→cap"+vixCap,state:-1});
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────────
 
   var recentCloses=closes.slice(-RECENT_BARS); // 20日相当
   var avgDailyChange=0;
@@ -2267,7 +2278,7 @@ export default function App(){
         await Promise.all(batch.map(async function(stock){
           var pd;
           try{pd=await fetchYahoo(stock.ticker);}catch(err){pd=genSim(stock.ticker);}
-          try{results.push(analyzeStock(stock,pd));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+          try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
           setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
         }));
         if(i+BATCH<universe.length)await new Promise(function(r){setTimeout(r,300);});
@@ -2300,7 +2311,7 @@ export default function App(){
       if(!existing) return;
       var pd;
       try{pd=await fetchYahoo(ticker);}catch(e){pd=genSim(ticker);}
-      var updated=analyzeStock(existing,pd);
+      var updated=analyzeStock(existing,pd,vix);
       setStocks(function(prev){return prev.map(function(s){return s.ticker===ticker?updated:s;});});
     }finally{
       setRescanLoading(function(prev){var n=Object.assign({},prev);delete n[ticker];return n;});
