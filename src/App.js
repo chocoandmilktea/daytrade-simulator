@@ -1291,10 +1291,10 @@ function AllStocksPanel(p){
           <div style={{background:"#0a1828",borderRadius:4,height:4,overflow:"hidden"}}>
             {progress.total>0
               ?<div style={{background:"linear-gradient(90deg,#0ea5e9,#22d3a0)",height:4,borderRadius:4,width:(progress.done/progress.total*100)+"%",transition:"width .3s"}}/>
-              :<div style={{background:"linear-gradient(90deg,#0ea5e9,#22d3a0,#0ea5e9)",height:4,backgroundSize:"200% 100%",animation:"lgbSlide 1.2s linear infinite"}}/>
+              :<div style={{position:"relative",height:4,overflow:"hidden",background:"#0ea5e9",opacity:0.3}}><div style={{position:"absolute",top:0,left:0,height:"100%",width:"40%",background:"linear-gradient(90deg,transparent,#22d3a0,transparent)",animation:"lgbSlide 1.4s ease-in-out infinite"}}/></div>
             }
           </div>
-          <style>{`@keyframes lgbSlide{from{background-position:100% 0}to{background-position:-100% 0}}`}</style>
+          <style>{`@keyframes lgbSlide{0%{transform:translateX(-200%)}100%{transform:translateX(350%)}}`}</style>
         </div>
       </div>
     );
