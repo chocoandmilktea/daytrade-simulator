@@ -2169,11 +2169,19 @@ function HelpModal(p){
       "【方向確認】OBV（板代替）：終値の位置で買い・売り優勢を判定。高値引けに近いほど買い圧力が強い。BB判断と方向が一致しているか確認する",
       "【勢い確認】出来高：平均比2倍以上の急増＋高値引けなら買いシグナル強化。出来高増＋安値引けなら売り圧力増大で警戒"
     ]},
+    {title:"📈 実績勝率について",items:[
+      "カード左側に表示される勝率の見方",
+      "【推定】スコア×0.72で算出した暫定値。グレー表示。データ不足中に表示されます",
+      "【実績】スコア60以上を記録した翌日に実際に価格が上昇したかを集計した実績値。3回以上のデータが溜まると自動で切り替わります",
+      "スコア帯は60〜79 / 80〜99 / 100の3段階で集計。毎日スキャンするほど精度が上がります",
+      "色の見方：緑=60%以上、黄=50〜59%、赤=50%未満"
+    ]},
     {title:"📉 下値サポート目安の見方",items:["S1（20日安値）：直近20日間の最安値。短期の下値サポートライン。ここを割ると次のS2が目安","S2（60日安値）：直近60日間の最安値。中期の強いサポートライン。S1を割り込んだ場合の次の目安","ATR×1.5下限：14日間の平均値幅（ATR）×1.5を現在値から引いた価格。統計的な下値の限界目安","活用法：S1割れで警戒、S2割れで損切り検討、ATR下限は最悪ケースの想定として使用"]},
   ];
   return(
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:500,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
-      onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}>
+      onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}
+      onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:520,maxHeight:"92vh",overflowY:"scroll",WebkitOverflowScrolling:"touch"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>DaySimulator 使い方</div>
