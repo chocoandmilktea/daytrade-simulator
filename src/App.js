@@ -145,6 +145,23 @@ function buildAiPrompt(s){
     "以下のトレード判断を数値で答えてください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n\n"+
     "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+"}";
 }
+// スコア上位N件 → claude.ai貼り付け用プロンプトを生成
+function buildVolumeRankingPrompt(stocks,topN){
+  var n=topN||10;
+  var top=stocks.slice().sort(function(a,b){return(b.score||0)-(a.score||0);}).slice(0,n);
+  var lines=top.map(function(s,i){
+    var unit=s.market==="JP"?"¥":"$";
+    return(i+1)+". "+s.ticker+" ("+s.name+") ["+s.market+"]\n"+
+      "  現在値: "+unit+s.price+"  前日比: "+s.change+"%\n"+
+      "  出来高: "+(s.volume||0).toLocaleString()+"\n"+
+      "  総合スコア: "+s.score+"/100  トレードタイプ: "+s.tradeLabel+"\n"+
+      "  52週ポジション: "+(s.position52!=null?s.position52.toFixed(0)+"%":"─");
+  }).join("\n\n");
+  return"あなたは株式トレードのアナリストです。以下はスコア上位"+top.length+"銘柄のデータです。\n\n"+
+    lines+"\n\n"+
+    "各銘柄について「買い」「売り」「見送り」のいずれかを判定し、理由を1〜2文で日本語で答えてください。\n"+
+    "出力形式:\n銘柄コード: 判定（買い/売り/見送り） — 理由";
+}
 async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
   try{
     var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -540,6 +557,7 @@ function analyzeStock(stock,pd,vixVal){
   bottomScore=Math.min(100,Math.max(0,bottomScore));
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
+    volume:stock.volume||0,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
     real:pd.real,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
@@ -1832,6 +1850,22 @@ function MarketPredictionPanel(p){
   ];
   var activeSectionS=useState("env");var activeSection=activeSectionS[0],setActiveSection=activeSectionS[1];
 
+  // ── 出来高ランキングTOP N → claude.ai用プロンプト ──────────────────────
+  var volTopNS=useState(10);var volTopN=volTopNS[0],setVolTopN=volTopNS[1];
+  var volPromptS=useState("");var volPrompt=volPromptS[0],setVolPrompt=volPromptS[1];
+  var volCopiedS=useState(false);var volCopied=volCopiedS[0],setVolCopied=volCopiedS[1];
+  function genVolumePrompt(){
+    setVolPrompt(buildVolumeRankingPrompt(stocks,volTopN));
+    setVolCopied(false);
+  }
+  function copyVolumePrompt(){
+    if(!volPrompt) return;
+    navigator.clipboard.writeText(volPrompt).then(function(){
+      setVolCopied(true);
+      setTimeout(function(){setVolCopied(false);},2000);
+    });
+  }
+
   function buildSectionMap(text){
     var sectionMap={};
     if(!text) return sectionMap;
@@ -1866,6 +1900,29 @@ function MarketPredictionPanel(p){
         </div>
         {lastUpd&&<div style={{fontSize:11,color:"#2a6090"}}>最終更新: {lastUpd}</div>}
         {stocks.length===0&&<div style={{fontSize:11,color:"#f43f5e",marginTop:4}}>※ 先にスキャンを実行してください</div>}
+      </div>
+
+      <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:12}}>
+        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:8}}>📋 スコア上位ランキング → claude.ai用プロンプト</div>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+          <span style={{fontSize:12,color:"#4a7090"}}>スコア上位</span>
+          <input type="number" min="1" max="50" value={volTopN}
+            onChange={function(e){setVolTopN(parseInt(e.target.value)||10);}}
+            style={{width:56,background:"#040c18",border:"1px solid #1e3050",borderRadius:6,color:"#e0f0ff",padding:"5px 8px",fontSize:13,fontFamily:"monospace"}}/>
+          <span style={{fontSize:12,color:"#4a7090"}}>件</span>
+          <button onClick={genVolumePrompt} disabled={stocks.length===0}
+            style={{background:"#0ea5e9",border:"none",borderRadius:6,color:"#fff",padding:"6px 12px",fontSize:12,fontWeight:700,cursor:stocks.length===0?"not-allowed":"pointer",fontFamily:"monospace"}}>生成</button>
+        </div>
+        {volPrompt&&(
+          <div>
+            <textarea readOnly value={volPrompt}
+              style={{width:"100%",height:180,background:"#040c18",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:8,fontSize:11,fontFamily:"monospace",resize:"vertical",boxSizing:"border-box"}}/>
+            <button onClick={copyVolumePrompt}
+              style={{marginTop:8,width:"100%",background:volCopied?"#22d3a0":"transparent",border:"1px solid "+(volCopied?"#22d3a0":"#1e4070"),borderRadius:8,color:volCopied?"#04150c":"#4a7090",padding:"8px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
+              {volCopied?"✓ コピーしました":"📋 コピー"}
+            </button>
+          </div>
+        )}
       </div>
 
       {predictionLoading&&(
