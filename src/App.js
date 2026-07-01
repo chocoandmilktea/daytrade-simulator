@@ -82,14 +82,10 @@ async function fetchRanking(market){
 }
 
 async function buildStockUniverse(){
-  var results=await Promise.all([fetchRanking("us"),fetchRanking("jp")]);
-  var us=results[0]||[];
-  var jp=results[1]||[];
-  if(us.length===0){var retry=await fetchRanking("us");us=retry||[];}
-  if(jp.length===0){var retry2=await fetchRanking("jp");jp=retry2||[];}
-  // ハイブリッド方式：サーバー側で重複除去済みのため上限撤廃
+  var jp=await fetchRanking("jp")||[];
+  if(jp.length===0){var retry=await fetchRanking("jp");jp=retry||[];}
   var seen={},out=[];
-  us.concat(jp).forEach(function(s){if(!seen[s.ticker]){seen[s.ticker]=true;out.push(s);}});
+  jp.forEach(function(s){if(!seen[s.ticker]){seen[s.ticker]=true;out.push(s);}});
   return out;
 }
 
@@ -1343,28 +1339,9 @@ function CrossSection(sp){
 function AllStocksPanel(p){
   var stocks=p.stocks,loading=p.loading,toggleFav=p.toggleFav,favs=p.favs,vix=p.vix,onScan=p.onScan,ts=p.ts,progress=p.progress;
 
-  var filterMktS=useState("ALL");var filterMkt=filterMktS[0],setFilterMkt=filterMktS[1];
-  var sortByS=useState("score");var sortBy=sortByS[0],setSortBy=sortByS[1];
-
   function isFavRef(t){return favs.indexOf(t)>=0;}
 
-  var displayStocks=stocks.filter(function(s){
-    if(filterMkt!=="ALL"&&s.market!==filterMkt) return false;
-    return true;
-  }).slice().sort(function(a,b){
-    if(sortBy==="score") return b.score-a.score;
-    if(sortBy==="change") return parseFloat(b.change)-parseFloat(a.change);
-    return 0;
-  });
-
-  function fBtn(val,label,activeColor){
-    var active=filterMkt===val;
-    return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
-  function sBtn(val,label){
-    var active=sortBy===val;
-    return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
+  var displayStocks=stocks.slice().sort(function(a,b){return b.score-a.score;});
 
 
   if(loading){
@@ -1401,29 +1378,16 @@ function AllStocksPanel(p){
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(isMobile?0:50)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4}}>
         {isMobile?(
-          <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",marginBottom:4,display:"flex",flexDirection:"column",gap:4}}>
-            <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
-              <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>市場:</span>
-              {fBtn("ALL","全て","#60a5fa")}
-              {fBtn("US","US","#3b82f6")}
-              {fBtn("JP","JP","#f87171")}
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:10,color:"#4a7090"}}>
-                <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
-                <span>/{stocks.length}</span>
-              </span>
-              {ts&&<span style={{fontSize:10,color:"#2a6090",whiteSpace:"nowrap"}}>{ts}</span>}
-              <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
-            </div>
+          <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",marginBottom:4,display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:10,color:"#4a7090"}}>
+              <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
+              <span>/{stocks.length}</span>
+            </span>
+            {ts&&<span style={{fontSize:10,color:"#2a6090",whiteSpace:"nowrap"}}>{ts}</span>}
+            <button onClick={onScan} style={{marginLeft:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
           </div>
         ):(
           <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",marginBottom:4,display:"flex",gap:4,alignItems:"center",flexWrap:"nowrap",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-            <span style={{fontSize:10,color:"#2a6090",flexShrink:0}}>市場:</span>
-            {fBtn("ALL","全て","#60a5fa")}
-            {fBtn("US","US","#3b82f6")}
-            {fBtn("JP","JP","#f87171")}
-            <span style={{fontSize:10,color:"#1e3050",margin:"0 1px",flexShrink:0}}>|</span>
             <span style={{fontSize:10,color:"#4a7090",flexShrink:0}}>
               <span style={{color:"#22d3a0",fontWeight:700}}>{stocks.filter(function(s){return s.real;}).length}</span>
               <span>/{stocks.length}</span>
@@ -1793,18 +1757,14 @@ function MarketPredictionPanel(p){
     var gcNowList=stocks.filter(function(s){var c=classifyStockFn(s);return c&&c.type==="GC_NOW";}).slice(0,5);
     var gcNearList=stocks.filter(function(s){var c=classifyStockFn(s);return c&&c.type==="GC_NEAR";}).slice(0,5);
     var dcNowList=stocks.filter(function(s){var c=classifyStockFn(s);return c&&c.type==="DC_NOW";}).slice(0,5);
-    var usStocks=stocks.filter(function(s){return s.market==="US";});
     var jpStocks=stocks.filter(function(s){return s.market==="JP";});
-    var usUp=usStocks.filter(function(s){return parseFloat(s.change)>=0;}).length;
     var jpUp=jpStocks.filter(function(s){return parseFloat(s.change)>=0;}).length;
-    var usUpPct=usStocks.length>0?Math.round(usUp/usStocks.length*100):0;
     var jpUpPct=jpStocks.length>0?Math.round(jpUp/jpStocks.length*100):0;
     var vixNum=vix?parseFloat(vix):null;
     var vixLevel=vixNum==null?"不明":vixNum>=30?"高（警戒）":vixNum>=20?"中（注意）":"低（落ち着き）";
     var userMsg=
       "【現在の市場データ】\n"+
       "VIX: "+(vixNum?vixNum.toFixed(2):"不明")+" （警戒レベル: "+vixLevel+"）\n"+
-      "US市場: 上昇銘柄 "+usUpPct+"% ("+usUp+"/"+usStocks.length+"銘柄)\n"+
       "JP市場: 上昇銘柄 "+jpUpPct+"% ("+jpUp+"/"+jpStocks.length+"銘柄)\n\n"+
       "【スコア上位5銘柄】\n"+
       top5.map(function(s){return s.ticker+" スコア:"+s.score+" "+s.tradeLabel+" 騰落:"+s.change+"%";}).join("\n")+"\n\n"+
@@ -2338,9 +2298,8 @@ export default function App(){
     setProgress({done:0,total:0,msg:"出来高ランキング取得中..."});
     try{
       var universe=(await buildStockUniverse()).slice();
-      var usCount=universe.filter(function(s){return s.market==="US";}).length;
-      var jpCount=universe.filter(function(s){return s.market==="JP";}).length;
-      setProgress({done:0,total:0,msg:"US:"+usCount+"銘柄 JP:"+jpCount+"銘柄 取得完了 分析開始..."});
+      var jpCount=universe.length;
+      setProgress({done:0,total:0,msg:"JP:"+jpCount+"銘柄 取得完了 分析開始..."});
       var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
       var uTickers=universe.map(function(s){return s.ticker;});
       favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
