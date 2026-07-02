@@ -47,7 +47,7 @@ async function handleJP(ticker, res) {
     const lows    = allBars.map(function(b) { return b.L  || 0; });
     const volumes = allBars.map(function(b) { return b.Vo || 0; });
 
-    const currentPrice = closes[closes.length - 1];
+    let currentPrice = closes[closes.length - 1];
 
     const todayDate = allBars[allBars.length - 1]?.Date;
     let previousClose = currentPrice;
@@ -57,6 +57,21 @@ async function handleJP(ticker, res) {
         break;
       }
     }
+
+    // Yahoo Financeで現在値のみ上書き（15〜20分遅延、失敗時はJ-Quants値のまま）
+    try {
+      const yRes = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1m&range=1d`,
+        { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }, signal: AbortSignal.timeout(5000) }
+      );
+      if (yRes.ok) {
+        const yMeta = (await yRes.json())?.chart?.result?.[0]?.meta;
+        if (yMeta?.regularMarketPrice) {
+          currentPrice = yMeta.regularMarketPrice;
+          previousClose = yMeta.chartPreviousClose || yMeta.previousClose || previousClose;
+        }
+      }
+    } catch (e) {}
 
     return res.status(200).json({
       chart: {
