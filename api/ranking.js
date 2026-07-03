@@ -125,6 +125,29 @@ async function fetchNameMap(req) {
   }
 }
 
+// J-Quants /v2/equities/master：指定日時点の全上場銘柄マスタ（会社名を含む）を取得
+// dateStr8: "YYYYMMDD"形式（ハイフン無し）
+async function fetchJQuantsNameMap(apiKey, dateStr8) {
+  try {
+    const url = `https://api.jquants.com/v2/equities/master?date=${dateStr8}`;
+    const res = await fetch(url, {
+      headers: { "x-api-key": apiKey },
+      signal: AbortSignal.timeout(9000),
+    });
+    if (!res.ok) throw new Error("master api: " + res.status);
+    const json = await res.json();
+    const rows = json?.data || json || [];
+    const map = {};
+    rows.forEach(function(row) {
+      const code = String(row.Code || "").replace(/0$/, "");
+      if (code && row.CoName) map[code] = row.CoName;
+    });
+    return map;
+  } catch (e) {
+    return {};
+  }
+}
+
 function getTargetBusinessDay() {
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -152,9 +175,10 @@ function calcChangeRate(bar) {
   return open > 0 ? (close - open) / open : 0;
 }
 
-function mapJPBar(bar, names) {
+// 会社名の優先順位：IPO専用API > J-Quants銘柄マスタ > ハードコード一覧 > コードそのまま
+function mapJPBar(bar, names, jqNames) {
   const code = String(bar.Code || "").replace(/0$/, "");
-  const name = names[code] || JP_NAMES_FALLBACK[code] || code;
+  const name = names[code] || jqNames[code] || JP_NAMES_FALLBACK[code] || code;
   return {
     ticker: code + ".T",
     name: name,
@@ -171,10 +195,12 @@ async function getJPRanking(req) {
   const apiKey = process.env.JQUANTS_API_KEY;
   if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
 
-  const [nameMap, barsResult] = await Promise.allSettled([
+  const dateStr = getTargetBusinessDay();
+
+  const [nameMap, jqNameMap, barsResult] = await Promise.allSettled([
     fetchNameMap(req),
+    fetchJQuantsNameMap(apiKey, dateStr.replace(/-/g, "")),
     (async () => {
-      const dateStr = getTargetBusinessDay();
       const url = `https://api.jquants.com/v2/equities/bars/daily?date=${dateStr}`;
       const res = await fetch(url, {
         headers: { "x-api-key": apiKey },
@@ -189,6 +215,7 @@ async function getJPRanking(req) {
   ]);
 
   const names = nameMap.status === "fulfilled" ? nameMap.value : {};
+  const jqNames = jqNameMap.status === "fulfilled" ? jqNameMap.value : {};
   if (barsResult.status === "rejected") throw barsResult.reason;
   const bars = (barsResult.value?.data || []).filter(function(bar) {
     return (bar.Vo || 0) > 0 && (bar.C || 0) > 0;
@@ -201,7 +228,7 @@ async function getJPRanking(req) {
     .slice()
     .sort(function(a, b) { return (b.Vo || 0) - (a.Vo || 0); })
     .slice(0, 50)
-    .map(function(bar) { return mapJPBar(bar, names); });
+    .map(function(bar) { return mapJPBar(bar, names, jqNames); });
 
   // 値上がり率上位：出来高フィルター通過後20件
   // avgVolumeが取れない場合は当日全銘柄の中央値で代替
@@ -216,7 +243,7 @@ async function getJPRanking(req) {
       return isVolumeAboveAvg(bar.Vo || 0, avg);
     })
     .slice(0, 20)
-    .map(function(bar) { return mapJPBar(bar, names); });
+    .map(function(bar) { return mapJPBar(bar, names, jqNames); });
 
   return mergeHybrid(byVolume, byChange);
 }
