@@ -614,10 +614,10 @@ function BottomFishCard(p){
   return(
     <div style={{background:"#071428",border:"1px solid "+(gcBadge?"#22d3a040":"#1e3050"),borderRadius:10,padding:"12px 14px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-        <div>
-          <span style={{fontSize:15,fontWeight:800,color:"#d8eeff",marginRight:6}}>{s.ticker.replace(".T","")}</span>
-          <span style={{fontSize:12,color:"#4a7090"}}>{s.name}</span>
-          {gcBadge&&<span style={{...bStyle("#052e16","#22d3a0","#22d3a0"),marginLeft:6}}>🔥GC発生</span>}
+        <div style={{display:"flex",alignItems:"center",minWidth:0,overflow:"hidden"}}>
+          <span style={{fontSize:15,fontWeight:800,color:"#d8eeff",marginRight:6,flexShrink:0}}>{s.ticker.replace(".T","")}</span>
+          <span style={{fontSize:12,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</span>
+          {gcBadge&&<span style={{...bStyle("#052e16","#22d3a0","#22d3a0"),marginLeft:6,flexShrink:0}}>🔥GC発生</span>}
         </div>
         <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:16,cursor:"pointer",color:isFav?"#fbbf24":"#2a4060",padding:"0 4px"}}>{isFav?"★":"☆"}</button>
       </div>
@@ -825,7 +825,7 @@ function StockCard(p){
   var cardBorder=isSelected?"#60a5fa":borderColor;
 
   return(
-    <div style={{background:isSelected?"#071e38":"#050e1c",border:"none",borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer"}}
+    <div style={{background:isSelected?"#071e38":"#050e1c",border:"none",borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer",minWidth:0}}
       onClick={function(){
         if(!isMobile){if(p.setSelectedStock)p.setSelectedStock(s);}
         else{setExpanded(function(v){return !v;});}
@@ -1092,15 +1092,15 @@ function StockDetailPanel(p){
     <div style={{background:"#050e1c",border:"none",borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
      {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);}}/>,document.body)}
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        <div style={{display:"flex",gap:6,alignItems:"center",minWidth:0,flex:1}}>
           <ScoreRing score={s.score}/>
-          <div>
+          <div style={{minWidth:0}}>
             <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
               <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
               <span style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{s.ticker.replace(".T","")}</span>
               {s.tradeLabel&&<span style={bStyle("#0a0a1a","1px solid "+s.tradeColor,s.tradeColor)}>{s.tradeLabel}</span>}
             </div>
-            <div style={{fontSize:13,color:"#4a7090",marginTop:2}}>{s.name}</div>
+            <div style={{fontSize:13,color:"#4a7090",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
           </div>
         </div>
         <div style={{display:"flex",gap:4,alignItems:"center"}}>
