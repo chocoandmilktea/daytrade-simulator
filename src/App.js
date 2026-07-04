@@ -86,8 +86,8 @@ function buildAiPrompt(s){
     "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
     histPart+
     "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
-    "以下のトレード判断を数値で答えてください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n\n"+
-    "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+"}";
+    "以下のトレード判断を数値で答えてください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n5. 🔮 今後の見通し: 必ずWeb検索でこの銘柄の最新ニュース・決算・材料を調べた上で、今後数日〜1週間程度で上昇/下落/中立のどれに向かいやすいかを予想し、確信度と根拠を1〜2文で述べてください\n\n"+
+    "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+",\"forecast\":{\"direction\":\"上昇 or 下落 or 中立\",\"confidence\":整数0〜100,\"timeframe\":\"文字列\",\"reason\":\"文字列\"}}";
 }
 // 上位N件 → claude.ai貼り付け用プロンプトを生成
 // jpLimited(既定true): 日本株限定で「売買代金」×「ボラティリティ」の合成ランキングで上位N件を選出
@@ -150,7 +150,11 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
 async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
   try{
     var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({prompt:buildAiPrompt(s)}),signal:AbortSignal.timeout(30000)});
+      body:JSON.stringify({
+        prompt:buildAiPrompt(s),
+        system:"必ず自分でWeb検索ツールを使って、この銘柄の最新ニュース・材料を確認してから回答してください。ユーザーに質問や確認を求めず、自律的に分析を完了してください。",
+        useWebSearch:true
+      }),signal:AbortSignal.timeout(45000)});
     var aiData=await res.json();
     if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
     var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
@@ -168,6 +172,22 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
     setAiText(cleanText.trim()||"分析できませんでした。");
   }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
   setAiLoading(false);
+}
+// 見通し（forecast）表示用の共通コンポーネント
+function ForecastBox(f){
+  if(!f) return null;
+  var col=f.direction&&f.direction.indexOf("上昇")!==-1?"#22d3a0":f.direction&&f.direction.indexOf("下落")!==-1?"#f43f5e":"#fbbf24";
+  var icon=col==="#22d3a0"?"📈":col==="#f43f5e"?"📉":"➖";
+  return(
+    <div style={{background:"#040c18",border:"1px solid "+col+"40",borderRadius:8,padding:"8px 10px",marginTop:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+        <div style={{fontSize:11,fontWeight:700,color:col}}>{icon} 今後の見通し: {f.direction||"─"}</div>
+        <div style={{fontSize:11,fontWeight:700,color:col}}>確信度 {f.confidence!=null?f.confidence+"%":"─"}</div>
+      </div>
+      {f.timeframe&&<div style={{fontSize:11,color:"#4a7090",marginBottom:3}}>期間目安: {f.timeframe}</div>}
+      {f.reason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.5}}>{f.reason}</div>}
+    </div>
+  );
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -932,6 +952,7 @@ function StockCard(p){
                   </div>
                 </div>
               )}
+              {!aiLoading&&aiEntry&&ForecastBox(aiEntry.forecast)}
               {!aiLoading&&aiText&&(
                 <button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>
               )}
@@ -1169,6 +1190,7 @@ function StockDetailPanel(p){
                 </div>
               </div>
             )}
+            {!aiLoading&&aiEntry&&ForecastBox(aiEntry.forecast)}
             {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
           </div>
         </div>
