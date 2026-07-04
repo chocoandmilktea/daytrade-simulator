@@ -1439,15 +1439,33 @@ function AllStocksPanel(p){
 }
 
 function FavPanel(p){
-  var stocks=p.stocks,favs=p.favs,toggleFav=p.toggleFav,vix=p.vix;
+  var stocks=p.stocks,setStocks=p.setStocks,favs=p.favs,toggleFav=p.toggleFav,vix=p.vix;
+  var favGroups=p.favGroups,groupNames=p.groupNames,renameGroup=p.renameGroup;
   var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
   var filterS=useState("ALL");var filterMkt=filterS[0],setFilterMkt=filterS[1];
   var sortS=useState("score");var sortBy=sortS[0],setSortBy=sortS[1];
-  async function addByTicker(){var raw=searchTicker.trim().toUpperCase();if(!raw)return;var ticker=(raw.match(/^\d{4}$/)?raw+".T":raw);if(favs.indexOf(ticker)>=0){setSearchStatus("already");return;}setSearchStatus("loading");try{var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=2y",{signal:AbortSignal.timeout(15000)});if(!res.ok)throw new Error("not found");toggleFav(ticker);setSearchTicker("");setSearchStatus("ok");setTimeout(function(){setSearchStatus(null);},2000);}catch(e){setSearchStatus("error");setTimeout(function(){setSearchStatus(null);},2000);}}
+  var groupFilterS=useState(0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1]; // 0=全体
+  var addGroupS=useState(1);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
+  async function addByTicker(){
+    var raw=searchTicker.trim().toUpperCase();if(!raw)return;
+    var ticker=(raw.match(/^\d{4}$/)?raw+".T":raw);
+    if(favs.indexOf(ticker)>=0){setSearchStatus("already");return;}
+    setSearchStatus("loading");
+    try{
+      var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");
+      var base={ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code};
+      var pd=await fetchYahoo(ticker);
+      var newStock=analyzeStock(base,pd,vix);
+      setStocks(function(prev){return prev.some(function(s){return s.ticker===ticker;})?prev:prev.concat([newStock]);});
+      toggleFav(ticker,addGroup);
+      setSearchTicker("");setSearchStatus("ok");setTimeout(function(){setSearchStatus(null);},2000);
+    }catch(e){setSearchStatus("error");setTimeout(function(){setSearchStatus(null);},2000);}
+  }
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
-  var displayStocks=(filterMkt==="ALL"?favStocks:favStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){
+  var groupedStocks=groupFilter===0?favStocks:favStocks.filter(function(s){return(favGroups[s.ticker]||1)===groupFilter;});
+  var displayStocks=(filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){
     if(sortBy==="score") return b.score-a.score;
     if(sortBy==="change") return parseFloat(b.change)-parseFloat(a.change);
     return 0;
@@ -1459,6 +1477,14 @@ function FavPanel(p){
   function sBtn(val,label){
     var active=sortBy===val;
     return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+  function gBtn(val,label){
+    var active=groupFilter===val;
+    return(<button onClick={function(){setGroupFilter(val);}} style={{background:active?"#fbbf2420":"transparent",border:"1px solid "+(active?"#fbbf24":"#1e3050"),borderRadius:6,color:active?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+  function editGroupName(num){
+    var name=prompt("グループ名を入力",groupNames[num]);
+    if(name&&name.trim())renameGroup(num,name.trim());
   }
   function isFavRef(t){return favs.indexOf(t)>=0;}
   var isMobile=window.innerWidth<768;
@@ -1477,9 +1503,17 @@ function FavPanel(p){
         <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
           <div style={{display:"flex",gap:8}}>
             <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:14,fontFamily:"monospace",flex:1}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
+            <select value={addGroup} onChange={function(e){setAddGroup(Number(e.target.value));}} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#fbbf24",padding:"0 6px",fontSize:13,fontFamily:"monospace"}}>
+              {[1,2,3,4,5].map(function(n){return <option key={n} value={n}>{groupNames[n]}</option>;})}
+            </select>
             <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"8px 16px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>追加</button>
           </div>
           {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
+        </div>
+        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:4,display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>グループ:</span>
+          {gBtn(0,"全体")}
+          {[1,2,3,4,5].map(function(n){return <span key={n} style={{display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
         </div>
         {favStocks.length>0&&(
           isMobile?(
@@ -2133,7 +2167,7 @@ function IndexPanel(){
 }
 
 function SyncPanel(p){
-  var userId=p.userId,syncApi=p.syncApi,setFavs=p.setFavs,scan=p.scan;
+  var userId=p.userId,syncApi=p.syncApi,setFavs=p.setFavs,setFavGroups=p.setFavGroups,setGroupNames=p.setGroupNames,scan=p.scan;
   var copyStatusS=useState(null);var copyStatus=copyStatusS[0],setCopyStatus=copyStatusS[1];
   var inputS=useState("");var input=inputS[0],setInput=inputS[1];
   var syncStatusS=useState(null);var syncStatus=syncStatusS[0],setSyncStatus=syncStatusS[1];
@@ -2150,6 +2184,8 @@ function SyncPanel(p){
       if(!data.favs)throw new Error("invalid");
       setFavs(data.favs.slice());
       try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}
+      if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
+      if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
       try{localStorage.setItem("portfolio_v1",JSON.stringify(data.portfolio||[]));}catch(e){}
       try{localStorage.setItem("daytrade_uid",id);}catch(e){}
       setSyncStatus("ok");
@@ -2303,19 +2339,35 @@ export default function App(){
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
   function getAllScoreHist(){var result={};try{Object.keys(localStorage).forEach(function(k){if(k.startsWith("sh_"))result[k.slice(3)]=JSON.parse(localStorage.getItem(k)||"[]");});}catch(e){}return result;}
   var fvS=useState(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}});var favs=fvS[0],setFavs=fvS[1];
+  var DEFAULT_GROUP_NAMES={1:"グループ1",2:"グループ2",3:"グループ3",4:"グループ4",5:"グループ5"};
+  var fgS=useState(function(){try{var v=localStorage.getItem("fav_groups");return v?JSON.parse(v):{};}catch(e){return{};}});var favGroups=fgS[0],setFavGroups=fgS[1];
+  var gnS=useState(function(){try{var v=localStorage.getItem("group_names");return v?Object.assign({},DEFAULT_GROUP_NAMES,JSON.parse(v)):Object.assign({},DEFAULT_GROUP_NAMES);}catch(e){return Object.assign({},DEFAULT_GROUP_NAMES);}});var groupNames=gnS[0],setGroupNames=gnS[1];
   var NOTIFY_API="https://daytrade-simulator.vercel.app/api/notify";
-  function toggleFav(ticker){setFavs(function(prev){
+  function getPortfolio(){try{return JSON.parse(localStorage.getItem("portfolio_v1")||"[]");}catch(e){return[];}}
+  function syncToServer(nextFavs,nextGroups,nextGroupNames){
+    fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({favs:nextFavs,portfolio:getPortfolio(),scoreHist:getAllScoreHist(),groups:nextGroups,groupNames:nextGroupNames})}).catch(function(){});
+  }
+  function toggleFav(ticker,groupNum){setFavs(function(prev){
     var isAdding=prev.indexOf(ticker)<0;
     var next=isAdding?prev.concat([ticker]):prev.filter(function(t){return t!==ticker;});
     try{localStorage.setItem("fav_tickers",JSON.stringify(next));}catch(e){}
-    var port=(function(){try{return JSON.parse(localStorage.getItem("portfolio_v1")||"[]");}catch(e){return[];}})();
-    fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({favs:next,portfolio:port,scoreHist:getAllScoreHist()})}).catch(function(){});
+    var nextGroups=Object.assign({},favGroups);
+    if(isAdding){nextGroups[ticker]=groupNum||1;}else{delete nextGroups[ticker];}
+    setFavGroups(nextGroups);
+    try{localStorage.setItem("fav_groups",JSON.stringify(nextGroups));}catch(e){}
+    syncToServer(next,nextGroups,groupNames);
     if(isAdding){
       fetch(NOTIFY_API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:" ",message:userId})}).catch(function(){});
     }
     return next;
   });}
   function isFav(ticker){return favs.indexOf(ticker)>=0;}
+  function renameGroup(groupNum,name){
+    var nextNames=Object.assign({},groupNames);nextNames[groupNum]=name;
+    setGroupNames(nextNames);
+    try{localStorage.setItem("group_names",JSON.stringify(nextNames));}catch(e){}
+    syncToServer(favs,favGroups,nextNames);
+  }
   var scan=useCallback(async function(){
     setLoading(true);
     CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止）
@@ -2384,6 +2436,8 @@ export default function App(){
       .then(function(r){return r.json();})
       .then(function(data){
         if(data.favs&&data.favs.length>0){setFavs(data.favs.slice());try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}}
+        if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
+        if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
         if(data.portfolio&&data.portfolio.length>0){try{localStorage.setItem("portfolio_v1",JSON.stringify(data.portfolio));}catch(e){}}
         if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(ticker){localStorage.setItem("sh_"+ticker,JSON.stringify(data.scoreHist[ticker]));});}catch(e){}}
       })
@@ -2439,10 +2493,10 @@ export default function App(){
         )}
         <div style={{marginLeft:isMobile?0:50,padding:"10px 10px 120px"}}>
           {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading}/>}
-          {activeTab==="fav"&&<FavPanel stocks={stocks} favs={favs} toggleFav={toggleFav} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading}/>}
+          {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="news"&&<NewsPanel/>}
-          {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} scan={scan}/>}
+          {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} scan={scan}/>}
         </div>
       </div>
     </div>
