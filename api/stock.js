@@ -73,6 +73,13 @@ async function handleJP(ticker, res) {
       }
     } catch (e) {}
 
+    // 決算発表予定日（翌営業日カレンダーをキャッシュして照合。対象外ならnull）
+    let earningsDate = null;
+    try {
+      const emap = await fetchJPEarningsMap(apiKey);
+      earningsDate = emap[code] || null;
+    } catch (e) {}
+
     return res.status(200).json({
       chart: {
         result: [{
@@ -86,12 +93,37 @@ async function handleJP(ticker, res) {
             quote: [{ close: closes, high: highs, low: lows, volume: volumes }],
           },
           per: null, pbr: null, analystTarget: null, sector: null,
+          earningsDate: earningsDate,
         }],
       },
     });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
+}
+
+// ── 決算発表予定（翌営業日）キャッシュ ──────────────────────────────────
+// J-Quants /v2/equities/earnings-calendar は日付単位でその日の全社リストを返す仕様
+// （codeで絞り込めないため、1回取得してコード→日付のマップにしてから照合する）
+var earningsCache = { map: null, ts: 0 };
+var EARNINGS_TTL = 60 * 60 * 1000; // 1時間
+
+async function fetchJPEarningsMap(apiKey) {
+  const now = Date.now();
+  if (earningsCache.map && now - earningsCache.ts < EARNINGS_TTL) return earningsCache.map;
+
+  const res = await fetch("https://api.jquants.com/v2/equities/earnings-calendar", {
+    headers: { "x-api-key": apiKey },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error("earnings-calendar " + res.status);
+  const json = await res.json();
+  const rows = json.data || [];
+  const map = {};
+  rows.forEach(function(row) { if (row.Code) map[row.Code] = row.Date; });
+
+  earningsCache = { map: map, ts: now };
+  return map;
 }
 
 // ── JST日付文字列を取得（daysAgo日前、YYYYMMDD形式）────────────────────────
@@ -132,14 +164,14 @@ async function handleUS(ticker, res) {
       result.meta.dataRange = "30d";
     }
 
-    let per = null, pbr = null, analystTarget = null, sector = null;
+    let per = null, pbr = null, analystTarget = null, sector = null, earningsDate = null;
     const chartMeta = data?.chart?.result?.[0]?.meta || {};
     if (chartMeta.trailingPE) per = chartMeta.trailingPE;
     if (chartMeta.priceToBook) pbr = chartMeta.priceToBook;
 
-    if (!per || !pbr || !analystTarget || !sector) {
+    if (!per || !pbr || !analystTarget || !sector || !earningsDate) {
       try {
-        const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics,summaryDetail,financialData,assetProfile`;
+        const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics,summaryDetail,financialData,assetProfile,calendarEvents`;
         const summaryRes = await fetch(summaryUrl, {
           headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -161,6 +193,12 @@ async function handleUS(ticker, res) {
           if (!pbr) pbr = detail?.defaultKeyStatistics?.priceToBook?.raw || null;
           if (detail?.financialData?.targetMeanPrice?.raw) analystTarget = detail.financialData.targetMeanPrice.raw;
           if (detail?.assetProfile?.sector) sector = detail.assetProfile.sector;
+
+          // 決算発表予定日（epoch秒 → YYYY-MM-DD）。複数候補があれば先頭日を採用
+          const earnRaw = detail?.calendarEvents?.earnings?.earningsDate;
+          if (Array.isArray(earnRaw) && earnRaw.length > 0 && earnRaw[0]?.raw) {
+            earningsDate = new Date(earnRaw[0].raw * 1000).toISOString().slice(0, 10);
+          }
         }
       } catch(e) {}
     }
@@ -195,6 +233,7 @@ async function handleUS(ticker, res) {
       data.chart.result[0].pbr = pbr;
       data.chart.result[0].analystTarget = analystTarget;
       data.chart.result[0].sector = sector;
+      data.chart.result[0].earningsDate = earningsDate;
     }
 
     return res.status(200).json(data);
