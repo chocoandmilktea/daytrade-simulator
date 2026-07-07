@@ -497,7 +497,7 @@ function analyzeStock(stock,pd,vixVal){
     tradeType="stable";tradeLabel="🌊スイング";tradeColor="#22d3a0";
   }
 
-  var winRateRaw=Math.min(88,Math.max(28,sc*0.72));
+  var winRateRaw=Math.min(88,Math.max(15,sc*0.72));
   // 実績winRateは後でactualWinRateが揃ってから上書き（表示用は暫定値）
   var winRate=winRateRaw;
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
