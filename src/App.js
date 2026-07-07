@@ -2010,7 +2010,7 @@ function MarketPredictionPanel(p){
 }
 
 function NewsPanel(){
-  var AI_API="https://daytrade-simulator.vercel.app/api/ai";
+  var NEWS_API="https://daytrade-simulator.vercel.app/api/news";
   var NEWS_LINKS=[
     {label:"株式ニュース",url:"https://finance.yahoo.co.jp/news",desc:"国内外の最新株式ニュース"},
     {label:"日本株ニュース",url:"https://finance.yahoo.co.jp/news/stocks",desc:"日本株関連ニュース"},
@@ -2031,19 +2031,8 @@ function NewsPanel(){
 
   async function fetchNews(){
     setLoading(true); setResult(null);
-    var prompt=
-      "今日の株式市場の最新ニュースをWeb検索で取得し、以下の5カテゴリに分類して日本語でわかりやすく要約してください。\n\n"+
-      "対象カテゴリ：🏦 金融政策 / 📈 決算・業績 / 🌍 経済指標 / ⚡ 相場急変 / 🏭 セクター動向\n\n"+
-      "【出力形式】必ずJSON形式のみで出力し、前後の説明文やMarkdownコードブロックは不要です。\n"+
-      '{"金融政策":[{"headline":"見出し","summary":"2〜3文の平易な説明","impact":"投資家への影響を一言"}],"決算・業績":[...],"経済指標":[...],"相場急変":[...],"セクター動向":[...]}\n\n'+
-      "ルール：\n- 各カテゴリに1〜3件のニュースを入れる。該当ニュースがない場合は空配列[]\n- 専門用語は必ず平易な言葉に言い換える（例：「利上げ」→「金利を上げること。借金の利子が増えるため、企業の負担が増す」）\n- impactは「株価への影響」を具体的に一言で（例：「銀行株に追い風、グロース株には逆風」）\n- 必ず日本語で回答";
     try{
-      var res=await fetch(AI_API,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({prompt:prompt,system:"あなたは個人投資家向けの株式ニュース解説者です。最新ニュースをWeb検索で必ず取得し、難しい言葉を使わずわかりやすく解説してください。JSONのみ出力してください。",useWebSearch:true}),
-        signal:AbortSignal.timeout(60000),
-      });
+      var res=await fetch(NEWS_API,{signal:AbortSignal.timeout(60000)});
       var data=await res.json();
       if(data.error) throw new Error(data.error);
       var text=(data.text||"").replace(/```json|```/g,"").trim();
