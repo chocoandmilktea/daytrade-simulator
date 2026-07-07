@@ -24,6 +24,16 @@ function earningsInfo(dateStr){
   return{date:dateStr,days:days,label:label,urgent:urgent};
 }
 
+// 権利落ち日（概算・予想）のバッジ情報。決算日と違い「確定情報ではない」ため
+// 緊急度による色分けはせず、常に同じ色＋「予想」表記で区別する
+function exRightsInfo(dateStr){
+  if(!dateStr) return null;
+  var days=Math.ceil((new Date(dateStr+"T00:00:00")-new Date(new Date().toDateString()))/86400000);
+  if(days<0||days>60) return null; // 過去・遠すぎる先は表示しない
+  var label=days===0?"本日":days===1?"明日":days+"日後";
+  return{date:dateStr,days:days,label:label};
+}
+
 var CACHE={}, CACHE_TTL=15*60*1000; // 15分足に合わせてTTLを15分に短縮
 var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
@@ -50,7 +60,7 @@ async function buildStockUniverse(){
 // 15分足データ取得（メイン分析用・60日分）
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate};}
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate};}
   var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(15000),cache:"no-store"});
   if(!res.ok) throw new Error("HTTP "+res.status);
   var json=await res.json();
@@ -58,10 +68,10 @@ async function fetchYahoo(ticker){
   if(!result) throw new Error("empty");
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
-  var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null;
-  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate};
+  var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null;
+  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate};
 }
 
 
@@ -584,7 +594,7 @@ function analyzeStock(stock,pd,vixVal){
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
     real:pd.real,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
-    analystTarget:pd.analystTarget||null,earningsDate:pd.earningsDate||null,weekHigh:weekHigh,weekLow:weekLow,
+    analystTarget:pd.analystTarget||null,earningsDate:pd.earningsDate||null,exRightsDate:pd.exRightsDate||null,weekHigh:weekHigh,weekLow:weekLow,
     high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
@@ -869,6 +879,7 @@ function StockCard(p){
           </div>
           <div style={{fontSize:11,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
           {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
+          {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
           {(function(){
             var aw=s.actualWinRate;
             var hasReal=aw&&aw.winRate!==null&&aw.total>=3;
@@ -1132,6 +1143,7 @@ function StockDetailPanel(p){
               <span style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{s.ticker.replace(".T","")}</span>
               {s.tradeLabel&&<span style={bStyle("#0a0a1a","1px solid "+s.tradeColor,s.tradeColor)}>{s.tradeLabel}</span>}
               {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
+              {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
             </div>
             <div style={{fontSize:13,color:"#4a7090",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
           </div>
@@ -2153,33 +2165,40 @@ function NewsPanel(){
 }
 function TrendPanel(){var cs=useState(0);var openCat=cs[0],setOpenCat=cs[1];return(<div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}><div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}><div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>トレンド・ランキング</div></div>{TREND_LINKS.map(function(cat,ci){var isOpen=openCat===ci;return(<div key={ci}><div onClick={function(){setOpenCat(isOpen?-1:ci);}} style={{padding:"10px 14px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid #0a1828",background:isOpen?"#071a2e":"transparent"}}><span style={{fontSize:14,fontWeight:700,color:"#b8cce0"}}>{cat.category}</span><span style={{fontSize:12,color:"#2a6090"}}>{isOpen?"▲":"▼"}</span></div>{isOpen&&<div style={{background:"#040c18",borderBottom:"1px solid #0a1828"}}>{cat.links.map(function(link,li){return(<a key={li} href={link.url} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",padding:"9px 20px",borderBottom:"1px solid #0a1828",textDecoration:"none",gap:8}}><span style={{fontSize:12,color:"#22d3a0"}}>→</span><span style={{fontSize:14,color:"#93c5fd"}}>{link.label}</span></a>);})}</div>}</div>);})}</div>);}
 
-// ── 決算イベント一覧パネル ───────────────────────────────────────────────
+// ── 決算/権利落ちイベント一覧パネル ─────────────────────────────────────
 function EventPanel(p){
   var stocks=p.stocks||[];
-  var rows=stocks
-    .map(function(s){return{s:s,ei:earningsInfo(s.earningsDate)};})
-    .filter(function(x){return x.ei;})
-    .sort(function(a,b){return a.ei.days-b.ei.days;});
+  var earnRows=stocks
+    .map(function(s){return{s:s,ei:earningsInfo(s.earningsDate),type:"earn"};})
+    .filter(function(x){return x.ei;});
+  var xrightRows=stocks
+    .map(function(s){return{s:s,ei:exRightsInfo(s.exRightsDate),type:"xright"};})
+    .filter(function(x){return x.ei;});
+  var rows=earnRows.concat(xrightRows).sort(function(a,b){return a.ei.days-b.ei.days;});
 
   return(
     <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}>
       <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}>
-        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>📅 決算発表予定</div>
-        <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>スキャン済み銘柄のうち、発表日が判明しているもののみ表示</div>
+        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>📅 決算・権利落ち予定</div>
+        <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>スキャン済み銘柄のうち、日付が判明しているもののみ表示（権利落ちは概算予想）</div>
       </div>
       {rows.length===0?(
-        <div style={{padding:"20px 14px",fontSize:13,color:"#4a7090",textAlign:"center"}}>該当する決算予定はありません</div>
+        <div style={{padding:"20px 14px",fontSize:13,color:"#4a7090",textAlign:"center"}}>該当する予定はありません</div>
       ):(
         <div>
           {rows.map(function(row){
-            var s=row.s,ei=row.ei;
+            var s=row.s,ei=row.ei,isEarn=row.type==="earn";
+            var col=isEarn?(ei.urgent?"#f87171":"#fbbf24"):"#60a5fa";
+            var bg=isEarn?(ei.urgent?"#3a0a0a":"#1c1400"):"#0a1a3a";
+            var border=isEarn?(ei.urgent?"#f43f5e":"#fbbf24"):"#3b82f6";
+            var icon=isEarn?"📈決算":"💰権利落ち(予想)";
             return(
-              <div key={s.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderBottom:"1px solid #0a1828"}}>
+              <div key={s.ticker+"-"+row.type} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderBottom:"1px solid #0a1828"}}>
                 <div style={{minWidth:0}}>
                   <div style={{fontSize:14,fontWeight:700,color:"#d8eeff"}}>{s.ticker.replace(".T","")} <span style={{fontSize:11,color:"#4a7090",fontWeight:400}}>{s.name}</span></div>
-                  <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>{ei.date}</div>
+                  <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>{icon} ・ {ei.date}</div>
                 </div>
-                <span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")}>{ei.label}</span>
+                <span style={bStyle(bg,"1px solid "+border,col)}>{ei.label}</span>
               </div>
             );
           })}
@@ -2494,8 +2513,8 @@ export default function App(){
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
   var TABS=[["all","📋"],["fav","⭐"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"]];
-  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","event":"決算予定","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期"};
-  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","event":"決算","index":"リンク","market":"市場予測","news":"ニュース","sync":"同期"};
+  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期"};
+  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","event":"決算/権利","index":"リンク","market":"市場予測","news":"ニュース","sync":"同期"};
   var isMobile=window.innerWidth<768;
   return(
     <div style={{minHeight:"100vh",background:"#040c18",backgroundAttachment:"fixed",fontFamily:"monospace",color:"#b8cce0"}}>
