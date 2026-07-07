@@ -16,7 +16,14 @@ export default async function handler(req, res) {
     const [tdnet, yahoo] = await Promise.all([fetchTdnet(), fetchYahooNews()]);
     const sourceText = buildSourceText(tdnet, yahoo);
     const text = await summarizeWithAI(apiKey, sourceText);
-    return res.status(200).json({ text });
+    // ── デバッグ用（確認できたら削除） ──
+    const debug = {
+      tdnetCount: tdnet.length,
+      yahooCount: yahoo.length,
+      tdnetSample: tdnet.slice(0, 5),
+      yahooSample: yahoo.slice(0, 5),
+    };
+    return res.status(200).json({ text, debug });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
