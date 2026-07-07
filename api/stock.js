@@ -80,6 +80,16 @@ async function handleJP(ticker, res) {
       earningsDate = emap[code] || null;
     } catch (e) {}
 
+    // PER/PBR（財務情報のBPS・予想EPSから算出。24時間キャッシュ）
+    let per = null, pbr = null;
+    try {
+      const fin = await fetchJPFinancials(apiKey, code);
+      if (fin.bps > 0) pbr = currentPrice / fin.bps;
+      if (fin.feps > 0) per = currentPrice / fin.feps;
+    } catch (e) {}
+    if (pbr && (!isFinite(pbr) || pbr <= 0 || pbr > 1000)) pbr = null;
+    if (per && (!isFinite(per) || per <= 0 || per > 10000)) per = null;
+
     return res.status(200).json({
       chart: {
         result: [{
@@ -92,7 +102,7 @@ async function handleJP(ticker, res) {
           indicators: {
             quote: [{ close: closes, high: highs, low: lows, volume: volumes }],
           },
-          per: null, pbr: null, analystTarget: null, sector: null,
+          per: per, pbr: pbr, analystTarget: null, sector: null,
           earningsDate: earningsDate,
         }],
       },
@@ -100,6 +110,37 @@ async function handleJP(ticker, res) {
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
+}
+
+// ── PER/PBR算出用の財務データ（BPS・予想EPS）。24時間キャッシュ ──────────
+// J-Quants /v2/fins/summary は開示履歴を古い順に全件返す仕様のため、
+// 末尾から遡って直近の有効な値（実績BPS／予想EPS）を採用する
+var finCache = {}; // { code: {ts, bps, feps} }
+var FIN_TTL = 24 * 60 * 60 * 1000; // 24時間
+
+async function fetchJPFinancials(apiKey, code) {
+  const now = Date.now();
+  if (finCache[code] && now - finCache[code].ts < FIN_TTL) return finCache[code];
+
+  const res = await fetch("https://api.jquants.com/v2/fins/summary?code=" + code, {
+    headers: { "x-api-key": apiKey },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error("fins/summary " + res.status);
+  const json = await res.json();
+  const rows = json.data || [];
+
+  let bps = null, feps = null;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (bps == null && row.BPS !== "" && row.BPS != null) bps = parseFloat(row.BPS);
+    if (feps == null && row.FEPS !== "" && row.FEPS != null) feps = parseFloat(row.FEPS);
+    if (bps != null && feps != null) break;
+  }
+
+  const result = { ts: now, bps: bps, feps: feps };
+  finCache[code] = result;
+  return result;
 }
 
 // ── 決算発表予定（翌営業日）キャッシュ ──────────────────────────────────
