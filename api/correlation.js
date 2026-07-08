@@ -1,14 +1,16 @@
 // api/correlation.js
 // 「対象銘柄が下落した時、上昇しやすい銘柄」を過去の値動きの逆相関から算出する
-// 過去約60営業日の日次終値からピアソン相関係数を計算し、強い逆相関(<=-0.4)の銘柄を返す
+// 過去約40営業日の日次終値からピアソン相関係数を計算し、強い逆相関(<=-0.4)の銘柄を返す
 // 個別銘柄の日次終値系列は24時間キャッシュし、外部APIへの呼び出しを抑える
+// 候補銘柄への問い合わせは全て並列実行し、実行時間の上限に収まるようにする
 
-const LOOKBACK_DAYS = 90;       // 取得日数（土日祝込みで約60営業日をカバー）
+const LOOKBACK_DAYS = 60;       // 取得日数（土日祝込みで約40営業日をカバー）
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24時間
 const NEG_THRESHOLD = -0.4;     // これより強い逆相関のみ採用
 const TOP_N = 5;                // 返却する最大件数
-const MIN_POINTS = 15;          // 相関計算に必要な最低データ点数
-const BATCH = 8;                // 候補銘柄の並列取得数
+const MIN_POINTS = 12;          // 相関計算に必要な最低データ点数
+const MAX_CANDIDATES = 60;      // 候補銘柄の上限（多すぎると実行時間超過の原因になるため）
+const FETCH_TIMEOUT = 6000;     // 個別銘柄取得のタイムアウト(ms)
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -23,7 +25,7 @@ export default async function handler(req, res) {
     .split(",")
     .map(function (t) { return t.trim(); })
     .filter(function (t) { return t && t !== ticker; })
-    .slice(0, 150);
+    .slice(0, MAX_CANDIDATES);
 
   try {
     const targetReturns = await getReturnSeries(ticker);
@@ -31,27 +33,26 @@ export default async function handler(req, res) {
       return res.status(200).json({ ticker, results: [], note: "insufficient target data" });
     }
 
-    const results = [];
-    for (let i = 0; i < candidateList.length; i += BATCH) {
-      const batch = candidateList.slice(i, i + BATCH);
-      const batchResults = await Promise.all(batch.map(async function (c) {
-        try {
-          const series = await getReturnSeries(c);
-          const corr = pearson(targetReturns, series);
-          return corr == null ? null : { ticker: c, correlation: Math.round(corr * 100) / 100 };
-        } catch (e) {
-          return null;
-        }
-      }));
-      batchResults.forEach(function (r) { if (r) results.push(r); });
-    }
+    // 候補は全て並列取得（順番待ちをなくして実行時間を短縮）
+    const settled = await Promise.allSettled(candidateList.map(async function (c) {
+      const series = await getReturnSeries(c);
+      const corr = pearson(targetReturns, series);
+      if (corr == null) throw new Error("insufficient data");
+      return { ticker: c, correlation: Math.round(corr * 100) / 100 };
+    }));
+
+    const results = settled
+      .filter(function (r) { return r.status === "fulfilled"; })
+      .map(function (r) { return r.value; });
+
+    const failedCount = settled.length - results.length;
 
     const negative = results
       .filter(function (r) { return r.correlation <= NEG_THRESHOLD; })
       .sort(function (a, b) { return a.correlation - b.correlation; })
       .slice(0, TOP_N);
 
-    return res.status(200).json({ ticker, results: negative });
+    return res.status(200).json({ ticker, results: negative, checked: results.length, failed: failedCount });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -88,7 +89,7 @@ async function fetchJPCloses(ticker) {
   const to = getJSTDate(0);
   const from = getJSTDate(LOOKBACK_DAYS);
   const url = `https://api.jquants.com/v2/equities/bars/daily?code=${code}&from=${from}&to=${to}`;
-  const r = await fetch(url, { headers: { "x-api-key": apiKey }, signal: AbortSignal.timeout(9000) });
+  const r = await fetch(url, { headers: { "x-api-key": apiKey }, signal: AbortSignal.timeout(FETCH_TIMEOUT) });
   if (!r.ok) throw new Error("J-Quants bars/daily " + r.status);
   const json = await r.json();
   const rows = (json.data || []).slice().sort(function (a, b) { return a.Date < b.Date ? -1 : a.Date > b.Date ? 1 : 0; });
@@ -100,7 +101,7 @@ async function fetchUSCloses(ticker) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
   const r = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT),
   });
   if (!r.ok) throw new Error("Yahoo Finance " + r.status);
   const json = await r.json();
