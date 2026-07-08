@@ -816,6 +816,43 @@ function ScoreRing(p){
 function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.active?p.color+"18":"transparent",border:"1px solid "+(p.active?p.color:"#1e3050"),borderRadius:6,color:p.active?p.color:"#4a6080",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",fontWeight:p.active?700:400}}>{p.label}</button>);}
 
 // ── StockCard ────────────────────────────────────────────────────────────────
+// ── AI解説文中の銘柄コードをタップ可能にするヘルパー ──────────────────────
+function renderReasonText(text,allStocks,onSelect){
+  var known={};
+  (allStocks||[]).forEach(function(x){known[x.ticker.replace(".T","")]=x;});
+  return text.split(/(\d{4})/g).map(function(part,i){
+    var stock=known[part];
+    if(stock){
+      return <span key={i} onClick={function(e){e.stopPropagation();onSelect(stock);}} style={{color:"#60a5fa",textDecoration:"underline",cursor:"pointer",fontWeight:700}}>{part}</span>;
+    }
+    return part;
+  });
+}
+
+// ── 銘柄プレビューモーダル（AI解説文中の銘柄コードタップ時に表示）────────
+function TickerPreviewModal(p){
+  var s=p.stock,bc=BADGE[s.timing];
+  return(
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2100,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#040c18",border:"1px solid #60a5fa50",borderRadius:16,padding:16,width:"100%",maxWidth:340}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#60a5fa"}}>📌 {s.ticker.replace(".T","")}</div>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+        </div>
+        <div style={{fontSize:12,color:"#4a7090",marginBottom:8}}>{s.name}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:8,padding:"8px 12px",marginBottom:8}}>
+          <span style={{fontSize:16,fontWeight:800,color:"#d8eeff"}}>{s.price}</span>
+          <span style={{fontSize:13,fontWeight:700,color:parseFloat(s.change)>=0?"#22d3a0":"#f43f5e"}}>{parseFloat(s.change)>=0?"▲":"▼"}{Math.abs(s.change)}%</span>
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <span style={{fontSize:12,color:"#4a7090"}}>スコア <span style={{color:scoreColor(s.score),fontWeight:700}}>{s.score}</span></span>
+          {bc&&<span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
@@ -859,6 +896,7 @@ function StockCard(p){
   var corrFetchedS=useState(false);var corrFetched=corrFetchedS[0],setCorrFetched=corrFetchedS[1];
   var corrReasonS=useState("");var corrReason=corrReasonS[0],setCorrReason=corrReasonS[1];
   var corrReasonLoadingS=useState(false);var corrReasonLoading=corrReasonLoadingS[0],setCorrReasonLoading=corrReasonLoadingS[1];
+  var previewStockS=useState(null);var previewStock=previewStockS[0],setPreviewStock=previewStockS[1];
   useEffect(function(){
     setCorrList([]);setCorrReason("");setCorrError("");setCorrFetched(false);
   },[s&&s.ticker]);
@@ -866,7 +904,7 @@ function StockCard(p){
   function runCorrFetch(e){
     stopProp(e);
     if(corrLoading||!s) return;
-    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,200);
+    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,60);
     setCorrError("");setCorrList([]);
     if(!candidates.length){setCorrFetched(true);return;}
     setCorrLoading(true);
@@ -1149,12 +1187,14 @@ function StockCard(p){
                       })}
                     </div>
                     <button onClick={runCorrReason} disabled={corrReasonLoading} style={{marginTop:8,background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"5px 10px",fontSize:12,cursor:corrReasonLoading?"not-allowed":"pointer"}}>{corrReasonLoading?"⏳ 生成中...":"🤖 AIに理由を聞く"}</button>
-                    {corrReason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap"}}>{corrReason}</div>}
+                    {corrReason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap"}}>{renderReasonText(corrReason,p.allStocks,setPreviewStock)}</div>}
                     <div style={{fontSize:10,color:"#2a5070",marginTop:8}}>過去60営業日程度の値動きに基づく統計的傾向であり、将来を保証するものではありません</div>
                   </div>
                 )}
               </div>
             </div>,document.body)}
+
+          {previewStock&&createPortal(<TickerPreviewModal stock={previewStock} onClose={function(){setPreviewStock(null);}}/>,document.body)}
 
         </div>
       )}
@@ -1213,13 +1253,14 @@ function StockDetailPanel(p){
   var corrFetchedS=useState(false);var corrFetched=corrFetchedS[0],setCorrFetched=corrFetchedS[1];
   var corrReasonS=useState("");var corrReason=corrReasonS[0],setCorrReason=corrReasonS[1];
   var corrReasonLoadingS=useState(false);var corrReasonLoading=corrReasonLoadingS[0],setCorrReasonLoading=corrReasonLoadingS[1];
+  var previewStockS=useState(null);var previewStock=previewStockS[0],setPreviewStock=previewStockS[1];
   useEffect(function(){
     setCorrList([]);setCorrReason("");setCorrError("");setCorrFetched(false);
   },[s&&s.ticker]);
 
   function runCorrFetch(){
     if(corrLoading||!s) return;
-    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,200);
+    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,60);
     setCorrError("");setCorrList([]);
     if(!candidates.length){setCorrFetched(true);return;}
     setCorrLoading(true);
@@ -1444,12 +1485,15 @@ function StockDetailPanel(p){
                   })}
                 </div>
                 <button onClick={runCorrReason} disabled={corrReasonLoading} style={{marginTop:8,background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"5px 10px",fontSize:12,cursor:corrReasonLoading?"not-allowed":"pointer"}}>{corrReasonLoading?"⏳ 生成中...":"🤖 AIに理由を聞く"}</button>
-                {corrReason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap"}}>{corrReason}</div>}
+                {corrReason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap"}}>{renderReasonText(corrReason,p.allStocks,setPreviewStock)}</div>}
                 <div style={{fontSize:10,color:"#2a5070",marginTop:8}}>過去60営業日程度の値動きに基づく統計的傾向であり、将来を保証するものではありません</div>
               </div>
             )}
           </div>
         </div>,document.body)}
+
+      {previewStock&&createPortal(<TickerPreviewModal stock={previewStock} onClose={function(){setPreviewStock(null);}}/>,document.body)}
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
         <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
         <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
