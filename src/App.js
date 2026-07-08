@@ -242,6 +242,9 @@ function findInverseCorrelated(target,allStocks,limit){
   var out=[];
   allStocks.forEach(function(s){
     if(s.ticker===target.ticker||!s.closes) return;
+    if(s.market!=="JP") return; // 日本株のみを候補にする
+    var bareCode=s.ticker.replace(".T","");
+    if(!s.name||s.name===bareCode) return; // 企業名が未取得（コードのみ）の銘柄は除外
     var r=pearsonCorrelation(target.closes,s.closes);
     if(r!==null&&r<-0.3) out.push({ticker:s.ticker,name:s.name,market:s.market,corr:r});
   });
