@@ -866,7 +866,7 @@ function StockCard(p){
   function runCorrFetch(e){
     stopProp(e);
     if(corrLoading||!s) return;
-    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,60);
+    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,200);
     setCorrError("");setCorrList([]);
     if(!candidates.length){setCorrFetched(true);return;}
     setCorrLoading(true);
@@ -1219,7 +1219,7 @@ function StockDetailPanel(p){
 
   function runCorrFetch(){
     if(corrLoading||!s) return;
-    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,60);
+    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,200);
     setCorrError("");setCorrList([]);
     if(!candidates.length){setCorrFetched(true);return;}
     setCorrLoading(true);
