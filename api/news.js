@@ -14,12 +14,13 @@ export default async function handler(req, res) {
 
   try {
     const [tdnet, yahoo] = await Promise.all([fetchTdnet(), fetchYahooNews()]);
-    const sourceText = buildSourceText(tdnet, yahoo.titles);
+    const sourceText = buildSourceText(tdnet.items, yahoo.titles);
     const text = await summarizeWithAI(apiKey, sourceText);
     // ── デバッグ用（確認できたら削除） ──
     const debug = {
-      tdnetCount: tdnet.length,
-      tdnetSample: tdnet.slice(0, 5),
+      tdnetCount: tdnet.items.length,
+      tdnetSample: tdnet.items.slice(0, 5),
+      tdnetPage: tdnet.debug,
       yahooCount: yahoo.titles.length,
       yahooSample: yahoo.titles.slice(0, 5),
       yahooPages: yahoo.debugInfo,
@@ -35,17 +36,18 @@ async function fetchTdnet() {
   const url = `https://www.release.tdnet.info/inbs/I_list_001_${getJSTDateStr()}.html`;
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!r.ok) return [];
+    if (!r.ok) return { items: [], debug: { url, status: r.status, rowsFound: 0 } };
     const $ = cheerio.load(await r.text());
     const items = [];
-    $("#main-body-box tr").each(function () {
+    const rows = $("#main-body-box tr");
+    rows.each(function () {
       const company = $(this).find(".kjName").text().trim();
       const title = $(this).find(".kjTitle").text().trim();
       if (company && title) items.push(`${company}: ${title}`);
     });
-    return items.slice(0, 30);
+    return { items: items.slice(0, 30), debug: { url, status: r.status, rowsFound: rows.length } };
   } catch (e) {
-    return [];
+    return { items: [], debug: { url, status: "error:" + e.message, rowsFound: 0 } };
   }
 }
 
@@ -81,8 +83,8 @@ async function fetchYahooPage(url) {
       const t = $(this).text().trim();
       if (t.length >= 10 && t.length <= 80) {
         raw.push(t);
-        // Yahooのニュース見出しは末尾が「M/D配信元」形式（例: 7/7時事通信）
-        if (/\d{1,2}\/\d{1,2}[^\d/]{2,10}$/.test(t)) filtered.push(t);
+        // Yahooの見出しは末尾が「M/D配信元」または「HH:MM配信元」形式
+        if (/(\d{1,2}\/\d{1,2}|\d{1,2}:\d{2})[^\d/:]{2,10}$/.test(t)) filtered.push(t);
       }
     });
     return { status: r.status, rawCount: raw.length, rawSample: raw.slice(0, 8), filtered };
