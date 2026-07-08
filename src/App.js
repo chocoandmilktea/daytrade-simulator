@@ -34,6 +34,23 @@ function exRightsInfo(dateStr){
   return{date:dateStr,days:days,label:label};
 }
 
+// ── 決算日・権利落ち日のローカル記憶 ─────────────────────────────────────
+// 外部APIが当日中に日付を返さなくなっても、実際の予定日を過ぎるまで表示を継続するための保険
+var EVENT_DATE_CACHE_KEY="event_date_cache_v1";
+function resolveEventDate(ticker,field,freshDate){
+  var cache;
+  try{cache=JSON.parse(localStorage.getItem(EVENT_DATE_CACHE_KEY))||{};}catch(e){cache={};}
+  var key=ticker+"_"+field;
+  if(freshDate){
+    if(cache[key]!==freshDate){
+      cache[key]=freshDate;
+      try{localStorage.setItem(EVENT_DATE_CACHE_KEY,JSON.stringify(cache));}catch(e){}
+    }
+    return freshDate;
+  }
+  return cache[key]||null;
+}
+
 var CACHE={}, CACHE_TTL=15*60*1000; // 15分足に合わせてTTLを15分に短縮
 var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
@@ -595,7 +612,7 @@ function analyzeStock(stock,pd,vixVal){
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
     real:pd.real,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
-    analystTarget:pd.analystTarget||null,earningsDate:pd.earningsDate||null,exRightsDate:pd.exRightsDate||null,weekHigh:weekHigh,weekLow:weekLow,
+    analystTarget:pd.analystTarget||null,earningsDate:resolveEventDate(stock.ticker,"earningsDate",pd.earningsDate||null),exRightsDate:resolveEventDate(stock.ticker,"exRightsDate",pd.exRightsDate||null),weekHigh:weekHigh,weekLow:weekLow,
     high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
