@@ -37,6 +37,7 @@ function exRightsInfo(dateStr){
 var CACHE={}, CACHE_TTL=15*60*1000; // 15分足に合わせてTTLを15分に短縮
 var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
+var CORRELATION_API="https://daytrade-simulator.vercel.app/api/correlation";
 
 async function fetchRanking(market){
   try{
@@ -1122,6 +1123,37 @@ function StockDetailPanel(p){
     await callAiAnalysis(s,setAiText,setAiEntry,setAiLoading);
   }
 
+  // ── 逆相関銘柄予想（下落中の銘柄を見ている時だけ算出）───────────────────
+  var corrListS=useState([]);var corrList=corrListS[0],setCorrList=corrListS[1];
+  var corrLoadingS=useState(false);var corrLoading=corrLoadingS[0],setCorrLoading=corrLoadingS[1];
+  var corrReasonS=useState("");var corrReason=corrReasonS[0],setCorrReason=corrReasonS[1];
+  var corrReasonLoadingS=useState(false);var corrReasonLoading=corrReasonLoadingS[0],setCorrReasonLoading=corrReasonLoadingS[1];
+  useEffect(function(){
+    setCorrList([]);setCorrReason("");
+    if(!s||isUp) return; // 下落中の銘柄を見ている時だけ算出
+    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,150);
+    if(!candidates.length) return;
+    setCorrLoading(true);
+    fetch(CORRELATION_API+"?ticker="+encodeURIComponent(s.ticker)+"&candidates="+encodeURIComponent(candidates.join(",")),{signal:AbortSignal.timeout(15000)})
+      .then(function(r){return r.json();})
+      .then(function(json){setCorrList(json.results||[]);})
+      .catch(function(){setCorrList([]);})
+      .finally(function(){setCorrLoading(false);});
+  },[s&&s.ticker,isUp]);
+
+  async function runCorrReason(){
+    if(corrReasonLoading||!corrList.length) return;
+    setCorrReasonLoading(true);setCorrReason("");
+    var names=corrList.map(function(c){return c.ticker.replace(".T","");}).join("、");
+    var prompt="銘柄"+s.ticker.replace(".T","")+"("+s.name+")が下落した場合に、過去の値動きデータ上「逆相関」が確認された次の銘柄が上昇しやすい理由を、競合関係・代替需要・資金シフトなどの観点から1銘柄につき1〜2文で日本語で簡潔に説明してください。断定を避け「〜の可能性があります」等の表現にしてください。\n対象銘柄: "+names;
+    try{
+      var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:prompt,system:"あなたは個人投資家向けの株式アナリストです。与えられた銘柄同士の逆相関関係について、簡潔で分かりやすい日本語の解説のみを出力してください。"}),signal:AbortSignal.timeout(20000)});
+      var json=await res.json();
+      setCorrReason(json.text||"");
+    }catch(e){setCorrReason("取得に失敗しました");}
+    finally{setCorrReasonLoading(false);}
+  }
+
   var promptCopiedS=useState(false);var promptCopied=promptCopiedS[0],setPromptCopied=promptCopiedS[1];
   function copyTradePrompt(){
     if(!navigator.clipboard) return;
@@ -1187,6 +1219,31 @@ function StockDetailPanel(p){
           })}
         </div>
       </div>
+
+      {!isUp&&(corrLoading||corrList.length>0)&&(
+        <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",marginBottom:6}}>🔀 逆相関で上昇しやすい銘柄</div>
+          {corrLoading?(
+            <div style={{fontSize:12,color:"#4a7090"}}>算出中...</div>
+          ):(
+            <div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {corrList.map(function(c){
+                  return(
+                    <div key={c.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#040c18",borderRadius:6,padding:"5px 8px"}}>
+                      <span style={{fontSize:13,color:"#d8eeff"}}>{c.ticker.replace(".T","")}</span>
+                      <span style={{fontSize:12,color:"#a78bfa"}}>逆相関 {c.correlation.toFixed(2)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <button onClick={runCorrReason} disabled={corrReasonLoading} style={{marginTop:6,background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:corrReasonLoading?"not-allowed":"pointer"}}>{corrReasonLoading?"⏳ 生成中...":"🤖 AIに理由を聞く"}</button>
+              {corrReason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.6,marginTop:6,whiteSpace:"pre-wrap"}}>{corrReason}</div>}
+              <div style={{fontSize:10,color:"#2a5070",marginTop:5}}>過去60営業日程度の値動きに基づく統計的傾向であり、将来を保証するものではありません</div>
+            </div>
+          )}
+        </div>
+      )}
 
       {showAi&&createPortal(
         <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);setAiText("");setAiEntry(null);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -1375,7 +1432,7 @@ function CrossSection(sp){
         <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
           <div style={{width:"60%",flexShrink:0}}>{cards}</div>
           <div style={{flex:1,position:"sticky",top:60,maxHeight:"calc(100vh - 70px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-            <StockDetailPanel s={sp.selectedStock&&sp.items.find(function(it){return it.s.ticker===sp.selectedStock.ticker;})?sp.selectedStock:null} toggleFav={sp.toggleFav} isFav={isFavFn} vix={sp.vix} usdJpy={sp.usdJpy} onRescan={sp.onRescan} rescanLoading={sp.rescanLoading&&sp.selectedStock&&sp.rescanLoading[sp.selectedStock.ticker]}/>
+            <StockDetailPanel s={sp.selectedStock&&sp.items.find(function(it){return it.s.ticker===sp.selectedStock.ticker;})?sp.selectedStock:null} toggleFav={sp.toggleFav} isFav={isFavFn} vix={sp.vix} usdJpy={sp.usdJpy} onRescan={sp.onRescan} rescanLoading={sp.rescanLoading&&sp.selectedStock&&sp.rescanLoading[sp.selectedStock.ticker]} allStocks={sp.allStocks}/>
           </div>
         </div>
       )}
@@ -1450,7 +1507,7 @@ function AllStocksPanel(p){
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]}/>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks}/>
             </div>
           </div>
         )}
@@ -1572,7 +1629,7 @@ function FavPanel(p){
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]}/>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks}/>
             </div>
           </div>
         )}
