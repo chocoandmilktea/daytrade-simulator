@@ -1,0 +1,137 @@
+// api/correlation.js
+// 「対象銘柄が下落した時、上昇しやすい銘柄」を過去の値動きの逆相関から算出する
+// 過去約60営業日の日次終値からピアソン相関係数を計算し、強い逆相関(<=-0.4)の銘柄を返す
+// 個別銘柄の日次終値系列は24時間キャッシュし、外部APIへの呼び出しを抑える
+
+const LOOKBACK_DAYS = 90;       // 取得日数（土日祝込みで約60営業日をカバー）
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24時間
+const NEG_THRESHOLD = -0.4;     // これより強い逆相関のみ採用
+const TOP_N = 5;                // 返却する最大件数
+const MIN_POINTS = 15;          // 相関計算に必要な最低データ点数
+const BATCH = 8;                // 候補銘柄の並列取得数
+
+export default async function handler(req, res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
+  const { ticker, candidates } = req.query;
+  if (!ticker) return res.status(400).json({ error: "ticker is required" });
+  if (!candidates) return res.status(400).json({ error: "candidates is required" });
+
+  const candidateList = String(candidates)
+    .split(",")
+    .map(function (t) { return t.trim(); })
+    .filter(function (t) { return t && t !== ticker; })
+    .slice(0, 150);
+
+  try {
+    const targetReturns = await getReturnSeries(ticker);
+    if (!targetReturns || targetReturns.length < MIN_POINTS) {
+      return res.status(200).json({ ticker, results: [], note: "insufficient target data" });
+    }
+
+    const results = [];
+    for (let i = 0; i < candidateList.length; i += BATCH) {
+      const batch = candidateList.slice(i, i + BATCH);
+      const batchResults = await Promise.all(batch.map(async function (c) {
+        try {
+          const series = await getReturnSeries(c);
+          const corr = pearson(targetReturns, series);
+          return corr == null ? null : { ticker: c, correlation: Math.round(corr * 100) / 100 };
+        } catch (e) {
+          return null;
+        }
+      }));
+      batchResults.forEach(function (r) { if (r) results.push(r); });
+    }
+
+    const negative = results
+      .filter(function (r) { return r.correlation <= NEG_THRESHOLD; })
+      .sort(function (a, b) { return a.correlation - b.correlation; })
+      .slice(0, TOP_N);
+
+    return res.status(200).json({ ticker, results: negative });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+}
+
+// ── 日次リターン系列の取得（24時間キャッシュ）───────────────────────────
+let seriesCache = {}; // { ticker: { ts, returns: number[] } }
+
+async function getReturnSeries(ticker) {
+  const now = Date.now();
+  if (seriesCache[ticker] && now - seriesCache[ticker].ts < CACHE_TTL) {
+    return seriesCache[ticker].returns;
+  }
+  const closes = ticker.endsWith(".T") ? await fetchJPCloses(ticker) : await fetchUSCloses(ticker);
+  const returns = toReturns(closes);
+  seriesCache[ticker] = { ts: now, returns: returns };
+  return returns;
+}
+
+function toReturns(closes) {
+  const out = [];
+  for (let i = 1; i < closes.length; i++) {
+    const prev = closes[i - 1], cur = closes[i];
+    if (prev > 0 && cur > 0) out.push((cur - prev) / prev);
+  }
+  return out;
+}
+
+// ── JP: J-Quants 日足（code+from+to、stock.jsのbars/minuteと同じ範囲指定方式）──
+async function fetchJPCloses(ticker) {
+  const apiKey = process.env.JQUANTS_API_KEY;
+  if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
+  const code = ticker.replace(".T", "") + "0";
+  const to = getJSTDate(0);
+  const from = getJSTDate(LOOKBACK_DAYS);
+  const url = `https://api.jquants.com/v2/equities/bars/daily?code=${code}&from=${from}&to=${to}`;
+  const r = await fetch(url, { headers: { "x-api-key": apiKey }, signal: AbortSignal.timeout(9000) });
+  if (!r.ok) throw new Error("J-Quants bars/daily " + r.status);
+  const json = await r.json();
+  const rows = (json.data || []).slice().sort(function (a, b) { return a.Date < b.Date ? -1 : a.Date > b.Date ? 1 : 0; });
+  return rows.map(function (row) { return row.C || 0; }).filter(function (v) { return v > 0; });
+}
+
+// ── US: Yahoo Finance 日足（3ヶ月）──────────────────────────────────────
+async function fetchUSCloses(ticker) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
+  const r = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error("Yahoo Finance " + r.status);
+  const json = await r.json();
+  const closes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
+  return closes.filter(function (v) { return v != null && v > 0; });
+}
+
+// ── ピアソン相関係数（系列末尾を基準に長さを揃えて計算）─────────────────
+function pearson(a, b) {
+  const n = Math.min(a.length, b.length);
+  if (n < MIN_POINTS) return null;
+  const xs = a.slice(a.length - n);
+  const ys = b.slice(b.length - n);
+  const mx = xs.reduce(function (s, v) { return s + v; }, 0) / n;
+  const my = ys.reduce(function (s, v) { return s + v; }, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+  }
+  if (sxx === 0 || syy === 0) return null;
+  return sxy / Math.sqrt(sxx * syy);
+}
+
+// ── JST日付文字列（daysAgo日前、YYYY-MM-DD形式）────────────────────────
+function getJSTDate(daysAgo) {
+  const d = new Date();
+  d.setTime(d.getTime() + 9 * 60 * 60 * 1000);
+  d.setUTCDate(d.getUTCDate() - daysAgo);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
