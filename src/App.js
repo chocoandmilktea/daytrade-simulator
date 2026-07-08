@@ -851,6 +851,38 @@ function StockCard(p){
     await callAiAnalysis(s,setAiText,setAiEntry,setAiLoading);
   }
 
+  // ── 逆相関銘柄予想（下落中の銘柄を見ている時だけ算出）───────────────────
+  var corrListS=useState([]);var corrList=corrListS[0],setCorrList=corrListS[1];
+  var corrLoadingS=useState(false);var corrLoading=corrLoadingS[0],setCorrLoading=corrLoadingS[1];
+  var corrReasonS=useState("");var corrReason=corrReasonS[0],setCorrReason=corrReasonS[1];
+  var corrReasonLoadingS=useState(false);var corrReasonLoading=corrReasonLoadingS[0],setCorrReasonLoading=corrReasonLoadingS[1];
+  useEffect(function(){
+    setCorrList([]);setCorrReason("");
+    if(!s||isUp||!expanded) return; // 下落中の銘柄を展開して見ている時だけ算出
+    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,150);
+    if(!candidates.length) return;
+    setCorrLoading(true);
+    fetch(CORRELATION_API+"?ticker="+encodeURIComponent(s.ticker)+"&candidates="+encodeURIComponent(candidates.join(",")),{signal:AbortSignal.timeout(15000)})
+      .then(function(r){return r.json();})
+      .then(function(json){setCorrList(json.results||[]);})
+      .catch(function(){setCorrList([]);})
+      .finally(function(){setCorrLoading(false);});
+  },[s&&s.ticker,isUp,expanded]);
+
+  async function runCorrReason(e){
+    stopProp(e);
+    if(corrReasonLoading||!corrList.length) return;
+    setCorrReasonLoading(true);setCorrReason("");
+    var names=corrList.map(function(c){return c.ticker.replace(".T","");}).join("、");
+    var prompt="銘柄"+s.ticker.replace(".T","")+"("+s.name+")が下落した場合に、過去の値動きデータ上「逆相関」が確認された次の銘柄が上昇しやすい理由を、競合関係・代替需要・資金シフトなどの観点から1銘柄につき1〜2文で日本語で簡潔に説明してください。断定を避け「〜の可能性があります」等の表現にしてください。\n対象銘柄: "+names;
+    try{
+      var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:prompt,system:"あなたは個人投資家向けの株式アナリストです。与えられた銘柄同士の逆相関関係について、簡潔で分かりやすい日本語の解説のみを出力してください。"}),signal:AbortSignal.timeout(20000)});
+      var json=await res.json();
+      setCorrReason(json.text||"");
+    }catch(err){setCorrReason("取得に失敗しました");}
+    finally{setCorrReasonLoading(false);}
+  }
+
   var promptCopiedS=useState(false);var promptCopied=promptCopiedS[0],setPromptCopied=promptCopiedS[1];
   function copyTradePrompt(e){
     stopProp(e);
@@ -933,6 +965,31 @@ function StockCard(p){
               })}
             </div>
           </div>
+
+          {!isUp&&(corrLoading||corrList.length>0)&&(
+            <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",marginBottom:6}}>🔀 逆相関で上昇しやすい銘柄</div>
+              {corrLoading?(
+                <div style={{fontSize:11,color:"#4a7090"}}>算出中...</div>
+              ):(
+                <div>
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    {corrList.map(function(c){
+                      return(
+                        <div key={c.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#040c18",borderRadius:6,padding:"5px 8px"}}>
+                          <span style={{fontSize:12,color:"#d8eeff"}}>{c.ticker.replace(".T","")}</span>
+                          <span style={{fontSize:11,color:"#a78bfa"}}>逆相関 {c.correlation.toFixed(2)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button onClick={runCorrReason} disabled={corrReasonLoading} style={{marginTop:6,background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:corrReasonLoading?"not-allowed":"pointer"}}>{corrReasonLoading?"⏳ 生成中...":"🤖 AIに理由を聞く"}</button>
+                  {corrReason&&<div style={{fontSize:11,color:"#b8cce0",lineHeight:1.6,marginTop:6,whiteSpace:"pre-wrap"}}>{corrReason}</div>}
+                  <div style={{fontSize:9,color:"#2a5070",marginTop:5}}>過去60営業日程度の値動きに基づく統計的傾向であり、将来を保証するものではありません</div>
+                </div>
+              )}
+            </div>
+          )}
 
           {showAi&&(
             <div style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"12px"}}>
@@ -1421,7 +1478,7 @@ function CrossSection(sp){
   var cards=(
     <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
       {sp.items.map(function(item){
-        return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={isFavFn} cross={item.cross} vix={sp.vix} usdJpy={sp.usdJpy} setSelectedStock={sp.setSelectedStock}/>;
+        return <StockCard key={item.s.ticker} s={item.s} toggleFav={sp.toggleFav} isFav={isFavFn} cross={item.cross} vix={sp.vix} usdJpy={sp.usdJpy} setSelectedStock={sp.setSelectedStock} allStocks={sp.allStocks}/>;
       })}
     </div>
   );
@@ -1474,7 +1531,7 @@ function AllStocksPanel(p){
   var cardGrid=(
     <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
       {displayStocks.map(function(s){
-        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]}/>;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks}/>;
       })}
     </div>
   );
@@ -1573,7 +1630,7 @@ function FavPanel(p){
     <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
       {displayStocks.map(function(s){
         var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]}/>;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks}/>;
       })}
     </div>
   );
