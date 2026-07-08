@@ -35,9 +35,13 @@ export default async function handler(req, res) {
 async function fetchTdnet() {
   const url = `https://www.release.tdnet.info/inbs/I_list_001_${getJSTDateStr()}.html`;
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const r = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      signal: AbortSignal.timeout(8000),
+    });
     if (!r.ok) return { items: [], debug: { url, status: r.status, rowsFound: 0 } };
-    const $ = cheerio.load(await r.text());
+    const html = await r.text();
+    const $ = cheerio.load(html);
     const items = [];
     const rows = $("#main-body-box tr");
     rows.each(function () {
@@ -45,7 +49,10 @@ async function fetchTdnet() {
       const title = $(this).find(".kjTitle").text().trim();
       if (company && title) items.push(`${company}: ${title}`);
     });
-    return { items: items.slice(0, 30), debug: { url, status: r.status, rowsFound: rows.length } };
+    return {
+      items: items.slice(0, 30),
+      debug: { url, status: r.status, rowsFound: rows.length, htmlLength: html.length, htmlSnippet: html.slice(0, 300) },
+    };
   } catch (e) {
     return { items: [], debug: { url, status: "error:" + e.message, rowsFound: 0 } };
   }
