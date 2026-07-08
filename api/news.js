@@ -14,14 +14,15 @@ export default async function handler(req, res) {
 
   try {
     const [tdnet, yahoo] = await Promise.all([fetchTdnet(), fetchYahooNews()]);
-    const sourceText = buildSourceText(tdnet, yahoo);
+    const sourceText = buildSourceText(tdnet, yahoo.titles);
     const text = await summarizeWithAI(apiKey, sourceText);
     // ── デバッグ用（確認できたら削除） ──
     const debug = {
       tdnetCount: tdnet.length,
-      yahooCount: yahoo.length,
       tdnetSample: tdnet.slice(0, 5),
-      yahooSample: yahoo.slice(0, 5),
+      yahooCount: yahoo.titles.length,
+      yahooSample: yahoo.titles.slice(0, 5),
+      yahooPages: yahoo.debugInfo,
     };
     return res.status(200).json({ text, debug });
   } catch (e) {
@@ -55,8 +56,15 @@ async function fetchYahooNews() {
     "https://finance.yahoo.co.jp/news/stocks",
     "https://finance.yahoo.co.jp/news/world",
   ];
-  const lists = await Promise.all(urls.map(fetchYahooPage));
-  return lists.flat().slice(0, 30);
+  const results = await Promise.all(urls.map(fetchYahooPage));
+  const titles = [...new Set(results.flatMap((r) => r.filtered))].slice(0, 30);
+  const debugInfo = results.map((r, i) => ({
+    url: urls[i],
+    status: r.status,
+    rawCount: r.rawCount,
+    rawSample: r.rawSample,
+  }));
+  return { titles, debugInfo };
 }
 
 async function fetchYahooPage(url) {
@@ -65,19 +73,21 @@ async function fetchYahooPage(url) {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
       signal: AbortSignal.timeout(8000),
     });
-    if (!r.ok) return [];
+    if (!r.ok) return { status: r.status, rawCount: 0, rawSample: [], filtered: [] };
     const $ = cheerio.load(await r.text());
-    const titles = [];
+    const raw = [];
+    const filtered = [];
     $("a").each(function () {
       const t = $(this).text().trim();
-      // Yahooのニュース見出しは末尾が「M/D配信元」形式（例: 7/7時事通信）
-      if (t.length >= 10 && t.length <= 80 && /\d{1,2}\/\d{1,2}[^\d/]{2,10}$/.test(t)) {
-        titles.push(t);
+      if (t.length >= 10 && t.length <= 80) {
+        raw.push(t);
+        // Yahooのニュース見出しは末尾が「M/D配信元」形式（例: 7/7時事通信）
+        if (/\d{1,2}\/\d{1,2}[^\d/]{2,10}$/.test(t)) filtered.push(t);
       }
     });
-    return [...new Set(titles)];
+    return { status: r.status, rawCount: raw.length, rawSample: raw.slice(0, 8), filtered };
   } catch (e) {
-    return [];
+    return { status: "error:" + e.message, rawCount: 0, rawSample: [], filtered: [] };
   }
 }
 
