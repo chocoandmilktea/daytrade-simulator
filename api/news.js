@@ -14,18 +14,9 @@ export default async function handler(req, res) {
 
   try {
     const [tdnet, yahoo] = await Promise.all([fetchTdnet(), fetchYahooNews()]);
-    const sourceText = buildSourceText(tdnet.items, yahoo.titles);
+    const sourceText = buildSourceText(tdnet, yahoo);
     const text = await summarizeWithAI(apiKey, sourceText);
-    // ── デバッグ用（確認できたら削除） ──
-    const debug = {
-      tdnetCount: tdnet.items.length,
-      tdnetSample: tdnet.items.slice(0, 5),
-      tdnetPage: tdnet.debug,
-      yahooCount: yahoo.titles.length,
-      yahooSample: yahoo.titles.slice(0, 5),
-      yahooPages: yahoo.debugInfo,
-    };
-    return res.status(200).json({ text, debug });
+    return res.status(200).json({ text });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
@@ -39,22 +30,17 @@ async function fetchTdnet() {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
       signal: AbortSignal.timeout(8000),
     });
-    if (!r.ok) return { items: [], debug: { url, status: r.status, rowsFound: 0 } };
-    const html = await r.text();
-    const $ = cheerio.load(html);
+    if (!r.ok) return [];
+    const $ = cheerio.load(await r.text());
     const items = [];
-    const nameEls = $(".kjName");
-    nameEls.each(function () {
+    $(".kjName").each(function () {
       const company = $(this).text().trim();
       const title = $(this).closest("tr").find(".kjTitle").first().text().trim();
       if (company && title) items.push(`${company}: ${title}`);
     });
-    return {
-      items: items.slice(0, 30),
-      debug: { url, status: r.status, itemsFound: items.length },
-    };
+    return items.slice(0, 30);
   } catch (e) {
-    return { items: [], debug: { url, status: "error:" + e.message, itemsFound: 0 } };
+    return [];
   }
 }
 
@@ -65,15 +51,8 @@ async function fetchYahooNews() {
     "https://finance.yahoo.co.jp/news/stocks",
     "https://finance.yahoo.co.jp/news/world",
   ];
-  const results = await Promise.all(urls.map(fetchYahooPage));
-  const titles = [...new Set(results.flatMap((r) => r.filtered))].slice(0, 30);
-  const debugInfo = results.map((r, i) => ({
-    url: urls[i],
-    status: r.status,
-    rawCount: r.rawCount,
-    rawSample: r.rawSample,
-  }));
-  return { titles, debugInfo };
+  const lists = await Promise.all(urls.map(fetchYahooPage));
+  return [...new Set(lists.flat())].slice(0, 30);
 }
 
 async function fetchYahooPage(url) {
@@ -82,21 +61,19 @@ async function fetchYahooPage(url) {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
       signal: AbortSignal.timeout(8000),
     });
-    if (!r.ok) return { status: r.status, rawCount: 0, rawSample: [], filtered: [] };
+    if (!r.ok) return [];
     const $ = cheerio.load(await r.text());
-    const raw = [];
-    const filtered = [];
+    const titles = [];
     $("a").each(function () {
       const t = $(this).text().trim();
-      if (t.length >= 10 && t.length <= 80) {
-        raw.push(t);
-        // Yahooの見出しは末尾が「M/D配信元」または「HH:MM配信元」形式
-        if (/(\d{1,2}\/\d{1,2}|\d{1,2}:\d{2})[^\d/:]{2,10}$/.test(t)) filtered.push(t);
+      // Yahooの見出しは末尾が「M/D配信元」または「HH:MM配信元」形式
+      if (t.length >= 10 && t.length <= 80 && /(\d{1,2}\/\d{1,2}|\d{1,2}:\d{2})[^\d/:]{2,10}$/.test(t)) {
+        titles.push(t);
       }
     });
-    return { status: r.status, rawCount: raw.length, rawSample: raw.slice(0, 8), filtered };
+    return titles;
   } catch (e) {
-    return { status: "error:" + e.message, rawCount: 0, rawSample: [], filtered: [] };
+    return [];
   }
 }
 
