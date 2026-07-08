@@ -854,18 +854,22 @@ function StockCard(p){
   // ── 逆相関銘柄予想（下落中の銘柄を見ている時だけ算出）───────────────────
   var corrListS=useState([]);var corrList=corrListS[0],setCorrList=corrListS[1];
   var corrLoadingS=useState(false);var corrLoading=corrLoadingS[0],setCorrLoading=corrLoadingS[1];
+  var corrErrorS=useState("");var corrError=corrErrorS[0],setCorrError=corrErrorS[1];
   var corrReasonS=useState("");var corrReason=corrReasonS[0],setCorrReason=corrReasonS[1];
   var corrReasonLoadingS=useState(false);var corrReasonLoading=corrReasonLoadingS[0],setCorrReasonLoading=corrReasonLoadingS[1];
   useEffect(function(){
-    setCorrList([]);setCorrReason("");
+    setCorrList([]);setCorrReason("");setCorrError("");
     if(!s||isUp||!expanded) return; // 下落中の銘柄を展開して見ている時だけ算出
-    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,150);
+    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,60);
     if(!candidates.length) return;
     setCorrLoading(true);
-    fetch(CORRELATION_API+"?ticker="+encodeURIComponent(s.ticker)+"&candidates="+encodeURIComponent(candidates.join(",")),{signal:AbortSignal.timeout(15000)})
+    fetch(CORRELATION_API+"?ticker="+encodeURIComponent(s.ticker)+"&candidates="+encodeURIComponent(candidates.join(",")),{signal:AbortSignal.timeout(20000)})
       .then(function(r){return r.json();})
-      .then(function(json){setCorrList(json.results||[]);})
-      .catch(function(){setCorrList([]);})
+      .then(function(json){
+        if(json.error){setCorrError(json.error);return;}
+        setCorrList(json.results||[]);
+      })
+      .catch(function(){setCorrError("通信エラー");})
       .finally(function(){setCorrLoading(false);});
   },[s&&s.ticker,isUp,expanded]);
 
@@ -966,11 +970,15 @@ function StockCard(p){
             </div>
           </div>
 
-          {!isUp&&(corrLoading||corrList.length>0)&&(
+          {!isUp&&expanded&&(
             <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",marginBottom:6}}>🔀 逆相関で上昇しやすい銘柄</div>
               {corrLoading?(
                 <div style={{fontSize:11,color:"#4a7090"}}>算出中...</div>
+              ):corrError?(
+                <div style={{fontSize:11,color:"#f43f5e"}}>取得できませんでした（{corrError}）</div>
+              ):corrList.length===0?(
+                <div style={{fontSize:11,color:"#4a7090"}}>強い逆相関の銘柄は見つかりませんでした</div>
               ):(
                 <div>
                   <div style={{display:"flex",flexDirection:"column",gap:4}}>
@@ -1183,18 +1191,22 @@ function StockDetailPanel(p){
   // ── 逆相関銘柄予想（下落中の銘柄を見ている時だけ算出）───────────────────
   var corrListS=useState([]);var corrList=corrListS[0],setCorrList=corrListS[1];
   var corrLoadingS=useState(false);var corrLoading=corrLoadingS[0],setCorrLoading=corrLoadingS[1];
+  var corrErrorS=useState("");var corrError=corrErrorS[0],setCorrError=corrErrorS[1];
   var corrReasonS=useState("");var corrReason=corrReasonS[0],setCorrReason=corrReasonS[1];
   var corrReasonLoadingS=useState(false);var corrReasonLoading=corrReasonLoadingS[0],setCorrReasonLoading=corrReasonLoadingS[1];
   useEffect(function(){
-    setCorrList([]);setCorrReason("");
+    setCorrList([]);setCorrReason("");setCorrError("");
     if(!s||isUp) return; // 下落中の銘柄を見ている時だけ算出
-    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,150);
+    var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,60);
     if(!candidates.length) return;
     setCorrLoading(true);
-    fetch(CORRELATION_API+"?ticker="+encodeURIComponent(s.ticker)+"&candidates="+encodeURIComponent(candidates.join(",")),{signal:AbortSignal.timeout(15000)})
+    fetch(CORRELATION_API+"?ticker="+encodeURIComponent(s.ticker)+"&candidates="+encodeURIComponent(candidates.join(",")),{signal:AbortSignal.timeout(20000)})
       .then(function(r){return r.json();})
-      .then(function(json){setCorrList(json.results||[]);})
-      .catch(function(){setCorrList([]);})
+      .then(function(json){
+        if(json.error){setCorrError(json.error);return;}
+        setCorrList(json.results||[]);
+      })
+      .catch(function(){setCorrError("通信エラー");})
       .finally(function(){setCorrLoading(false);});
   },[s&&s.ticker,isUp]);
 
@@ -1277,11 +1289,15 @@ function StockDetailPanel(p){
         </div>
       </div>
 
-      {!isUp&&(corrLoading||corrList.length>0)&&(
+      {!isUp&&(
         <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
           <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",marginBottom:6}}>🔀 逆相関で上昇しやすい銘柄</div>
           {corrLoading?(
             <div style={{fontSize:12,color:"#4a7090"}}>算出中...</div>
+          ):corrError?(
+            <div style={{fontSize:12,color:"#f43f5e"}}>取得できませんでした（{corrError}）</div>
+          ):corrList.length===0?(
+            <div style={{fontSize:12,color:"#4a7090"}}>強い逆相関の銘柄は見つかりませんでした</div>
           ):(
             <div>
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
