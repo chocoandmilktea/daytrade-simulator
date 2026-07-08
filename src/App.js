@@ -957,7 +957,7 @@ function StockCard(p){
             <button onClick={function(e){stopProp(e);if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} style={{background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
             <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
             <button onClick={function(e){stopProp(e);setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
-            <button onClick={function(e){stopProp(e);if(!isUp)setShowCorr(true);}} disabled={isUp} title={isUp?"上昇中の銘柄では使用できません":"逆相関で上昇しやすい銘柄を調べる"} style={{background:"transparent",border:"1px solid "+(isUp?"#1a2c40":"#2a4060"),borderRadius:6,color:isUp?"#2a4a60":"#4a7090",padding:"4px 9px",fontSize:14,cursor:isUp?"not-allowed":"pointer"}}>🔀</button>
+            <button onClick={function(e){stopProp(e);if(isUp)return;setShowCorr(true);if(!corrFetched&&!corrLoading)runCorrFetch();}} disabled={isUp} title={isUp?"上昇中の銘柄では使用できません":"逆相関で上昇しやすい銘柄を調べる"} style={{background:"transparent",border:"1px solid "+(isUp?"#1a2c40":"#2a4060"),borderRadius:6,color:isUp?"#2a4a60":"#4a7090",padding:"4px 9px",fontSize:14,cursor:isUp?"not-allowed":"pointer"}}>🔀</button>
           </div>
 
           {/* シグナル詳細 */}
@@ -1293,7 +1293,7 @@ function StockDetailPanel(p){
         <button onClick={function(){if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} style={{background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
         <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
         <button onClick={function(){setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
-        <button onClick={function(){if(!isUp)setShowCorr(true);}} disabled={isUp} title={isUp?"上昇中の銘柄では使用できません":"逆相関で上昇しやすい銘柄を調べる"} style={{background:"transparent",border:"1px solid "+(isUp?"#1a2c40":"#2a4060"),borderRadius:6,color:isUp?"#2a4a60":"#4a7090",padding:"4px 9px",fontSize:14,cursor:isUp?"not-allowed":"pointer"}}>🔀</button>
+        <button onClick={function(){if(isUp)return;setShowCorr(true);if(!corrFetched&&!corrLoading)runCorrFetch();}} disabled={isUp} title={isUp?"上昇中の銘柄では使用できません":"逆相関で上昇しやすい銘柄を調べる"} style={{background:"transparent",border:"1px solid "+(isUp?"#1a2c40":"#2a4060"),borderRadius:6,color:isUp?"#2a4a60":"#4a7090",padding:"4px 9px",fontSize:14,cursor:isUp?"not-allowed":"pointer"}}>🔀</button>
       </div>
       {/* シグナル詳細 */}
       <div>
@@ -2472,6 +2472,13 @@ function HelpModal(p){
       "色の見方：緑=60%以上、黄=50〜59%、赤=50%未満"
     ]},
     {title:"📉 下値サポート目安の見方",items:["S1（20日安値）：直近20日間の最安値。短期の下値サポートライン。ここを割ると次のS2が目安","S2（60日安値）：直近60日間の最安値。中期の強いサポートライン。S1を割り込んだ場合の次の目安","ATR×1.5下限：14日間の平均値幅（ATR）×1.5を現在値から引いた価格。統計的な下値の限界目安","活用法：S1割れで警戒、S2割れで損切り検討、ATR下限は最悪ケースの想定として使用"]},
+    {title:"🔘 銘柄詳細のアイコン行",items:[
+      "📋：AI判定用のプロンプトをクリップボードにコピー（claude.aiなどに貼り付けて使う用）",
+      "🔄：この銘柄だけを最新データで再スキャン",
+      "🤖：AIによる分析・上昇予測をポップアップ表示",
+      "💹：損益シミュレーターをポップアップ表示（買値・株数から利確/損切りラインの損益を試算）",
+      "🔀：逆相関で上昇しやすい銘柄をポップアップ表示（下落中の銘柄でのみ使用可）"
+    ]},
   ];
   return(
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:500,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
