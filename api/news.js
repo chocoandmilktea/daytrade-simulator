@@ -43,7 +43,7 @@ async function fetchTdnet() {
     const html = await r.text();
     const $ = cheerio.load(html);
     const items = [];
-    const rows = $("#main-body-box tr");
+    const rows = $("tr:has(.kjName)");
     rows.each(function () {
       const company = $(this).find(".kjName").text().trim();
       const title = $(this).find(".kjTitle").text().trim();
