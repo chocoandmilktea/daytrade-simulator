@@ -71,7 +71,10 @@ async function fetchYahooPage(url) {
     const titles = [];
     $("a").each(function () {
       const t = $(this).text().trim();
-      if (t.length >= 10 && t.length <= 80) titles.push(t);
+      // Yahooのニュース見出しは末尾が「M/D配信元」形式（例: 7/7時事通信）
+      if (t.length >= 10 && t.length <= 80 && /\d{1,2}\/\d{1,2}[^\d/]{2,10}$/.test(t)) {
+        titles.push(t);
+      }
     });
     return [...new Set(titles)];
   } catch (e) {
