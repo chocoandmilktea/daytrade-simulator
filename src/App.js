@@ -854,7 +854,10 @@ function TickerPreviewModal(p){
       <div style={{background:"#040c18",border:"1px solid #60a5fa50",borderRadius:16,padding:16,width:"100%",maxWidth:340}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div style={{fontSize:13,fontWeight:700,color:"#60a5fa"}}>📌 {s.ticker.replace(".T","")}</div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+          <div style={{display:"flex",gap:4,alignItems:"center"}}>
+            <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} title="銘柄コードをコピーしてiSPEEDを開く" style={{background:"transparent",border:"1px solid #f87171",borderRadius:6,color:"#fca5a5",padding:"3px 7px",fontSize:14,textDecoration:"none",lineHeight:1,display:"flex",alignItems:"center"}}>📱</a>
+            <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+          </div>
         </div>
         <div style={{fontSize:12,color:"#4a7090",marginBottom:8}}>{s.name}</div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:8,padding:"8px 12px",marginBottom:8}}>
