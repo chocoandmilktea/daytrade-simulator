@@ -43,26 +43,18 @@ async function fetchTdnet() {
     const html = await r.text();
     const $ = cheerio.load(html);
     const items = [];
-    const rows = $("tr:has(.kjName)");
-    rows.each(function () {
-      const company = $(this).find(".kjName").text().trim();
-      const title = $(this).find(".kjTitle").text().trim();
+    const nameEls = $(".kjName");
+    nameEls.each(function () {
+      const company = $(this).text().trim();
+      const title = $(this).closest("tr").find(".kjTitle").first().text().trim();
       if (company && title) items.push(`${company}: ${title}`);
     });
     return {
       items: items.slice(0, 30),
-      debug: {
-        url,
-        status: r.status,
-        rowsFound: rows.length,
-        htmlLength: html.length,
-        hasMainBodyBox: html.includes("main-body-box"),
-        kjNameCount: (html.match(/kjName/g) || []).length,
-        htmlSnippet: html.slice(0, 300),
-      },
+      debug: { url, status: r.status, itemsFound: items.length },
     };
   } catch (e) {
-    return { items: [], debug: { url, status: "error:" + e.message, rowsFound: 0 } };
+    return { items: [], debug: { url, status: "error:" + e.message, itemsFound: 0 } };
   }
 }
 
