@@ -992,7 +992,7 @@ function StockCard(p){
                     })}
                   </div>
                   <button onClick={runCorrReason} disabled={corrReasonLoading} style={{marginTop:6,background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:corrReasonLoading?"not-allowed":"pointer"}}>{corrReasonLoading?"⏳ 生成中...":"🤖 AIに理由を聞く"}</button>
-                  {corrReason&&<div style={{fontSize:11,color:"#b8cce0",lineHeight:1.6,marginTop:6,whiteSpace:"pre-wrap"}}>{corrReason}</div>}
+                  {corrReason&&<div style={{fontSize:11,color:"#b8cce0",lineHeight:1.6,marginTop:6,whiteSpace:"pre-wrap",maxHeight:220,overflowY:"auto",WebkitOverflowScrolling:"touch",paddingRight:4}}>{corrReason}</div>}
                   <div style={{fontSize:9,color:"#2a5070",marginTop:5}}>過去60営業日程度の値動きに基づく統計的傾向であり、将来を保証するものではありません</div>
                 </div>
               )}
@@ -1311,7 +1311,7 @@ function StockDetailPanel(p){
                 })}
               </div>
               <button onClick={runCorrReason} disabled={corrReasonLoading} style={{marginTop:6,background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:corrReasonLoading?"not-allowed":"pointer"}}>{corrReasonLoading?"⏳ 生成中...":"🤖 AIに理由を聞く"}</button>
-              {corrReason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.6,marginTop:6,whiteSpace:"pre-wrap"}}>{corrReason}</div>}
+              {corrReason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.6,marginTop:6,whiteSpace:"pre-wrap",maxHeight:280,overflowY:"auto",WebkitOverflowScrolling:"touch",paddingRight:4}}>{corrReason}</div>}
               <div style={{fontSize:10,color:"#2a5070",marginTop:5}}>過去60営業日程度の値動きに基づく統計的傾向であり、将来を保証するものではありません</div>
             </div>
           )}
