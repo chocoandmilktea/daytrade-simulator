@@ -822,6 +822,7 @@ function StockCard(p){
   var expandedS=useState(false);var expanded=expandedS[0],setExpanded=expandedS[1];
   var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
+  var showCorrS=useState(false);var showCorr=showCorrS[0],setShowCorr=showCorrS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   var simTargetS=useState(3);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
@@ -956,6 +957,7 @@ function StockCard(p){
             <button onClick={function(e){stopProp(e);if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} style={{background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
             <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
             <button onClick={function(e){stopProp(e);setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
+            <button onClick={function(e){stopProp(e);if(!isUp)setShowCorr(true);}} disabled={isUp} title={isUp?"上昇中の銘柄では使用できません":"逆相関で上昇しやすい銘柄を調べる"} style={{background:"transparent",border:"1px solid "+(isUp?"#1a2c40":"#2a4060"),borderRadius:6,color:isUp?"#2a4a60":"#4a7090",padding:"4px 9px",fontSize:14,cursor:isUp?"not-allowed":"pointer"}}>🔀</button>
           </div>
 
           {/* シグナル詳細 */}
@@ -975,40 +977,6 @@ function StockCard(p){
               })}
             </div>
           </div>
-
-          {!isUp&&expanded&&(
-            <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",marginBottom:6}}>🔀 逆相関で上昇しやすい銘柄</div>
-              {!corrFetched&&!corrLoading?(
-                <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"5px 10px",fontSize:12,cursor:"pointer",width:"100%"}}>🔀 逆相関銘柄を調べる</button>
-              ):corrLoading?(
-                <div style={{fontSize:11,color:"#4a7090"}}>算出中...</div>
-              ):corrError?(
-                <div>
-                  <div style={{fontSize:11,color:"#f43f5e",marginBottom:6}}>取得できませんでした（{corrError}）</div>
-                  <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:"pointer"}}>🔄 再試行</button>
-                </div>
-              ):corrList.length===0?(
-                <div style={{fontSize:11,color:"#4a7090"}}>強い逆相関の銘柄は見つかりませんでした</div>
-              ):(
-                <div>
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    {corrList.map(function(c){
-                      return(
-                        <div key={c.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#040c18",borderRadius:6,padding:"5px 8px"}}>
-                          <span style={{fontSize:12,color:"#d8eeff"}}>{c.ticker.replace(".T","")}</span>
-                          <span style={{fontSize:11,color:"#a78bfa"}}>逆相関 {c.correlation.toFixed(2)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <button onClick={runCorrReason} disabled={corrReasonLoading} style={{marginTop:6,background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:corrReasonLoading?"not-allowed":"pointer"}}>{corrReasonLoading?"⏳ 生成中...":"🤖 AIに理由を聞く"}</button>
-                  {corrReason&&<div style={{fontSize:11,color:"#b8cce0",lineHeight:1.6,marginTop:6,whiteSpace:"pre-wrap",maxHeight:220,overflowY:"auto",WebkitOverflowScrolling:"touch",paddingRight:4}}>{corrReason}</div>}
-                  <div style={{fontSize:9,color:"#2a5070",marginTop:5}}>過去60営業日程度の値動きに基づく統計的傾向であり、将来を保証するものではありません</div>
-                </div>
-              )}
-            </div>
-          )}
 
           {showAi&&(
             <div style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"12px"}}>
@@ -1150,6 +1118,44 @@ function StockCard(p){
             );
           })(),document.body)}
 
+          {showCorr&&createPortal(
+            <div onClick={function(e){if(e.target===e.currentTarget)setShowCorr(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <div style={{background:"#040c18",border:"1px solid #a78bfa50",borderRadius:16,padding:"16px",width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#a78bfa"}}>🔀 逆相関で上昇しやすい銘柄</div>
+                  <button onClick={function(){setShowCorr(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+                </div>
+                {!corrFetched&&!corrLoading?(
+                  <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"8px 10px",fontSize:13,cursor:"pointer",width:"100%"}}>🔀 逆相関銘柄を調べる</button>
+                ):corrLoading?(
+                  <div style={{fontSize:12,color:"#4a7090"}}>算出中...</div>
+                ):corrError?(
+                  <div>
+                    <div style={{fontSize:12,color:"#f43f5e",marginBottom:6}}>取得できませんでした（{corrError}）</div>
+                    <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:"pointer"}}>🔄 再試行</button>
+                  </div>
+                ):corrList.length===0?(
+                  <div style={{fontSize:12,color:"#4a7090"}}>強い逆相関の銘柄は見つかりませんでした</div>
+                ):(
+                  <div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {corrList.map(function(c){
+                        return(
+                          <div key={c.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"6px 10px"}}>
+                            <span style={{fontSize:13,color:"#d8eeff"}}>{c.ticker.replace(".T","")}</span>
+                            <span style={{fontSize:12,color:"#a78bfa"}}>逆相関 {c.correlation.toFixed(2)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <button onClick={runCorrReason} disabled={corrReasonLoading} style={{marginTop:8,background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"5px 10px",fontSize:12,cursor:corrReasonLoading?"not-allowed":"pointer"}}>{corrReasonLoading?"⏳ 生成中...":"🤖 AIに理由を聞く"}</button>
+                    {corrReason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap"}}>{corrReason}</div>}
+                    <div style={{fontSize:10,color:"#2a5070",marginTop:8}}>過去60営業日程度の値動きに基づく統計的傾向であり、将来を保証するものではありません</div>
+                  </div>
+                )}
+              </div>
+            </div>,document.body)}
+
         </div>
       )}
     </div>
@@ -1179,6 +1185,7 @@ function StockDetailPanel(p){
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
 
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
+  var showCorrS=useState(false);var showCorr=showCorrS[0],setShowCorr=showCorrS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   useEffect(function(){var isJP=s.market==="JP";setSimBuy(s.rawPrice?(isJP?String(Math.round(s.rawPrice)):s.rawPrice.toFixed(2)):"");},[s.ticker]);
@@ -1286,6 +1293,7 @@ function StockDetailPanel(p){
         <button onClick={function(){if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} style={{background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
         <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
         <button onClick={function(){setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
+        <button onClick={function(){if(!isUp)setShowCorr(true);}} disabled={isUp} title={isUp?"上昇中の銘柄では使用できません":"逆相関で上昇しやすい銘柄を調べる"} style={{background:"transparent",border:"1px solid "+(isUp?"#1a2c40":"#2a4060"),borderRadius:6,color:isUp?"#2a4a60":"#4a7090",padding:"4px 9px",fontSize:14,cursor:isUp?"not-allowed":"pointer"}}>🔀</button>
       </div>
       {/* シグナル詳細 */}
       <div>
@@ -1304,40 +1312,6 @@ function StockDetailPanel(p){
           })}
         </div>
       </div>
-
-      {!isUp&&(
-        <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",marginBottom:6}}>🔀 逆相関で上昇しやすい銘柄</div>
-          {!corrFetched&&!corrLoading?(
-            <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"6px 10px",fontSize:12,cursor:"pointer",width:"100%"}}>🔀 逆相関銘柄を調べる</button>
-          ):corrLoading?(
-            <div style={{fontSize:12,color:"#4a7090"}}>算出中...</div>
-          ):corrError?(
-            <div>
-              <div style={{fontSize:12,color:"#f43f5e",marginBottom:6}}>取得できませんでした（{corrError}）</div>
-              <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:"pointer"}}>🔄 再試行</button>
-            </div>
-          ):corrList.length===0?(
-            <div style={{fontSize:12,color:"#4a7090"}}>強い逆相関の銘柄は見つかりませんでした</div>
-          ):(
-            <div>
-              <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                {corrList.map(function(c){
-                  return(
-                    <div key={c.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#040c18",borderRadius:6,padding:"5px 8px"}}>
-                      <span style={{fontSize:13,color:"#d8eeff"}}>{c.ticker.replace(".T","")}</span>
-                      <span style={{fontSize:12,color:"#a78bfa"}}>逆相関 {c.correlation.toFixed(2)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <button onClick={runCorrReason} disabled={corrReasonLoading} style={{marginTop:6,background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:corrReasonLoading?"not-allowed":"pointer"}}>{corrReasonLoading?"⏳ 生成中...":"🤖 AIに理由を聞く"}</button>
-              {corrReason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.6,marginTop:6,whiteSpace:"pre-wrap",maxHeight:280,overflowY:"auto",WebkitOverflowScrolling:"touch",paddingRight:4}}>{corrReason}</div>}
-              <div style={{fontSize:10,color:"#2a5070",marginTop:5}}>過去60営業日程度の値動きに基づく統計的傾向であり、将来を保証するものではありません</div>
-            </div>
-          )}
-        </div>
-      )}
 
       {showAi&&createPortal(
         <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);setAiText("");setAiEntry(null);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -1438,6 +1412,44 @@ function StockDetailPanel(p){
           </div>
         );
       })(),document.body)}
+
+      {showCorr&&createPortal(
+        <div onClick={function(e){if(e.target===e.currentTarget)setShowCorr(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"#040c18",border:"1px solid #a78bfa50",borderRadius:16,padding:"16px",width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#a78bfa"}}>🔀 逆相関で上昇しやすい銘柄</div>
+              <button onClick={function(){setShowCorr(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+            </div>
+            {!corrFetched&&!corrLoading?(
+              <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"8px 10px",fontSize:13,cursor:"pointer",width:"100%"}}>🔀 逆相関銘柄を調べる</button>
+            ):corrLoading?(
+              <div style={{fontSize:12,color:"#4a7090"}}>算出中...</div>
+            ):corrError?(
+              <div>
+                <div style={{fontSize:12,color:"#f43f5e",marginBottom:6}}>取得できませんでした（{corrError}）</div>
+                <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:"pointer"}}>🔄 再試行</button>
+              </div>
+            ):corrList.length===0?(
+              <div style={{fontSize:12,color:"#4a7090"}}>強い逆相関の銘柄は見つかりませんでした</div>
+            ):(
+              <div>
+                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                  {corrList.map(function(c){
+                    return(
+                      <div key={c.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"6px 10px"}}>
+                        <span style={{fontSize:13,color:"#d8eeff"}}>{c.ticker.replace(".T","")}</span>
+                        <span style={{fontSize:12,color:"#a78bfa"}}>逆相関 {c.correlation.toFixed(2)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button onClick={runCorrReason} disabled={corrReasonLoading} style={{marginTop:8,background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"5px 10px",fontSize:12,cursor:corrReasonLoading?"not-allowed":"pointer"}}>{corrReasonLoading?"⏳ 生成中...":"🤖 AIに理由を聞く"}</button>
+                {corrReason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.6,marginTop:8,whiteSpace:"pre-wrap"}}>{corrReason}</div>}
+                <div style={{fontSize:10,color:"#2a5070",marginTop:8}}>過去60営業日程度の値動きに基づく統計的傾向であり、将来を保証するものではありません</div>
+              </div>
+            )}
+          </div>
+        </div>,document.body)}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
         <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
         <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
