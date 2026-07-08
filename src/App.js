@@ -224,6 +224,31 @@ function calcVWAP(closes,highs,lows,volumes){var cumTPV=0,cumVol=0;for(var i=0;i
 // ピボットポイント（前日相当26本から計算）
 function calcPivot(closes,highs,lows){var DAY=26,len=closes.length;if(len<DAY*2)return null;var ph=highs.slice(len-DAY*2,len-DAY),pl=lows.slice(len-DAY*2,len-DAY);var prevH=Math.max.apply(null,ph),prevL=Math.min.apply(null,pl),prevC=closes[len-DAY-1];var pp=(prevH+prevL+prevC)/3;return{pp:pp,r1:pp*2-prevL,s1:pp*2-prevH,r2:pp+(prevH-prevL),s2:pp-(prevH-prevL),prevHigh:prevH,prevLow:prevL,prevClose:prevC};}
 
+// ピアソン相関係数（2銘柄の値動きの連動性を-1〜1で算出。-1に近いほど逆相関）
+function pearsonCorrelation(a,b){
+  var n=Math.min(a.length,b.length);
+  if(n<10) return null; // データ不足時は算出しない
+  a=a.slice(-n);b=b.slice(-n);
+  var ma=a.reduce(function(x,y){return x+y;},0)/n;
+  var mb=b.reduce(function(x,y){return x+y;},0)/n;
+  var num=0,da=0,db=0;
+  for(var i=0;i<n;i++){var xa=a[i]-ma,xb=b[i]-mb;num+=xa*xb;da+=xa*xa;db+=xb*xb;}
+  if(da===0||db===0) return null;
+  return num/Math.sqrt(da*db);
+}
+// 対象銘柄と逆相関が強い銘柄を市場全体(allStocks)から抽出（上位limit件）
+function findInverseCorrelated(target,allStocks,limit){
+  if(!target||!target.closes||!allStocks) return [];
+  var out=[];
+  allStocks.forEach(function(s){
+    if(s.ticker===target.ticker||!s.closes) return;
+    var r=pearsonCorrelation(target.closes,s.closes);
+    if(r!==null&&r<-0.3) out.push({ticker:s.ticker,name:s.name,market:s.market,corr:r});
+  });
+  out.sort(function(x,y){return x.corr-y.corr;}); // 逆相関が強い順（マイナスが大きい順）
+  return out.slice(0,limit||5);
+}
+
 function runBacktest(closes,sellDays){
   var days=sellDays||5;
   var results=[],wins=0,total=0;
@@ -1081,7 +1106,7 @@ function StockCard(p){
 
 // ── StockDetailPanel ─────────────────────────────────────────────────────────
 function StockDetailPanel(p){
-  var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
+  var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,onRescan=p.onRescan,rescanLoading=p.rescanLoading,allStocks=p.allStocks||[];
   if(!s){
     return(
       <div style={{textAlign:"center",padding:"60px 20px",color:"#2a6090"}}>
@@ -1115,6 +1140,7 @@ function StockDetailPanel(p){
   var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
 
   var aiEntryS=useState(null);var aiEntry=aiEntryS[0],setAiEntry=aiEntryS[1];
+  var inverseCorr=findInverseCorrelated(s,allStocks,5);
 
   async function runAiAnalysis(){
     if(aiLoading) return;
@@ -1287,6 +1313,26 @@ function StockDetailPanel(p){
           </div>
         );
       })(),document.body)}
+      {allStocks.length>0&&(
+        <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:8,padding:"10px 12px",marginBottom:10}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:6}}>📉 逆相関の可能性がある銘柄</div>
+          {inverseCorr.length===0?(
+            <div style={{fontSize:12,color:"#4a7090"}}>該当する銘柄が見つかりませんでした</div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              {inverseCorr.map(function(ic){
+                return(
+                  <div key={ic.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#040c18",borderRadius:6,padding:"5px 8px"}}>
+                    <span style={{fontSize:13,color:"#b8cce0"}}>{ic.name} <span style={{color:"#4a7090",fontSize:11}}>({ic.ticker})</span></span>
+                    <span style={{fontSize:12,color:"#60a5fa",fontWeight:700}}>相関 {ic.corr.toFixed(2)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{fontSize:10,color:"#2a5070",marginTop:6}}>過去の値動きが逆方向になりやすい銘柄の候補です（参考情報・投資判断は自己責任で）</div>
+        </div>
+      )}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
         <a href={s.yahooUrl} target="_blank" rel="noreferrer" style={{background:"#071428",border:"1px solid #4f46e5",borderRadius:8,color:"#a5b4fc",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>🔗 Y!</a>
         <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>
@@ -1450,7 +1496,7 @@ function AllStocksPanel(p){
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]}/>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks}/>
             </div>
           </div>
         )}
@@ -1572,7 +1618,7 @@ function FavPanel(p){
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]}/>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks}/>
             </div>
           </div>
         )}
