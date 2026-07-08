@@ -855,13 +855,19 @@ function StockCard(p){
   var corrListS=useState([]);var corrList=corrListS[0],setCorrList=corrListS[1];
   var corrLoadingS=useState(false);var corrLoading=corrLoadingS[0],setCorrLoading=corrLoadingS[1];
   var corrErrorS=useState("");var corrError=corrErrorS[0],setCorrError=corrErrorS[1];
+  var corrFetchedS=useState(false);var corrFetched=corrFetchedS[0],setCorrFetched=corrFetchedS[1];
   var corrReasonS=useState("");var corrReason=corrReasonS[0],setCorrReason=corrReasonS[1];
   var corrReasonLoadingS=useState(false);var corrReasonLoading=corrReasonLoadingS[0],setCorrReasonLoading=corrReasonLoadingS[1];
   useEffect(function(){
-    setCorrList([]);setCorrReason("");setCorrError("");
-    if(!s||isUp||!expanded) return; // 下落中の銘柄を展開して見ている時だけ算出
+    setCorrList([]);setCorrReason("");setCorrError("");setCorrFetched(false);
+  },[s&&s.ticker]);
+
+  function runCorrFetch(e){
+    stopProp(e);
+    if(corrLoading||!s) return;
     var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,60);
-    if(!candidates.length) return;
+    setCorrError("");setCorrList([]);
+    if(!candidates.length){setCorrFetched(true);return;}
     setCorrLoading(true);
     fetch(CORRELATION_API+"?ticker="+encodeURIComponent(s.ticker)+"&candidates="+encodeURIComponent(candidates.join(",")),{signal:AbortSignal.timeout(20000)})
       .then(function(r){return r.json();})
@@ -870,8 +876,8 @@ function StockCard(p){
         setCorrList(json.results||[]);
       })
       .catch(function(){setCorrError("通信エラー");})
-      .finally(function(){setCorrLoading(false);});
-  },[s&&s.ticker,isUp,expanded]);
+      .finally(function(){setCorrLoading(false);setCorrFetched(true);});
+  }
 
   async function runCorrReason(e){
     stopProp(e);
@@ -973,10 +979,15 @@ function StockCard(p){
           {!isUp&&expanded&&(
             <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",marginBottom:6}}>🔀 逆相関で上昇しやすい銘柄</div>
-              {corrLoading?(
+              {!corrFetched&&!corrLoading?(
+                <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"5px 10px",fontSize:12,cursor:"pointer",width:"100%"}}>🔀 逆相関銘柄を調べる</button>
+              ):corrLoading?(
                 <div style={{fontSize:11,color:"#4a7090"}}>算出中...</div>
               ):corrError?(
-                <div style={{fontSize:11,color:"#f43f5e"}}>取得できませんでした（{corrError}）</div>
+                <div>
+                  <div style={{fontSize:11,color:"#f43f5e",marginBottom:6}}>取得できませんでした（{corrError}）</div>
+                  <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:"pointer"}}>🔄 再試行</button>
+                </div>
               ):corrList.length===0?(
                 <div style={{fontSize:11,color:"#4a7090"}}>強い逆相関の銘柄は見つかりませんでした</div>
               ):(
@@ -1192,13 +1203,18 @@ function StockDetailPanel(p){
   var corrListS=useState([]);var corrList=corrListS[0],setCorrList=corrListS[1];
   var corrLoadingS=useState(false);var corrLoading=corrLoadingS[0],setCorrLoading=corrLoadingS[1];
   var corrErrorS=useState("");var corrError=corrErrorS[0],setCorrError=corrErrorS[1];
+  var corrFetchedS=useState(false);var corrFetched=corrFetchedS[0],setCorrFetched=corrFetchedS[1];
   var corrReasonS=useState("");var corrReason=corrReasonS[0],setCorrReason=corrReasonS[1];
   var corrReasonLoadingS=useState(false);var corrReasonLoading=corrReasonLoadingS[0],setCorrReasonLoading=corrReasonLoadingS[1];
   useEffect(function(){
-    setCorrList([]);setCorrReason("");setCorrError("");
-    if(!s||isUp) return; // 下落中の銘柄を見ている時だけ算出
+    setCorrList([]);setCorrReason("");setCorrError("");setCorrFetched(false);
+  },[s&&s.ticker]);
+
+  function runCorrFetch(){
+    if(corrLoading||!s) return;
     var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,60);
-    if(!candidates.length) return;
+    setCorrError("");setCorrList([]);
+    if(!candidates.length){setCorrFetched(true);return;}
     setCorrLoading(true);
     fetch(CORRELATION_API+"?ticker="+encodeURIComponent(s.ticker)+"&candidates="+encodeURIComponent(candidates.join(",")),{signal:AbortSignal.timeout(20000)})
       .then(function(r){return r.json();})
@@ -1207,8 +1223,8 @@ function StockDetailPanel(p){
         setCorrList(json.results||[]);
       })
       .catch(function(){setCorrError("通信エラー");})
-      .finally(function(){setCorrLoading(false);});
-  },[s&&s.ticker,isUp]);
+      .finally(function(){setCorrLoading(false);setCorrFetched(true);});
+  }
 
   async function runCorrReason(){
     if(corrReasonLoading||!corrList.length) return;
@@ -1292,10 +1308,15 @@ function StockDetailPanel(p){
       {!isUp&&(
         <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
           <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",marginBottom:6}}>🔀 逆相関で上昇しやすい銘柄</div>
-          {corrLoading?(
+          {!corrFetched&&!corrLoading?(
+            <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"6px 10px",fontSize:12,cursor:"pointer",width:"100%"}}>🔀 逆相関銘柄を調べる</button>
+          ):corrLoading?(
             <div style={{fontSize:12,color:"#4a7090"}}>算出中...</div>
           ):corrError?(
-            <div style={{fontSize:12,color:"#f43f5e"}}>取得できませんでした（{corrError}）</div>
+            <div>
+              <div style={{fontSize:12,color:"#f43f5e",marginBottom:6}}>取得できませんでした（{corrError}）</div>
+              <button onClick={runCorrFetch} style={{background:"transparent",border:"1px solid #a78bfa",borderRadius:6,color:"#a78bfa",padding:"4px 9px",fontSize:12,cursor:"pointer"}}>🔄 再試行</button>
+            </div>
           ):corrList.length===0?(
             <div style={{fontSize:12,color:"#4a7090"}}>強い逆相関の銘柄は見つかりませんでした</div>
           ):(
