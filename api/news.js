@@ -37,10 +37,9 @@ async function fetchTdnet() {
     if (!r.ok) return [];
     const $ = cheerio.load(await r.text());
     const items = [];
-    $("table tr").each(function () {
-      const cells = $(this).find("td");
-      const company = cells.eq(1).text().trim();
-      const title = cells.eq(2).text().trim();
+    $("#main-body-box tr").each(function () {
+      const company = $(this).find(".kjName").text().trim();
+      const title = $(this).find(".kjTitle").text().trim();
       if (company && title) items.push(`${company}: ${title}`);
     });
     return items.slice(0, 30);
