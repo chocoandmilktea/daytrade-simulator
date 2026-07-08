@@ -51,7 +51,15 @@ async function fetchTdnet() {
     });
     return {
       items: items.slice(0, 30),
-      debug: { url, status: r.status, rowsFound: rows.length, htmlLength: html.length, htmlSnippet: html.slice(0, 300) },
+      debug: {
+        url,
+        status: r.status,
+        rowsFound: rows.length,
+        htmlLength: html.length,
+        hasMainBodyBox: html.includes("main-body-box"),
+        kjNameCount: (html.match(/kjName/g) || []).length,
+        htmlSnippet: html.slice(0, 300),
+      },
     };
   } catch (e) {
     return { items: [], debug: { url, status: "error:" + e.message, rowsFound: 0 } };
