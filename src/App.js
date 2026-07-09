@@ -11,7 +11,7 @@ var MKT = {
   JP: { bg:"#1a0a0a", border:"#f87171", text:"#fca5a5", label:"JP" },
 };
 
-function scoreColor(n){ return n>=68?"#22d3a0":n>=42?"#fbbf24":"#f43f5e"; }
+function scoreColor(n){ return n>=58?"#22d3a0":n>=38?"#fbbf24":"#f43f5e"; }
 function bStyle(bg,border,text){ return{background:bg,border:"1px solid "+border,color:text,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:4}; }
 
 // 決算発表予定日のバッジ情報（日本株は「翌営業日リスト」照合のため常に直近扱い）
@@ -528,12 +528,12 @@ function analyzeStock(stock,pd,vixVal){
   // 実績winRateは後でactualWinRateが揃ってから上書き（表示用は暫定値）
   var winRate=winRateRaw;
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
-  var timing=sc>=68?"BUY":sc>=42?"WATCH":"SKIP";
+  var timing=sc>=58?"BUY":sc>=38?"WATCH":"SKIP";
 
   var aptScore=0;
   try{
-    if(sc>=68) aptScore+=30;
-    else if(sc>=42) aptScore+=15;
+    if(sc>=58) aptScore+=30;
+    else if(sc>=38) aptScore+=15;
     var hasTrendUpApt=signals&&signals.find(function(sig){return sig&&sig.label==="トレンド"&&sig.val==="上昇";});
     if(hasTrendUpApt) aptScore+=25;
     if(position52!=null&&position52<=25) aptScore+=25;
@@ -891,7 +891,7 @@ function StockCard(p){
   var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
 
-  var borderColor=s.score>=68?"#22d3a0":s.score>=42?"#fbbf24":"#f43f5e";
+  var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
   var stateColor=function(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";};
@@ -1239,7 +1239,7 @@ function StockDetailPanel(p){
   var isUp=parseFloat(s.change)>=0;
   var mc=MKT[s.market]||MKT["US"];
   var bc=BADGE[s.timing];
-  var borderColor=s.score>=68?"#22d3a0":s.score>=42?"#fbbf24":"#f43f5e";
+  var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
   var fromHighColor=s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0";
   var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
   var stateColor=function(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";};
