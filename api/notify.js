@@ -10,7 +10,7 @@ export default async function handler(req, res) {
   const params = new URLSearchParams();
   params.append('token', process.env.PUSHOVER_TOKEN);
   params.append('user', process.env.PUSHOVER_USER);
-  params.append('title', ' ');
+  params.append('title', title || ' ');
   params.append('message', message || '');
   params.append('sound', 'cashregister');
 
