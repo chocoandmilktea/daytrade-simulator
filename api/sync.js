@@ -1,5 +1,5 @@
 // api/sync.js
-// お気に入り・ポートフォリオ・スコア履歴のデバイス間同期
+// お気に入り・お気に入りグループ・ポートフォリオ・スコア履歴のデバイス間同期
 // TTL: アクセスのたびに90日延長
 
 import { Redis } from '@upstash/redis';
@@ -19,18 +19,22 @@ export default async function handler(req, res) {
   const key = 'user:' + userId;
 
   if (req.method === 'POST') {
-    const { favs, portfolio, scoreHist } = req.body;
+    const { favs, portfolio, scoreHist, groups, groupNames } = req.body;
     await redis.set(key, JSON.stringify({
       favs: favs || [],
       portfolio: portfolio || [],
       scoreHist: scoreHist || {},
+      groups: groups || {},
+      groupNames: groupNames || {},
     }), { ex: TTL });
     return res.status(200).json({ ok: true });
   }
 
   if (req.method === 'GET') {
     const data = await redis.get(key);
-    if (!data) return res.status(200).json({ favs: [], portfolio: [], scoreHist: {} });
+    if (!data) {
+      return res.status(200).json({ favs: [], portfolio: [], scoreHist: {}, groups: {}, groupNames: {} });
+    }
 
     // GETのたびにTTLを90日リセット
     await redis.expire(key, TTL);
@@ -40,6 +44,8 @@ export default async function handler(req, res) {
       favs: parsed.favs || [],
       portfolio: parsed.portfolio || [],
       scoreHist: parsed.scoreHist || {},
+      groups: parsed.groups || {},
+      groupNames: parsed.groupNames || {},
     });
   }
 
