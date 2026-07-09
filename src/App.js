@@ -87,7 +87,8 @@ async function fetchYahoo(ticker){
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
   var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null;
-  var data={closes:fill(q.close),highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||fill(q.close).slice(-1)[0],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate};
+  var filledClose=fill(q.close);
+  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate};
   CACHE[ticker]={ts:now,data:data};
   return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate};
 }
@@ -119,7 +120,7 @@ function buildAiPrompt(s){
   return "あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
     "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
     "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
-    "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: +"+s.fromLow.toFixed(1)+"%\n"+
+    "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: "+(s.fromLow>=0?"+":"")+s.fromLow.toFixed(1)+"%\n"+
     "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
     "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
     histPart+
@@ -580,24 +581,6 @@ function analyzeStock(stock,pd,vixVal){
   })();
   // ────────────────────────────────────────────────────────────────────────
 
-  var bottomScore=0;
-  if(position52!=null&&position52<=15) bottomScore+=35;
-  else if(position52!=null&&position52<=25) bottomScore+=25;
-  else if(position52!=null&&position52<=40) bottomScore+=10;
-  if(rsiVal<30) bottomScore+=30;
-  else if(rsiVal<40) bottomScore+=20;
-  else if(rsiVal<50) bottomScore+=8;
-  if(mNow.hist>0&&mPrev&&mPrev.hist<=0) bottomScore+=30;
-  else if(mNow.hist>0&&mPrev&&mNow.hist>mPrev.hist) bottomScore+=15;
-  else if(mNow.hist<0&&mPrev&&mNow.hist>mPrev.hist) bottomScore+=10;
-  if(bollVal&&price<=bollVal.lower) bottomScore+=20;
-  else if(bollVal&&closes[n]<bollVal.lower+(bollVal.upper-bollVal.lower)*0.2) bottomScore+=10;
-  if(stochVal!==null&&stochVal<20) bottomScore+=15;
-  else if(stochVal!==null&&stochVal<35) bottomScore+=8;
-  if(hasDC&&hasBearTrend) bottomScore-=20;
-  else if(hasBearTrend) bottomScore-=10;
-  bottomScore=Math.min(100,Math.max(0,bottomScore));
-
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     volume:stock.volume||0,
     price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
@@ -609,7 +592,7 @@ function analyzeStock(stock,pd,vixVal){
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
     aptScore:aptScore,
     atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,
-    scoreHist:scoreHist,bottomScore:bottomScore,
+    scoreHist:scoreHist,
     actualWinRate:calcActualWinRate(scoreHist),
     vwap:vwap?parseFloat(vwap.toFixed(stock.market==="JP"?0:2)):null,
     pivot:pivot?{pp:parseFloat(pivot.pp.toFixed(stock.market==="JP"?0:2)),r1:parseFloat(pivot.r1.toFixed(stock.market==="JP"?0:2)),s1:parseFloat(pivot.s1.toFixed(stock.market==="JP"?0:2)),r2:parseFloat(pivot.r2.toFixed(stock.market==="JP"?0:2)),s2:parseFloat(pivot.s2.toFixed(stock.market==="JP"?0:2)),prevHigh:parseFloat(pivot.prevHigh.toFixed(stock.market==="JP"?0:2)),prevLow:parseFloat(pivot.prevLow.toFixed(stock.market==="JP"?0:2)),prevClose:parseFloat(pivot.prevClose.toFixed(stock.market==="JP"?0:2))}:null,
