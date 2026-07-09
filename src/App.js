@@ -1198,9 +1198,11 @@ function StockCard(p){
                   <div>
                     <div style={{display:"flex",flexDirection:"column",gap:4}}>
                       {corrList.map(function(c){
+                        var code=c.ticker.replace(".T","");
+                        var matched=(p.allStocks||[]).find(function(x){return x.ticker.replace(".T","")===code;});
                         return(
-                          <div key={c.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"6px 10px"}}>
-                            <span style={{fontSize:13,color:"#d8eeff"}}>{c.ticker.replace(".T","")}</span>
+                          <div key={c.ticker} onClick={function(e){if(matched){e.stopPropagation();setPreviewStock(matched);}}} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"6px 10px",cursor:matched?"pointer":"default"}}>
+                            <span style={{fontSize:13,color:matched?"#60a5fa":"#d8eeff",textDecoration:matched?"underline":"none",fontWeight:matched?700:400}}>{code}</span>
                             <span style={{fontSize:12,color:"#a78bfa"}}>逆相関 {c.correlation.toFixed(2)}</span>
                           </div>
                         );
@@ -1496,9 +1498,11 @@ function StockDetailPanel(p){
               <div>
                 <div style={{display:"flex",flexDirection:"column",gap:4}}>
                   {corrList.map(function(c){
+                    var code=c.ticker.replace(".T","");
+                    var matched=(p.allStocks||[]).find(function(x){return x.ticker.replace(".T","")===code;});
                     return(
-                      <div key={c.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"6px 10px"}}>
-                        <span style={{fontSize:13,color:"#d8eeff"}}>{c.ticker.replace(".T","")}</span>
+                      <div key={c.ticker} onClick={function(e){if(matched){e.stopPropagation();setPreviewStock(matched);}}} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"6px 10px",cursor:matched?"pointer":"default"}}>
+                        <span style={{fontSize:13,color:matched?"#60a5fa":"#d8eeff",textDecoration:matched?"underline":"none",fontWeight:matched?700:400}}>{code}</span>
                         <span style={{fontSize:12,color:"#a78bfa"}}>逆相関 {c.correlation.toFixed(2)}</span>
                       </div>
                     );
@@ -2544,7 +2548,8 @@ function HelpModal(p){
       "🔄：この銘柄だけを最新データで再スキャン",
       "🤖：AIによる分析・上昇予測をポップアップ表示",
       "💹：損益シミュレーターをポップアップ表示（買値・株数から利確/損切りラインの損益を試算）",
-      "🔀：逆相関で上昇しやすい銘柄をポップアップ表示（下落中の銘柄でのみ使用可）"
+      "🔀：逆相関で上昇しやすい銘柄をポップアップ表示（下落中の銘柄でのみ使用可）",
+      "逆相関の数値（例：-0.51）：2銘柄の値動きの関係の強さを-1〜+1で表す相関係数。+1に近いほど同じ方向に動きやすく、-1に近いほど逆方向に動きやすい（0は無関係）。過去60営業日程度のデータに基づく統計的傾向であり、将来を保証するものではない"
     ]},
   ];
   return(
