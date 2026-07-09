@@ -241,6 +241,10 @@ function calcVWAP(closes,highs,lows,volumes){var cumTPV=0,cumVol=0;for(var i=0;i
 
 // ピボットポイント（前日相当26本から計算）
 function calcPivot(closes,highs,lows){var DAY=26,len=closes.length;if(len<DAY*2)return null;var ph=highs.slice(len-DAY*2,len-DAY),pl=lows.slice(len-DAY*2,len-DAY);var prevH=Math.max.apply(null,ph),prevL=Math.min.apply(null,pl),prevC=closes[len-DAY-1];var pp=(prevH+prevL+prevC)/3;return{pp:pp,r1:pp*2-prevL,s1:pp*2-prevH,r2:pp+(prevH-prevL),s2:pp-(prevH-prevL),prevHigh:prevH,prevLow:prevL,prevClose:prevC};}
+// ATR(真の値幅の平均)。period本分のTrue Rangeを単純平均。ボラティリティ判定に使用
+function calcATR(closes,highs,lows,period){var trs=[];for(var i=1;i<closes.length;i++){var h=highs[i]||closes[i],l=lows[i]||closes[i],pc=closes[i-1];trs.push(Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc)));}var slice=trs.slice(-period);return slice.length?slice.reduce(function(a,b){return a+b;},0)/slice.length:null;}
+// 上位足の方向判定。factor本ごとに間引いた擬似終値列でEMA5/13クロスを見る（1:上昇 -1:下降 0:横ばい/データ不足）
+function resampleDir(closes,factor){var arr=[];for(var i=closes.length-1;i>=0&&arr.length<40;i-=factor){arr.unshift(closes[i]);}if(arr.length<14)return 0;var e5=calcEMA(arr,5),e13=calcEMA(arr,13),m=arr.length-1;return e5[m]>e13[m]?1:(e5[m]<e13[m]?-1:0);}
 
 function runBacktest(closes,sellDays){
   var days=sellDays||5;
@@ -285,8 +289,6 @@ function analyzeStock(stock,pd,vixVal){
   var isJP=stock.market==="JP";
   // JP:1分足/20日(1日≒390本) / US:5分足/30日(1日≒78本)
   var DAY_BARS   =isJP?390 :78;    // 1日あたりのバー数
-  var SMA_S      =isJP?7800:1560;  // JP:20日 / US:20日
-  var SMA_L      =isJP?19500:3900; // JP:50日 / US:50日
   var RSI_P      =isJP?5460:1092;  // JP:14日相当 / US:14日相当
   var BB_P       =isJP?7800:1560;  // JP:20日 / US:20日
   var STOCH_P    =isJP?5460:1092;  // JP:14日相当 / US:14日相当
@@ -296,32 +298,41 @@ function analyzeStock(stock,pd,vixVal){
   var BB_LOOKBACK_L=isJP?7800:1560;// stable: 約20日相当
   var YEAR_BARS=closes.length;     // 取得全期間を52週相当として使用
   // ───────────────────────────────────────────────────────────────────────
-  var s20=calcSMA(closes,SMA_S)[n],s50=calcSMA(closes,SMA_L)[n];
   var macdArr=calcMACD(closes),rsiVal=calcRSI(closes)[n];
   var bollVal=calcBoll(closes)[n],stochVal=calcStoch(closes,highs,lows)[n];
   var mNow=macdArr[n],mPrev=macdArr[n-1],price=pd.currentPrice||closes[n];
   var sc=0,signals=[];
 
+  // ── ATR（値幅）算出 ─────────────────────────────────────────────────────
+  var atrRaw=calcATR(closes,highs,lows,14);
+  var atr=atrRaw!=null?Math.round(atrRaw):Math.round(price*0.02);
+  var atrPct=price>0?(atr/price*100):0;
+
   // ── VWAP・ピボット計算 ─────────────────────────────────────────────────────
   var vwap=volumes.length>0?calcVWAP(closes,highs,lows,volumes):null;
   var pivot=calcPivot(closes,highs,lows);
 
-  // ── ⑧ VWAP シグナル（補助・最大12点）────────────────────────────────────
+  // ── VWAP シグナル（メイン・最大15点）────────────────────────────────────
   if(vwap!==null){
     var vwapDiff=(price-vwap)/vwap*100;
-    if(price>vwap&&vwapDiff<=1.0){sc+=12;signals.push({label:"VWAP",val:"上抜け直後",state:1});}
-    else if(price>vwap){sc+=6;signals.push({label:"VWAP",val:"上方乖離(+"+vwapDiff.toFixed(1)+"%)",state:1});}
-    else if(price<vwap&&vwapDiff>=-1.0){sc+=8;signals.push({label:"VWAP",val:"下抜け直後",state:-1});}
-    else{sc-=6;signals.push({label:"VWAP",val:"下方乖離("+vwapDiff.toFixed(1)+"%)",state:-1});}
+    if(price>vwap&&vwapDiff<=1.0){sc+=15;signals.push({label:"VWAP",val:"上抜け直後",state:1});}
+    else if(price>vwap){sc+=8;signals.push({label:"VWAP",val:"上方乖離(+"+vwapDiff.toFixed(1)+"%)",state:1});}
+    else if(price<vwap&&vwapDiff>=-1.0){sc+=10;signals.push({label:"VWAP",val:"下抜け直後",state:-1});}
+    else{sc-=8;signals.push({label:"VWAP",val:"下方乖離("+vwapDiff.toFixed(1)+"%)",state:-1});}
   }
 
-  // ── ⑨ ピボットポイント シグナル（補助・最大10点）────────────────────────
+  // ── Pivotポイント シグナル（補助・最大5点）─────────────────────────────
   if(pivot!==null){
-    if(price>pivot.r1){sc-=5;signals.push({label:"Pivot",val:"R1上抜け(過熱)",state:-1});}
-    else if(price>pivot.pp&&price<=pivot.r1){sc+=10;signals.push({label:"Pivot",val:"PP〜R1(上昇ゾーン)",state:1});}
-    else if(price>=pivot.s1&&price<=pivot.pp){sc+=5;signals.push({label:"Pivot",val:"S1〜PP(中立)",state:0});}
-    else{sc-=8;signals.push({label:"Pivot",val:"S1下(弱気)",state:-1});}
+    if(price>pivot.r1){sc-=3;signals.push({label:"Pivot",val:"R1上抜け(過熱)",state:-1});}
+    else if(price>pivot.pp&&price<=pivot.r1){sc+=5;signals.push({label:"Pivot",val:"PP〜R1(上昇ゾーン)",state:1});}
+    else if(price>=pivot.s1&&price<=pivot.pp){sc+=3;signals.push({label:"Pivot",val:"S1〜PP(中立)",state:0});}
+    else{sc-=4;signals.push({label:"Pivot",val:"S1下(弱気)",state:-1});}
   }
+
+  // ── ATR シグナル（値幅フィルター・新規・最大10点）───────────────────────
+  if(atrPct>=0.15){sc+=10;signals.push({label:"ATR",val:"値幅十分("+atrPct.toFixed(2)+"%)",state:1});}
+  else if(atrPct>=0.08){sc+=5;signals.push({label:"ATR",val:"値幅やや小("+atrPct.toFixed(2)+"%)",state:0});}
+  else{sc-=5;signals.push({label:"ATR",val:"値幅不足("+atrPct.toFixed(2)+"%)",state:-1});}
   // ────────────────────────────────────────────────────────────────────────────
 
   var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
@@ -347,40 +358,42 @@ function analyzeStock(stock,pd,vixVal){
   var tradeType0=yearRange0>=60||avgDC0>=2||absChg0>=5?"short":yearRange0>=25||avgDC0>=1||absChg0>=2?"mid":"stable";
   var bbLookback=tradeType0==="short"?BB_LOOKBACK_S:tradeType0==="mid"?BB_LOOKBACK_M:BB_LOOKBACK_L;
 
-  // ── ① トレンド（サブ・15点）────────────────────────────────────────────
-  if(s20&&s50){
-    if(price>s20&&s20>s50){sc+=15;signals.push({label:"トレンド",val:"上昇トレンド",state:1});}
-    else if(price<s20&&s20<s50){sc-=12;signals.push({label:"トレンド",val:"下降トレンド",state:-1});}
-    else{sc+=5;signals.push({label:"トレンド",val:"横ばい",state:0});}
-  }else if(s20){
-    if(price>s20){sc+=8;signals.push({label:"トレンド",val:"MA20上",state:1});}
-    else{sc-=6;signals.push({label:"トレンド",val:"MA20下",state:-1});}
-  }
+  // ── トレンド（メイン・最大18点）：直近の勢い(8点)＋上位足一致(10点)────
+  var emaFast5=calcEMA(closes,5),emaFast13=calcEMA(closes,13);
+  var trendDirNow=emaFast5[n]>emaFast13[n]?1:(emaFast5[n]<emaFast13[n]?-1:0);
+  if(trendDirNow===1){sc+=8;signals.push({label:"トレンド",val:"上昇",state:1});}
+  else if(trendDirNow===-1){sc-=6;signals.push({label:"トレンド",val:"下降",state:-1});}
+  else{sc+=2;signals.push({label:"トレンド",val:"横ばい",state:0});}
+  var dir5=resampleDir(closes,5),dir15=resampleDir(closes,15);
+  if(trendDirNow===1&&dir5===1){sc+=5;signals.push({label:"上位足一致(5本毎)",val:"上昇一致",state:1});}
+  if(trendDirNow===1&&dir15===1){sc+=5;signals.push({label:"上位足一致(15本毎)",val:"上昇一致",state:1});}
+  if(trendDirNow===-1&&dir5===-1){sc-=3;signals.push({label:"上位足一致(5本毎)",val:"下降一致",state:-1});}
+  if(trendDirNow===-1&&dir15===-1){sc-=3;signals.push({label:"上位足一致(15本毎)",val:"下降一致",state:-1});}
 
-  // ── ② MACD（サブ補正・最大10点）────────────────────────────────────────
-  if(mNow.hist>0&&mPrev&&mPrev.hist<=0){sc+=10;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});}
-  else if(mNow.hist>0){sc+=5;signals.push({label:"MACD",val:"強気ゾーン",state:1});}
-  else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){sc-=10;signals.push({label:"MACD",val:"デッドクロス",state:-1});}
-  else{sc-=5;signals.push({label:"MACD",val:"弱気ゾーン",state:-1});}
+  // ── MACD（補助・最大4点）───────────────────────────────────────────────
+  if(mNow.hist>0&&mPrev&&mPrev.hist<=0){sc+=4;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});}
+  else if(mNow.hist>0){sc+=2;signals.push({label:"MACD",val:"強気ゾーン",state:1});}
+  else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){sc-=4;signals.push({label:"MACD",val:"デッドクロス",state:-1});}
+  else{sc-=2;signals.push({label:"MACD",val:"弱気ゾーン",state:-1});}
 
-  // ── ③ RSI（メイン・最大30点）────────────────────────────────────────────
+  // ── RSI（補助・最大8点）────────────────────────────────────────────────
   var rl="RSI("+rsiVal.toFixed(1)+")";
-  if(rsiVal<30){sc+=30;signals.push({label:rl,val:"売られすぎ",state:1});}
-  else if(rsiVal<40){sc+=22;signals.push({label:rl,val:"やや売られ",state:1});}
-  else if(rsiVal<50){sc+=14;signals.push({label:rl,val:"やや弱め",state:0});}
-  else if(rsiVal<60){sc+=8;signals.push({label:rl,val:"中立",state:0});}
-  else if(rsiVal<70){sc+=4;signals.push({label:rl,val:"やや強め",state:0});}
-  else{sc-=12;signals.push({label:rl,val:"買われすぎ",state:-1});}
+  if(rsiVal<30){sc+=8;signals.push({label:rl,val:"売られすぎ",state:1});}
+  else if(rsiVal<40){sc+=6;signals.push({label:rl,val:"やや売られ",state:1});}
+  else if(rsiVal<50){sc+=4;signals.push({label:rl,val:"やや弱め",state:0});}
+  else if(rsiVal<60){sc+=2;signals.push({label:rl,val:"中立",state:0});}
+  else if(rsiVal<70){sc+=1;signals.push({label:rl,val:"やや強め",state:0});}
+  else{sc-=3;signals.push({label:rl,val:"買われすぎ",state:-1});}
 
-  // ── ④ BB位置（メイン・最大25点）+ BB収束ボーナス（最大10点）───────────
+  // ── BB位置（最大8点）+ BB収束ボーナス（最大7点）────────────────────────
   var bbSqueeze=false;
   if(bollVal){
     var bbPos=(closes[n]-bollVal.lower)/(bollVal.upper-bollVal.lower||1);
-    if(price<=bollVal.lower){sc+=25;signals.push({label:"BB",val:"下限→反発",state:1});}
-    else if(bbPos<0.2){sc+=18;signals.push({label:"BB",val:"下限付近",state:1});}
-    else if(price>=bollVal.upper){sc-=15;signals.push({label:"BB",val:"上限→過熱",state:-1});}
-    else if(bbPos>0.8){sc+=3;signals.push({label:"BB",val:"上限付近",state:0});}
-    else{sc+=8;signals.push({label:"BB",val:"バンド内",state:0});}
+    if(price<=bollVal.lower){sc+=8;signals.push({label:"BB",val:"下限→反発",state:1});}
+    else if(bbPos<0.2){sc+=5;signals.push({label:"BB",val:"下限付近",state:1});}
+    else if(price>=bollVal.upper){sc-=6;signals.push({label:"BB",val:"上限→過熱",state:-1});}
+    else if(bbPos>0.8){sc+=1;signals.push({label:"BB",val:"上限付近",state:0});}
+    else{sc+=3;signals.push({label:"BB",val:"バンド内",state:0});}
 
     // BB収束検知（トレードタイプ別日数）
     var bollArr=calcBoll(closes);
@@ -392,55 +405,51 @@ function analyzeStock(stock,pd,vixVal){
       var bwAvg=recentBW.reduce(function(a,b){return a+b;})/recentBW.length;
       var bwNow=bollVal.upper-bollVal.lower;
       var bwRatio=bwNow/bwAvg;
-      if(bwRatio<=0.7){sc+=10;bbSqueeze=true;signals.push({label:"BB収束",val:"強収束("+Math.round(bwRatio*100)+"%)",state:1});}
-      else if(bwRatio<=0.85){sc+=6;bbSqueeze=true;signals.push({label:"BB収束",val:"収束中("+Math.round(bwRatio*100)+"%)",state:1});}
+      if(bwRatio<=0.7){sc+=7;bbSqueeze=true;signals.push({label:"BB収束",val:"強収束("+Math.round(bwRatio*100)+"%)",state:1});}
+      else if(bwRatio<=0.85){sc+=4;bbSqueeze=true;signals.push({label:"BB収束",val:"収束中("+Math.round(bwRatio*100)+"%)",state:1});}
       else if(bwRatio>=1.3){signals.push({label:"BB収束",val:"拡大中",state:-1});}
       else{signals.push({label:"BB収束",val:"平常("+Math.round(bwRatio*100)+"%)",state:0});}
     }
   }
 
-  // ── ⑤ Stoch（補助）────────────────────────────────────────────────────
+  // ── Stoch（補助・最大6点）──────────────────────────────────────────────
   if(stochVal!==null){
     var sl="Stoch("+stochVal.toFixed(1)+")";
-    if(stochVal<20){sc+=12;signals.push({label:sl,val:"売られすぎ",state:1});}
-    else if(stochVal<35){sc+=8;signals.push({label:sl,val:"やや売られ",state:1});}
-    else if(stochVal>80){sc-=8;signals.push({label:sl,val:"買われすぎ",state:-1});}
-    else if(stochVal>65){sc+=3;signals.push({label:sl,val:"やや強め",state:0});}
-    else{sc+=5;signals.push({label:sl,val:"中立",state:0});}
+    if(stochVal<20){sc+=6;signals.push({label:sl,val:"売られすぎ",state:1});}
+    else if(stochVal<35){sc+=4;signals.push({label:sl,val:"やや売られ",state:1});}
+    else if(stochVal>80){sc-=4;signals.push({label:sl,val:"買われすぎ",state:-1});}
+    else if(stochVal>65){sc+=2;signals.push({label:sl,val:"やや強め",state:0});}
+    else{sc+=3;signals.push({label:sl,val:"中立",state:0});}
   }
 
-  // ── ⑥ シグナル重複ボーナス ────────────────────────────────────────────
+  // ── シグナル重複ボーナス（最大4点・2階層でシンプルに）────────────────
   var overlapLabels=[];
   var hasRSIOversold=signals.find(function(sig){return sig.label.startsWith("RSI")&&(sig.val==="売られすぎ"||sig.val==="やや売られ");});
   var hasBBLow=signals.find(function(sig){return sig.label==="BB"&&(sig.val==="下限→反発"||sig.val==="下限付近");});
   var hasStochOversold=signals.find(function(sig){return sig.label.startsWith("Stoch")&&(sig.val==="売られすぎ"||sig.val==="やや売られ");});
-  var hasTrendUp=signals.find(function(sig){return sig.label==="トレンド"&&(sig.val==="上昇トレンド"||sig.val==="MA20上");});
+  var hasTrendUp=signals.find(function(sig){return sig.label==="トレンド"&&sig.val==="上昇";});
   var hasGC=signals.find(function(sig){return sig.label==="MACD"&&sig.val==="ゴールデンクロス";});
   var hasDC=signals.find(function(sig){return sig.label==="MACD"&&sig.val==="デッドクロス";});
-  var hasBearTrend=signals.find(function(sig){return sig.label==="トレンド"&&(sig.val==="下降トレンド"||sig.val==="MA20下");});
+  var hasBearTrend=signals.find(function(sig){return sig.label==="トレンド"&&sig.val==="下降";});
   var overlap=0;
 
-  if(hasRSIOversold&&hasBBLow&&bbSqueeze){overlap+=15;overlapLabels.push("RSI+BB収束");}
-  else if(hasRSIOversold&&hasBBLow&&!hasDC&&!hasBearTrend){overlap+=10;overlapLabels.push("RSI+BB");}
-  if(hasRSIOversold&&hasStochOversold&&!hasDC&&!hasBearTrend){overlap+=8;overlapLabels.push("RSI+Stoch");}
-  if(hasBBLow&&hasStochOversold&&!hasDC&&!hasBearTrend){overlap+=8;overlapLabels.push("BB+Stoch");}
-  if(bbSqueeze&&hasTrendUp){overlap+=8;overlapLabels.push("収束+上昇");}
-  if(hasGC&&hasBBLow){overlap+=8;overlapLabels.push("GC+BB");}
-  if(hasGC&&hasRSIOversold&&hasBBLow){overlap+=8;overlapLabels.push("トリプル");}
+  var oversoldCount=(hasRSIOversold?1:0)+(hasBBLow?1:0)+(hasStochOversold?1:0);
+  if(oversoldCount>=3){overlap=4;overlapLabels.push("RSI+BB+Stoch一致");}
+  else if(oversoldCount>=2){overlap=2;overlapLabels.push("2指標一致");}
 
   sc=sc+overlap;
 
-  // ── ⑦ OBV・出来高（メイン・最大25点）─────────────────────────────────
+  // ── 出来高・OBV（メイン・最大15点）───────────────────────────────────
   var obScore=0;
   // OBV: 直近1日分のバーの終値位置平均で判定
   var obvBars=Math.min(DAY_BARS,n+1);
   var cpSum=0;
   for(var oi=n-obvBars+1;oi<=n;oi++){var dr=highs[oi]-lows[oi]||1;cpSum+=(closes[oi]-lows[oi])/dr;}
   var closePosition=cpSum/obvBars;
-  if(closePosition>=0.8){obScore+=12;signals.push({label:"OBV",val:"買い優勢",state:1});}
-  else if(closePosition>=0.6){obScore+=6;signals.push({label:"OBV",val:"やや買い優勢",state:1});}
-  else if(closePosition<=0.2){obScore-=10;signals.push({label:"OBV",val:"売り優勢",state:-1});}
-  else if(closePosition<=0.4){obScore-=5;signals.push({label:"OBV",val:"やや売り優勢",state:-1});}
+  if(closePosition>=0.8){obScore+=7;signals.push({label:"OBV",val:"買い優勢",state:1});}
+  else if(closePosition>=0.6){obScore+=4;signals.push({label:"OBV",val:"やや買い優勢",state:1});}
+  else if(closePosition<=0.2){obScore-=6;signals.push({label:"OBV",val:"売り優勢",state:-1});}
+  else if(closePosition<=0.4){obScore-=3;signals.push({label:"OBV",val:"やや売り優勢",state:-1});}
   else{signals.push({label:"OBV",val:"中立",state:0});}
 
   // 出来高: 直近5日分合計 vs 長期20日平均（同期間）で比較
@@ -451,11 +460,11 @@ function analyzeStock(stock,pd,vixVal){
     var avgSum=longVols.length>0?longVols.reduce(function(a,b){return a+b;},0)/longVols.length*volDay5:0;
     var surge=avgSum>0?recentSum/avgSum:1;
     if(surge>=2.0){
-      obScore+=(closePosition>=0.6?13:closePosition<=0.4?-13:3);
+      obScore+=(closePosition>=0.6?8:closePosition<=0.4?-8:2);
       signals.push({label:"出来高",val:surge.toFixed(1)+"倍"+(closePosition>=0.6?"(買い)":closePosition<=0.4?"(売り)":"(中立)"),state:closePosition>=0.6?1:closePosition<=0.4?-1:0});
-    }else if(surge>=1.5){obScore+=5;signals.push({label:"出来高",val:"やや増加("+surge.toFixed(1)+"倍)",state:1});}
+    }else if(surge>=1.5){obScore+=3;signals.push({label:"出来高",val:"やや増加("+surge.toFixed(1)+"倍)",state:1});}
     else if(surge>=0.8){signals.push({label:"出来高",val:"平常("+surge.toFixed(1)+"倍)",state:0});}
-    else{obScore-=3;signals.push({label:"出来高",val:"低調("+surge.toFixed(1)+"倍)",state:-1});}
+    else{obScore-=2;signals.push({label:"出来高",val:"低調("+surge.toFixed(1)+"倍)",state:-1});}
   }else{
     signals.push({label:"出来高",val:"データなし",state:0});
   }
@@ -525,7 +534,7 @@ function analyzeStock(stock,pd,vixVal){
   try{
     if(sc>=68) aptScore+=30;
     else if(sc>=42) aptScore+=15;
-    var hasTrendUpApt=signals&&signals.find(function(sig){return sig&&sig.label==="トレンド"&&(sig.val==="上昇トレンド"||sig.val==="MA20上");});
+    var hasTrendUpApt=signals&&signals.find(function(sig){return sig&&sig.label==="トレンド"&&sig.val==="上昇";});
     if(hasTrendUpApt) aptScore+=25;
     if(position52!=null&&position52<=25) aptScore+=25;
     else if(position52!=null&&position52<=50) aptScore+=15;
@@ -534,15 +543,7 @@ function analyzeStock(stock,pd,vixVal){
     aptScore=Math.min(100,Math.max(0,aptScore));
   }catch(e){aptScore=0;}
 
-  // ── 本日の想定値幅（ATRベース）─────────────────────────────────────────
-  var atrLen=Math.min(14,closes.length-1);
-  var atrSum=0;
-  for(var ai=closes.length-atrLen;ai<closes.length;ai++){
-    var h=highs[ai]||closes[ai],l=lows[ai]||closes[ai],pc=closes[ai-1];
-    var tr=Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc));
-    atrSum+=tr;
-  }
-  var atr=atrLen>0?Math.round(atrSum/atrLen):Math.round(price*0.02);
+  // ── 本日の想定値幅（atrはスコア計算冒頭で算出済みのものを再利用）──────────
   var atrUpper=Math.round(price+atr);
   var atrLower=Math.round(price-atr);
   // ── 週足高安値（直近5営業日相当）──────────────────────────────────────────
