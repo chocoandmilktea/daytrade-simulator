@@ -220,9 +220,13 @@ async function handleUS(ticker, res) {
       const closes = result.indicators?.quote?.[0]?.close || [];
       const meta = result.meta || {};
       const validCloses = closes.filter(v => v != null && !isNaN(v));
+      // 前日終値はYahoo公式のmeta値を最優先（正確な前営業日の終値）。
+      // 5分足配列からの推定値（末尾から2番目のバー＝数分前の価格）は
+      // meta値が取得できない場合の最終手段としてのみ使う。
       const previousClose =
-        (validCloses.length >= 2 ? validCloses[validCloses.length - 2] : null)
-        || meta.chartPreviousClose || meta.regularMarketPreviousClose || 0;
+        meta.chartPreviousClose || meta.regularMarketPreviousClose
+        || (validCloses.length >= 2 ? validCloses[validCloses.length - 2] : null)
+        || 0;
       result.meta.chartPreviousClose = previousClose;
       result.meta.dataInterval = "5m";
       result.meta.dataRange = "30d";
