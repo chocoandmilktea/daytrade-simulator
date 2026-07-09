@@ -922,7 +922,7 @@ function StockCard(p){
   },[s&&s.ticker]);
 
   function runCorrFetch(e){
-    stopProp(e);
+    if(e) stopProp(e);
     if(corrLoading||!s) return;
     var candidates=(p.allStocks||[]).map(function(x){return x.ticker;}).filter(function(t){return t!==s.ticker;}).slice(0,60);
     setCorrError("");setCorrList([]);
