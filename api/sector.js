@@ -89,12 +89,20 @@ async function askAIForSectors(req) {
   if (!r.ok) throw new Error("ai api: " + r.status);
   const json = await r.json();
   try {
-    const clean = (json.text || "").replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(clean);
+    const parsed = JSON.parse(extractJson(json.text || ""));
     return parsed.sectors || [];
   } catch (e) {
     return []; // パース失敗時は「該当なし」として通常ランキングにフォールバック
   }
+}
+
+// web_search使用時、AIの応答に「〜を検索します」等の実況テキストが混ざり込むため、
+// 最初の「{」〜最後の「}」までを抜き出してからJSON.parseする
+function extractJson(text) {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) return text;
+  return text.slice(start, end + 1);
 }
 
 function getJSTDateLabel() {
