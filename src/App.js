@@ -54,8 +54,10 @@ function resolveEventDate(ticker,field,freshDate){
 var CACHE={}, CACHE_TTL=15*60*1000; // 15分足に合わせてTTLを15分に短縮
 var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
+var SECTOR_API="https://daytrade-simulator.vercel.app/api/sector";
 var CORRELATION_API="https://daytrade-simulator.vercel.app/api/correlation";
 
+// 出来高ランキング取得（sector API失敗時の最終フォールバック用に残置）
 async function fetchRanking(market){
   try{
     var res=await fetch(RANKING_API+"?market="+market,{signal:AbortSignal.timeout(15000)});
@@ -67,12 +69,27 @@ async function fetchRanking(market){
   }catch(e){return null;}
 }
 
+// AI業種選定→J-Quants絞り込みランキング取得（メインの取得経路）
+async function fetchSectorRanking(){
+  try{
+    var res=await fetch(SECTOR_API,{signal:AbortSignal.timeout(25000)});
+    if(!res.ok) throw new Error("sector "+res.status);
+    var json=await res.json();
+    var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume||0,change:s.change||0};});
+    return{stocks:stocks.length>0?stocks:null,sectors:json.sectors||[]};
+  }catch(e){return{stocks:null,sectors:[]};}
+}
+
 async function buildStockUniverse(){
-  var jp=await fetchRanking("jp")||[];
-  if(jp.length===0){var retry=await fetchRanking("jp");jp=retry||[];}
+  var primary=await fetchSectorRanking();
+  var jp=primary.stocks;
+  var sectors=primary.sectors;
+  // sector API自体が失敗した場合のみ、従来の出来高ランキングにフォールバック
+  // （AIが有効な業種を返せなかった場合はsector.js内部で既にフォールバック済み）
+  if(!jp||jp.length===0){jp=await fetchRanking("jp")||[];sectors=[];}
   var seen={},out=[];
   jp.forEach(function(s){if(!seen[s.ticker]){seen[s.ticker]=true;out.push(s);}});
-  return out;
+  return{stocks:out,sectors:sectors};
 }
 
 // 15分足データ取得（メイン分析用・60日分）
@@ -2321,11 +2338,13 @@ export default function App(){
   var scan=useCallback(async function(){
     setLoading(true);
     CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止）
-    setProgress({done:0,total:0,msg:"出来高ランキング取得中..."});
+    setProgress({done:0,total:0,msg:"AI業種選定中..."});
     try{
-      var universe=(await buildStockUniverse()).slice();
+      var uResult=await buildStockUniverse();
+      var universe=uResult.stocks.slice();
       var jpCount=universe.length;
-      setProgress({done:0,total:0,msg:"JP:"+jpCount+"銘柄 取得完了 分析開始..."});
+      var sectorLabel=uResult.sectors&&uResult.sectors.length?uResult.sectors.map(function(s){return s.name;}).join("/"):"通常ランキング";
+      setProgress({done:0,total:0,msg:"JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始..."});
       var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
       var uTickers=universe.map(function(s){return s.ticker;});
       favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
