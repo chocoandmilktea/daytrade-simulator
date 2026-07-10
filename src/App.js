@@ -1540,6 +1540,7 @@ function FavPanel(p){
   var sortS=useState("score");var sortBy=sortS[0],setSortBy=sortS[1];
   var groupFilterS=useState(0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1]; // 0=全体
   var addGroupS=useState(1);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
+  var showAccS=useState(false);var showAcc=showAccS[0],setShowAcc=showAccS[1];
   async function addByTicker(){
     var raw=searchTicker.trim().toUpperCase();if(!raw)return;
     var ticker=(raw.match(/^\d{4}$/)?raw+".T":raw);
@@ -1606,7 +1607,9 @@ function FavPanel(p){
           <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>グループ:</span>
           {gBtn(0,"全体")}
           {[1,2,3,4,5].map(function(n){return <span key={n} style={{display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
+          <button onClick={function(){setShowAcc(true);}} style={{marginLeft:"auto",background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
         </div>
+        {showAcc&&createPortal(<SignalAccuracyModal onClose={function(){setShowAcc(false);}}/>,document.body)}
         {favStocks.length>0&&(
           isMobile?(
             <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:4,display:"grid",gridTemplateColumns:"1fr 1fr",gap:4}}>
@@ -2106,6 +2109,64 @@ function SyncPanel(p){
           </div>);
         })}
         <div style={{fontSize:11,color:"#2a6060",marginTop:8}}>※ お気に入り登録・変更時に自動でサーバーに保存されます</div>
+      </div>
+    </div>
+  );
+}
+
+// シグナルキー("トレンド#1"等)を人が読める表記に変換
+function formatSigKeyLabel(key){
+  var parts=key.split("#");
+  var label=parts[0],state=parts[1];
+  var stateLabel=state==="1"?"↑優勢":state==="-1"?"↓優勢":"中立";
+  return label+" "+stateLabel;
+}
+
+function SignalAccuracyModal(p){
+  var onClose=p.onClose;
+  var daysS=useState(1);var days=daysS[0],setDays=daysS[1];
+  var data=calcFavSignalAccuracy(days);
+  function dBtn(val,label){
+    var active=days===val;
+    return(<button onClick={function(){setDays(val);}} style={{flex:1,background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"6px 0",fontSize:12,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  }
+  return(
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:500,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}
+      onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"88vh",overflowY:"scroll",WebkitOverflowScrolling:"touch"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>📊 シグナル的中率</div>
+          <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:14,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
+        </div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>お気に入り登録銘柄の過去データを集計。各シグナルが出た時、その後株価が上がった割合です</div>
+        <div style={{display:"flex",gap:6,marginBottom:12}}>
+          {dBtn(1,"翌日判定")}
+          {dBtn(3,"3営業日後判定")}
+        </div>
+        {data.length===0?(
+          <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだデータがありません。お気に入り銘柄を毎日スキャンすると溜まっていきます。</div>
+        ):(
+          <div>
+            <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
+              <div style={{flex:1}}>シグナル</div>
+              <div style={{width:60,textAlign:"right"}}>的中率</div>
+              <div style={{width:50,textAlign:"right"}}>件数</div>
+            </div>
+            {data.map(function(row,i){
+              var reliable=row.total>=5;
+              var color=row.winRate==null?"#4a7090":row.winRate>=60?"#22d3a0":row.winRate>=50?"#fbbf24":"#f43f5e";
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830",opacity:reliable?1:0.5}}>
+                  <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{formatSigKeyLabel(row.signal)}</div>
+                  <div style={{width:60,textAlign:"right",color:color,fontWeight:700}}>{row.winRate!=null?row.winRate+"%":"-"}</div>
+                  <div style={{width:50,textAlign:"right",color:"#4a7090"}}>{row.total}</div>
+                </div>
+              );
+            })}
+            <div style={{fontSize:11,color:"#2a6090",marginTop:10}}>※件数5未満は参考値（薄く表示）。件数が増えるほど信頼度が上がります</div>
+          </div>
+        )}
       </div>
     </div>
   );
