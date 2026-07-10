@@ -268,6 +268,48 @@ function calcActualWinRate(scoreHist,threshold){
   return{winRate:total>0?Math.round(wins/total*100):null,total:total,byBand:byBand};
 }
 
+// ── シグナル別的中率の検証 ─────────────────────────────────────────────
+// signalsのlabelは末尾に動的な数値が付くもの(例:"RSI(35.2)")があるため、
+// 基準ラベルのみ抽出して同一シグナルとして集計できるようにする
+function baseSigLabel(label){return label.replace(/\([^)]*\)$/,"");}
+
+// 1銘柄分のscoreHistから、シグナルごとの勝敗数をstatsに積算する
+// daysAfter: 何営業日後の価格と比較するか(scoreHistの記録間隔=1エントリ想定)
+function accumulateSignalStats(hist,daysAfter,stats){
+  for(var i=0;i<hist.length-daysAfter;i++){
+    var cur=hist[i],nxt=hist[i+daysAfter];
+    if(cur.p==null||nxt.p==null||!cur.sig) continue;
+    var won=nxt.p>cur.p;
+    cur.sig.forEach(function(key){
+      if(!stats[key])stats[key]={w:0,t:0};
+      stats[key].t++;
+      if(won)stats[key].w++;
+    });
+  }
+}
+
+// お気に入り登録銘柄全体のscoreHistを横断してシグナル別的中率を算出
+// daysAfter: 1=翌日判定, 3=3営業日後判定
+// 戻り値: [{signal,winRate,total}, ...] 的中率が高い順
+function calcFavSignalAccuracy(daysAfter){
+  daysAfter=daysAfter||1;
+  var favList=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]");}catch(e){return[];}})();
+  var stats={};
+  favList.forEach(function(ticker){
+    var hist=(function(){try{return JSON.parse(localStorage.getItem("sh_"+ticker)||"[]");}catch(e){return[];}})();
+    accumulateSignalStats(hist,daysAfter,stats);
+  });
+  return Object.keys(stats).map(function(k){
+    var s=stats[k];
+    return{signal:k,winRate:s.t>0?Math.round(s.w/s.t*100):null,total:s.t};
+  }).sort(function(a,b){return(b.winRate||0)-(a.winRate||0);});
+}
+// ブラウザのコンソールから確認できるように公開（例: getSignalAccuracy(3)）
+if(typeof window!=="undefined"){
+  window.getSignalAccuracy=function(daysAfter){return calcFavSignalAccuracy(daysAfter||1);};
+}
+// ──────────────────────────────────────────────────────────────────────
+
 function analyzeStock(stock,pd,vixVal){
   var closes=pd.closes.slice(),highs=pd.highs.slice(),lows=pd.lows.slice();
   var volumes=pd.volumes?pd.volumes.slice():[];
@@ -563,17 +605,18 @@ function analyzeStock(stock,pd,vixVal){
   }
   // ────────────────────────────────────────────────────────────────────────
 
-  // ── スコア履歴をlocalStorageに蓄積（自動・最大20日分）────────────────────
+  // ── スコア履歴をlocalStorageに蓄積（自動・最大40日分）────────────────────
   var scoreHist=(function(){
     try{
       var key="sh_"+stock.ticker;
       var hist=JSON.parse(localStorage.getItem(key)||"[]");
       var today=new Date().toISOString().slice(0,10);
+      var sigKeys=signals.map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
       if(hist.length&&hist[hist.length-1].d===today){
-        hist[hist.length-1]={d:today,s:sc,atr:atr,p:price};
+        hist[hist.length-1]={d:today,s:sc,atr:atr,p:price,sig:sigKeys};
       }else{
-        hist.push({d:today,s:sc,atr:atr,p:price});
-        if(hist.length>20)hist.shift();
+        hist.push({d:today,s:sc,atr:atr,p:price,sig:sigKeys});
+        if(hist.length>40)hist.shift();
       }
       localStorage.setItem(key,JSON.stringify(hist));
       return hist;
