@@ -23,15 +23,16 @@ export default async function handler(req, res) {
 }
 
 // ── 共通ユーティリティ ────────────────────────────────────────────────────────
+// ※以下、sector.js から再利用するため export しています
 
 // 出来高フィルター：過去平均の1.5倍以上かどうか（平均が取れない場合はtrue）
-function isVolumeAboveAvg(vol, avgVol) {
+export function isVolumeAboveAvg(vol, avgVol) {
   if (!avgVol || avgVol <= 0) return true;
   return vol >= avgVol * 1.5;
 }
 
 // 重複除去マージ（出来高上位 + 値上がり率上位）
-function mergeHybrid(byVolume, byChange) {
+export function mergeHybrid(byVolume, byChange) {
   const seen = {};
   const out = [];
   byVolume.forEach(function(s) {
@@ -110,7 +111,8 @@ const JP_NAMES_FALLBACK = {
   "6857":"アドバンテスト","9101":"日本郵船",
 };
 
-async function fetchNameMap(req) {
+// sector.js から req.headers.host を使って内部fetchするため export
+export async function fetchNameMap(req) {
   try {
     const host = req.headers.host || "daytrade-simulator.vercel.app";
     const protocol = host.includes("localhost") ? "http" : "https";
@@ -148,7 +150,9 @@ async function fetchJQuantsNameMap(apiKey, dateStr8) {
   }
 }
 
-function getTargetBusinessDay() {
+// 対象営業日を判定（15:30の取引終了前や土日はひとつ前の営業日にフォールバック）
+// sector.js でも同じ基準で日付を揃えるため export
+export function getTargetBusinessDay() {
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   const hhmm = jst.getUTCHours() * 60 + jst.getUTCMinutes();
@@ -169,14 +173,14 @@ function getTargetBusinessDay() {
 
 // J-Quants bars/daily には前日終値(PC)フィールドが存在しないため、
 // 変化率は当日始値(O)比で計算する（API仕様上これが最善）
-function calcChangeRate(bar) {
+export function calcChangeRate(bar) {
   const open = bar.O || 0;
   const close = bar.C || 0;
   return open > 0 ? (close - open) / open : 0;
 }
 
 // 会社名の優先順位：IPO専用API > J-Quants銘柄マスタ > ハードコード一覧 > コードそのまま
-function mapJPBar(bar, names, jqNames) {
+export function mapJPBar(bar, names, jqNames) {
   const code = String(bar.Code || "").replace(/0$/, "");
   const name = names[code] || jqNames[code] || JP_NAMES_FALLBACK[code] || code;
   return {
