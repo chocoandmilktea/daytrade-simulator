@@ -111,7 +111,7 @@ function getJSTDateLabel() {
 }
 
 // ── ②J-Quants業種マスタ（コード→会社名・業種名）。24時間キャッシュ ──────────
-// ※ Sector33CodeName は想定フィールド名。実際のAPIレスポンス項目名は導入時に要確認
+// ※ 業種名フィールドはJ-Quants v2公式ドキュメント確認済み: S33Nm（33業種コード名）
 
 let masterCache = { ts: 0, nameMap: null, sectorMap: null };
 
@@ -132,7 +132,7 @@ async function fetchJQuantsMaster(apiKey, dateStr8) {
     const code = String(row.Code || "").replace(/0$/, "");
     if (!code) return;
     if (row.CoName) nameMap[code] = row.CoName;
-    if (row.Sector33CodeName) sectorMap[code] = row.Sector33CodeName;
+    if (row.S33Nm) sectorMap[code] = row.S33Nm;
   });
 
   masterCache = { ts: now, nameMap, sectorMap };
