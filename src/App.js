@@ -766,7 +766,31 @@ function formatChartDateLabel(isoDate){
   return (d.getMonth()+1)+"/"+d.getDate()+"("+WEEKDAY_JA[d.getDay()]+")時点";
 }
 function fmtPriceLabel(v){
-  return v>=1000?Math.round(v).toLocaleString("ja-JP"):v.toFixed(1);
+  var av=Math.abs(v);
+  var step=av>=10000?100:av>=5000?50:av>=1000?10:av>=100?5:av>=10?1:0.5;
+  var rounded=Math.round(v/step)*step;
+  return rounded>=1000?Math.round(rounded).toLocaleString("ja-JP"):rounded.toFixed(step<1?1:0);
+}
+// 時刻ラベル：できるだけ正時（9:00,10:00…）を優先して選ぶ。正時が少ない場合は均等間引きで補う。
+function pickTimeLabels(times,maxCount){
+  var onHour=[];
+  for(var i=0;i<times.length;i++){
+    if(times[i]&&times[i].slice(-2)==="00") onHour.push(i);
+  }
+  var idxs;
+  if(onHour.length>=2){
+    if(onHour.length>maxCount){
+      idxs=[];
+      for(var k=0;k<maxCount;k++) idxs.push(onHour[Math.round(k*(onHour.length-1)/(maxCount-1))]);
+    }else{
+      idxs=onHour;
+    }
+  }else{
+    idxs=[];
+    var n=Math.min(maxCount,times.length);
+    for(var k2=0;k2<n;k2++) idxs.push(Math.round(k2*(times.length-1)/((n-1)||1)));
+  }
+  return idxs.map(function(i){return times[i];});
 }
 function IntradayMiniChart(p){
   var data=p.data,H=96;
@@ -787,13 +811,8 @@ function IntradayMiniChart(p){
   var pts=closes.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
   // 右側の価格目盛り：参考画像に合わせて上から4段（最高値〜最安値を均等分割）
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
-  // 下段の時刻ラベル：均等に最大4つ選ぶ
-  var labelCount=Math.min(4,times.length);
-  var timeLabels=[];
-  for(var k=0;k<labelCount;k++){
-    var idx=Math.round(k*(times.length-1)/((labelCount-1)||1));
-    timeLabels.push(times[idx]||"");
-  }
+  // 下段の時刻ラベル：正時（9:00,10:00…）優先で最大4つ選ぶ
+  var timeLabels=pickTimeLabels(times,4);
   return(
     <div>
       {dateLabel&&<div style={{fontSize:10,color:"#6a90b0",textAlign:"right",marginBottom:2}}>{dateLabel}</div>}
