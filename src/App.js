@@ -62,19 +62,42 @@ var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
 // J-Quantsの1分足をサーバー側(api/intraday.js)で5分足に集約して返す想定
 // 土日・休場日はサーバー側で自動的に直近の取引日まで遡るため、date（実際の取引日）も受け取る
 var INTRADAY_CACHE={}, INTRADAY_TTL=5*60*1000; // 5分足なのでTTLも5分
+
+// J-Quantsのレートリミット対策：カードが一斉に取得しようとして弾かれないよう、
+// 同時に実行するリクエスト数を絞って順番に処理するキュー
+var INTRADAY_QUEUE=[], INTRADAY_ACTIVE=0, INTRADAY_MAX_CONCURRENT=3, INTRADAY_GAP=200;
+function runIntradayQueue(){
+  while(INTRADAY_ACTIVE<INTRADAY_MAX_CONCURRENT && INTRADAY_QUEUE.length>0){
+    var job=INTRADAY_QUEUE.shift();
+    INTRADAY_ACTIVE++;
+    job().finally(function(){
+      INTRADAY_ACTIVE--;
+      setTimeout(runIntradayQueue,INTRADAY_GAP);
+    });
+  }
+}
+function enqueueIntraday(fn){
+  return new Promise(function(resolve){
+    INTRADAY_QUEUE.push(function(){return fn().then(resolve);});
+    runIntradayQueue();
+  });
+}
+
 async function fetchIntraday(ticker){
   var now=Date.now();
   if(INTRADAY_CACHE[ticker]&&now-INTRADAY_CACHE[ticker].ts<INTRADAY_TTL) return INTRADAY_CACHE[ticker].data;
-  try{
-    var res=await fetch(INTRADAY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
-    if(!res.ok) throw new Error("HTTP "+res.status);
-    var json=await res.json();
-    var closes=json&&json.closes?json.closes:null;
-    if(!closes||closes.length<2) return null;
-    var result={closes:closes,date:json.date||null};
-    INTRADAY_CACHE[ticker]={ts:now,data:result};
-    return result;
-  }catch(e){return null;}
+  return enqueueIntraday(async function(){
+    try{
+      var res=await fetch(INTRADAY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      var json=await res.json();
+      var closes=json&&json.closes?json.closes:null;
+      if(!closes||closes.length<2) return null;
+      var result={closes:closes,times:json.times||[],date:json.date||null};
+      INTRADAY_CACHE[ticker]={ts:now,data:result};
+      return result;
+    }catch(e){return null;}
+  });
 }
 
 // 出来高ランキング取得（sector API失敗時の最終フォールバック用に残置）
@@ -720,7 +743,7 @@ function SparklineWithMA(p){
 }
 
 // ── 当日5分足ミニチャート（カードに常時表示）───────────────────────────
-// SparklineWithMAより軽量：軸なしの単色折れ線のみ。読み込み中/データなしはプレースホルダー表示。
+// 右側に価格の目盛り、下側に時刻ラベルを表示する。読み込み中/データなしはプレースホルダー表示。
 // 土日等でデータが直近の取引日のものになっている場合は、日付ラベルを添えて分かるようにする。
 var WEEKDAY_JA=["日","月","火","水","木","金","土"];
 function formatChartDateLabel(isoDate){
@@ -731,29 +754,57 @@ function formatChartDateLabel(isoDate){
   if(isToday) return "";
   return (d.getMonth()+1)+"/"+d.getDate()+"("+WEEKDAY_JA[d.getDay()]+")時点";
 }
+function fmtPriceLabel(v){
+  return v>=1000?Math.round(v).toLocaleString("ja-JP"):v.toFixed(1);
+}
 function IntradayMiniChart(p){
-  var data=p.data,H=32;
-  var wrapStyle={height:H,display:"flex",alignItems:"center",justifyContent:"center"};
+  var data=p.data,H=40;
+  var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   if(data===undefined){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
   }
   if(data===null||!data.closes||data.closes.length<2){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
   }
-  var closes=data.closes;
+  var closes=data.closes,times=data.times||[];
   var dateLabel=formatChartDateLabel(data.date);
   var W=100;
-  var mn=Math.min.apply(null,closes),mx=Math.max.apply(null,closes),rng=mx-mn||1;
+  var mn=Math.min.apply(null,closes),mx=Math.max.apply(null,closes),mid=(mn+mx)/2;
+  var rng=mx-mn||1;
   var up=closes[closes.length-1]>=closes[0];
   function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
   function toX(i){return(i/(closes.length-1))*(W-1);}
   var pts=closes.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
+  // 下段の時刻ラベル：均等に最大4つ選ぶ
+  var labelCount=Math.min(4,times.length);
+  var timeLabels=[];
+  for(var k=0;k<labelCount;k++){
+    var idx=Math.round(k*(times.length-1)/((labelCount-1)||1));
+    timeLabels.push(times[idx]||"");
+  }
   return(
     <div>
       {dateLabel&&<div style={{fontSize:8,color:"#4a7090",textAlign:"right",marginBottom:1}}>{dateLabel}</div>}
-      <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
-        <polyline points={pts} fill="none" stroke={up?"#22d3a0":"#f43f5e"} strokeWidth={1.3} strokeLinejoin="round" strokeLinecap="round"/>
-      </svg>
+      <div style={{display:"flex",gap:4}}>
+        <div style={{flex:1,minWidth:0}}>
+          <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
+            <line x1={0} y1={toY(mx)} x2={W} y2={toY(mx)} stroke="#152238" strokeWidth={0.6}/>
+            <line x1={0} y1={toY(mid)} x2={W} y2={toY(mid)} stroke="#152238" strokeWidth={0.6} strokeDasharray="2,2"/>
+            <line x1={0} y1={toY(mn)} x2={W} y2={toY(mn)} stroke="#152238" strokeWidth={0.6}/>
+            <polyline points={pts} fill="none" stroke={up?"#22d3a0":"#f43f5e"} strokeWidth={1.3} strokeLinejoin="round" strokeLinecap="round"/>
+          </svg>
+        </div>
+        <div style={{width:40,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:8,color:"#4a7090",textAlign:"right",height:H}}>
+          <span>{fmtPriceLabel(mx)}</span>
+          <span>{fmtPriceLabel(mid)}</span>
+          <span>{fmtPriceLabel(mn)}</span>
+        </div>
+      </div>
+      {timeLabels.length>0&&(
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#2a4060",marginTop:2}}>
+          {timeLabels.map(function(t,i){return <span key={i}>{t}</span>;})}
+        </div>
+      )}
     </div>
   );
 }
