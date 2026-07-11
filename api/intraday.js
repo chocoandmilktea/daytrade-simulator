@@ -84,17 +84,21 @@ export default async function handler(req, res) {
       return res.status(200).json({ closes: [], date: null, debug: found.log });
     }
 
-    // 5本（5分）ごとにグループ化し、各グループの最後の終値(C)を5分足の終値とする
+    // 5本（5分）ごとにグループ化し、各グループの最後の終値(C)と時刻(Time)を5分足として使う
     const closes = [];
+    const times = [];
     for (let i = 0; i < found.bars.length; i += 5) {
       const group = found.bars.slice(i, i + 5);
       const last = group[group.length - 1];
-      if (last && typeof last.C === "number") closes.push(last.C);
+      if (last && typeof last.C === "number") {
+        closes.push(last.C);
+        times.push(last.Time || "");
+      }
     }
 
     // ブラウザ側の短時間キャッシュ用ヘッダー（同一分内の再取得を減らす）
     res.setHeader("Cache-Control", "public, max-age=60");
-    return res.status(200).json({ closes: closes, date: found.date });
+    return res.status(200).json({ closes: closes, times: times, date: found.date });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
