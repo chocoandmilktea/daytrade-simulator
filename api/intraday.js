@@ -54,6 +54,16 @@ async function findLatestBars(code, apiKey, maxAttempts) {
 }
 
 export default async function handler(req, res) {
+  // 別ドメイン（アプリ本体）からのfetchを許可するCORSヘッダー
+  // これが無いと、ブラウザのアドレスバーで直接開いた時は見えるのに
+  // アプリのJavaScriptからのfetchだけが黙って失敗する（今回のバグの原因）
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   const ticker = req.query.ticker;
   if (!ticker) {
     return res.status(400).json({ error: "ticker is required" });
