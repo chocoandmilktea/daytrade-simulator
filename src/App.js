@@ -63,23 +63,27 @@ var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
 // 土日・休場日はサーバー側で自動的に直近の取引日まで遡るため、date（実際の取引日）も受け取る
 var INTRADAY_CACHE={}, INTRADAY_TTL=5*60*1000; // 5分足なのでTTLも5分
 
-// J-Quantsのレートリミット対策：カードが一斉に取得しようとして弾かれないよう、
-// 同時に実行するリクエスト数を絞って順番に処理するキュー
-var INTRADAY_QUEUE=[], INTRADAY_ACTIVE=0, INTRADAY_MAX_CONCURRENT=3, INTRADAY_GAP=200;
-function runIntradayQueue(){
-  while(INTRADAY_ACTIVE<INTRADAY_MAX_CONCURRENT && INTRADAY_QUEUE.length>0){
+// J-Quantsのレートリミット対策：分足アドオンは「1分あたり60リクエスト」という
+// 上限が公式に決まっているため、それを厳守できるよう厳密な間隔で1件ずつ順番に実行する。
+// （同時3件・短い間隔、という前回の実装では実際には1分あたり300件近く出てしまい、
+// 　429エラー→リトライの連鎖で余計に悪化していたため、シンプルな直列キューに変更）
+var INTRADAY_QUEUE=[], INTRADAY_TIMER=null, INTRADAY_LAST_DISPATCH=0;
+var INTRADAY_MIN_INTERVAL=1100; // 60件/分に余裕を持たせて約1.1秒に1件ペース
+function scheduleIntradayQueue(){
+  if(INTRADAY_TIMER||INTRADAY_QUEUE.length===0) return;
+  var wait=Math.max(0,INTRADAY_MIN_INTERVAL-(Date.now()-INTRADAY_LAST_DISPATCH));
+  INTRADAY_TIMER=setTimeout(function(){
+    INTRADAY_TIMER=null;
     var job=INTRADAY_QUEUE.shift();
-    INTRADAY_ACTIVE++;
-    job().finally(function(){
-      INTRADAY_ACTIVE--;
-      setTimeout(runIntradayQueue,INTRADAY_GAP);
-    });
-  }
+    INTRADAY_LAST_DISPATCH=Date.now();
+    if(job) job();
+    scheduleIntradayQueue();
+  },wait);
 }
 function enqueueIntraday(fn){
   return new Promise(function(resolve){
-    INTRADAY_QUEUE.push(function(){return fn().then(resolve);});
-    runIntradayQueue();
+    INTRADAY_QUEUE.push(function(){fn().then(resolve);});
+    scheduleIntradayQueue();
   });
 }
 
