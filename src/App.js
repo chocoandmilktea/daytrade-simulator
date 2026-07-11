@@ -60,6 +60,7 @@ var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
 
 // ── 当日5分足（カード常時ミニ表示用）─────────────────────────────────────
 // J-Quantsの1分足をサーバー側(api/intraday.js)で5分足に集約して返す想定
+// 土日・休場日はサーバー側で自動的に直近の取引日まで遡るため、date（実際の取引日）も受け取る
 var INTRADAY_CACHE={}, INTRADAY_TTL=5*60*1000; // 5分足なのでTTLも5分
 async function fetchIntraday(ticker){
   var now=Date.now();
@@ -70,8 +71,9 @@ async function fetchIntraday(ticker){
     var json=await res.json();
     var closes=json&&json.closes?json.closes:null;
     if(!closes||closes.length<2) return null;
-    INTRADAY_CACHE[ticker]={ts:now,data:closes};
-    return closes;
+    var result={closes:closes,date:json.date||null};
+    INTRADAY_CACHE[ticker]={ts:now,data:result};
+    return result;
   }catch(e){return null;}
 }
 
@@ -719,15 +721,27 @@ function SparklineWithMA(p){
 
 // ── 当日5分足ミニチャート（カードに常時表示）───────────────────────────
 // SparklineWithMAより軽量：軸なしの単色折れ線のみ。読み込み中/データなしはプレースホルダー表示。
+// 土日等でデータが直近の取引日のものになっている場合は、日付ラベルを添えて分かるようにする。
+var WEEKDAY_JA=["日","月","火","水","木","金","土"];
+function formatChartDateLabel(isoDate){
+  if(!isoDate) return "";
+  var d=new Date(isoDate+"T00:00:00");
+  var today=new Date();
+  var isToday=d.getFullYear()===today.getFullYear()&&d.getMonth()===today.getMonth()&&d.getDate()===today.getDate();
+  if(isToday) return "";
+  return (d.getMonth()+1)+"/"+d.getDate()+"("+WEEKDAY_JA[d.getDay()]+")時点";
+}
 function IntradayMiniChart(p){
-  var closes=p.closes,H=32;
+  var data=p.data,H=32;
   var wrapStyle={height:H,display:"flex",alignItems:"center",justifyContent:"center"};
-  if(closes===undefined){
+  if(data===undefined){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
   }
-  if(closes===null||closes.length<2){
-    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>本日データなし</span></div>;
+  if(data===null||!data.closes||data.closes.length<2){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
   }
+  var closes=data.closes;
+  var dateLabel=formatChartDateLabel(data.date);
   var W=100;
   var mn=Math.min.apply(null,closes),mx=Math.max.apply(null,closes),rng=mx-mn||1;
   var up=closes[closes.length-1]>=closes[0];
@@ -735,9 +749,12 @@ function IntradayMiniChart(p){
   function toX(i){return(i/(closes.length-1))*(W-1);}
   var pts=closes.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
   return(
-    <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
-      <polyline points={pts} fill="none" stroke={up?"#22d3a0":"#f43f5e"} strokeWidth={1.3} strokeLinejoin="round" strokeLinecap="round"/>
-    </svg>
+    <div>
+      {dateLabel&&<div style={{fontSize:8,color:"#4a7090",textAlign:"right",marginBottom:1}}>{dateLabel}</div>}
+      <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
+        <polyline points={pts} fill="none" stroke={up?"#22d3a0":"#f43f5e"} strokeWidth={1.3} strokeLinejoin="round" strokeLinecap="round"/>
+      </svg>
+    </div>
   );
 }
 
@@ -936,7 +953,7 @@ function StockCard(p){
       </div>
 
       <div style={{background:"#03080f",borderRadius:6,padding:"2px 4px"}}>
-        <IntradayMiniChart closes={intraday}/>
+        <IntradayMiniChart data={intraday}/>
       </div>
 
       {isMobile&&<div style={{textAlign:"center",fontSize:11,color:"#2a4060"}}>{expanded?"▲ 閉じる":"▼ 詳細を見る"}</div>}
