@@ -23,27 +23,34 @@ function formatDateIso(compact) {
 async function fetchMinuteBars(code, dateCompact, apiKey) {
   const url = `https://api.jquants.com/v2/equities/bars/minute?code=${encodeURIComponent(code)}&date=${dateCompact}`;
   const r = await fetch(url, { headers: { "x-api-key": apiKey } });
-  if (!r.ok) return [];
+  if (!r.ok) {
+    let bodyText = "";
+    try { bodyText = (await r.text()).slice(0, 200); } catch (e) {}
+    return { bars: [], status: r.status, body: bodyText };
+  }
   const json = await r.json();
-  return json.data || [];
+  return { bars: json.data || [], status: r.status, body: "" };
 }
 
 // 土日をスキップしながら日付を遡り、データが取れる最初の日（＝直近の取引日）を探す。
 // 祝日・年末年始などで連続で休場になっているケースも考慮し、最大5営業日分試す。
+// うまく見つからなかった場合のために、各試行のHTTPステータスもattemptsとして残す（原因調査用）。
 async function findLatestBars(code, apiKey, maxAttempts) {
   var cursor = new Date();
   var attempts = 0;
+  var log = [];
   while (attempts < maxAttempts) {
     var dow = cursor.getDay(); // 0=日, 6=土
     if (dow !== 0 && dow !== 6) {
       attempts++;
       var dateCompact = formatDateCompact(cursor);
-      var bars = await fetchMinuteBars(code, dateCompact, apiKey);
-      if (bars.length > 0) return { bars: bars, date: formatDateIso(dateCompact) };
+      var r = await fetchMinuteBars(code, dateCompact, apiKey);
+      log.push({ date: formatDateIso(dateCompact), status: r.status, body: r.body });
+      if (r.bars.length > 0) return { bars: r.bars, date: formatDateIso(dateCompact), log: log };
     }
     cursor.setDate(cursor.getDate() - 1);
   }
-  return { bars: [], date: null };
+  return { bars: [], date: null, log: log };
 }
 
 export default async function handler(req, res) {
@@ -63,7 +70,8 @@ export default async function handler(req, res) {
 
     const found = await findLatestBars(code, apiKey, 5);
     if (!found.date) {
-      return res.status(200).json({ closes: [], date: null });
+      // データが1件も見つからなかった場合は、原因調査用に各試行の結果を含めて返す
+      return res.status(200).json({ closes: [], date: null, debug: found.log });
     }
 
     // 5本（5分）ごとにグループ化し、各グループの最後の終値(C)を5分足の終値とする
