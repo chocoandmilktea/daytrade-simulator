@@ -35,6 +35,10 @@ async function fetchMinuteBars(code, dateCompact, apiKey) {
 // 土日をスキップしながら日付を遡り、データが取れる最初の日（＝直近の取引日）を探す。
 // 祝日・年末年始などで連続で休場になっているケースも考慮し、最大5営業日分試す。
 // うまく見つからなかった場合のために、各試行のHTTPステータスもattemptsとして残す（原因調査用）。
+// 土日をスキップしながら日付を遡り、データが取れる最初の日（＝直近の取引日）を探す。
+// 祝日・年末年始などで連続で休場になっているケースも考慮し、最大3営業日分試す。
+// 重要：429（アクセスしすぎ）が返ってきた場合は「その日はデータが無かった」と誤解して
+// 前の日を連続で試すと雪だるま式に悪化するため、即座に諦めて呼び出し元に伝える。
 async function findLatestBars(code, apiKey, maxAttempts) {
   var cursor = new Date();
   var attempts = 0;
@@ -47,6 +51,9 @@ async function findLatestBars(code, apiKey, maxAttempts) {
       var dateCompact = formatDateCompact(cursor);
       var r = await fetchMinuteBars(code, dateCompact, apiKey);
       log.push({ date: formatDateIso(dateCompact), status: r.status, body: r.body });
+      if (r.status === 429) {
+        return { bars: [], date: null, log: log, rateLimited: true };
+      }
       if (r.bars.length > 0) return { bars: r.bars, date: formatDateIso(dateCompact), log: log };
     }
     cursor.setDate(cursor.getDate() - 1);
@@ -79,10 +86,10 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "JQUANTS_API_KEY not set" });
     }
 
-    const found = await findLatestBars(code, apiKey, 5);
+    const found = await findLatestBars(code, apiKey, 3);
     if (!found.date) {
       // データが1件も見つからなかった場合は、原因調査用に各試行の結果を含めて返す
-      return res.status(200).json({ closes: [], date: null, debug: found.log });
+      return res.status(200).json({ closes: [], date: null, debug: found.log, rateLimited: !!found.rateLimited });
     }
 
     // 5本（5分）ごとにグループ化し、各グループの最後の終値(C)と時刻(Time)を5分足として使う
