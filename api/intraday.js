@@ -92,17 +92,33 @@ export default async function handler(req, res) {
       return res.status(200).json({ closes: [], date: null, debug: found.log, rateLimited: !!found.rateLimited });
     }
 
-    // 5本（5分）ごとにグループ化し、各グループの最後の終値(C)と時刻(Time)を5分足として使う
+    // 時計の5分刻み（09:00, 09:05, 09:10...）でグループ化し、各グループの最後の終値(C)を
+    // 5分足として使う。実際の取引開始時刻から機械的に5本ずつ数える方式だと、銘柄ごとに
+    // 最初の約定時刻がズレて半端な時刻になってしまうため、時計基準に揃える。
     const closes = [];
     const times = [];
-    for (let i = 0; i < found.bars.length; i += 5) {
-      const group = found.bars.slice(i, i + 5);
-      const last = group[group.length - 1];
-      if (last && typeof last.C === "number") {
-        closes.push(last.C);
-        times.push(last.Time || "");
+    let curBucket = null;
+    let curLast = null;
+    function flushBucket() {
+      if (curBucket !== null && curLast && typeof curLast.C === "number") {
+        closes.push(curLast.C);
+        times.push(curBucket);
       }
     }
+    for (const bar of found.bars) {
+      const t = bar.Time || "";
+      const parts = t.split(":");
+      if (parts.length < 2) continue;
+      const hh = parts[0].padStart(2, "0");
+      const mm = Math.floor(Number(parts[1]) / 5) * 5;
+      const bucketKey = hh + ":" + String(mm).padStart(2, "0");
+      if (bucketKey !== curBucket) {
+        flushBucket();
+        curBucket = bucketKey;
+      }
+      curLast = bar;
+    }
+    flushBucket();
 
     // ブラウザ側の短時間キャッシュ用ヘッダー（同一分内の再取得を減らす）
     res.setHeader("Cache-Control", "public, max-age=60");
