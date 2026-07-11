@@ -42,6 +42,7 @@ async function findLatestBars(code, apiKey, maxAttempts) {
   while (attempts < maxAttempts) {
     var dow = cursor.getDay(); // 0=日, 6=土
     if (dow !== 0 && dow !== 6) {
+      if (attempts > 0) await new Promise((r) => setTimeout(r, 300)); // 連続アクセス防止
       attempts++;
       var dateCompact = formatDateCompact(cursor);
       var r = await fetchMinuteBars(code, dateCompact, apiKey);
