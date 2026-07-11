@@ -69,9 +69,11 @@ var INTRADAY_CACHE={}, INTRADAY_TTL=5*60*1000; // 5分足なのでTTLも5分
 // 　429エラー→リトライの連鎖で余計に悪化していたため、シンプルな直列キューに変更）
 var INTRADAY_QUEUE=[], INTRADAY_TIMER=null, INTRADAY_LAST_DISPATCH=0;
 var INTRADAY_MIN_INTERVAL=1100; // 60件/分に余裕を持たせて約1.1秒に1件ペース
+var INTRADAY_PAUSED_UNTIL=0; // 429を検知したら、この時刻まではキューを進めない
 function scheduleIntradayQueue(){
   if(INTRADAY_TIMER||INTRADAY_QUEUE.length===0) return;
-  var wait=Math.max(0,INTRADAY_MIN_INTERVAL-(Date.now()-INTRADAY_LAST_DISPATCH));
+  var now=Date.now();
+  var wait=Math.max(0,INTRADAY_MIN_INTERVAL-(now-INTRADAY_LAST_DISPATCH),INTRADAY_PAUSED_UNTIL-now);
   INTRADAY_TIMER=setTimeout(function(){
     INTRADAY_TIMER=null;
     var job=INTRADAY_QUEUE.shift();
@@ -95,6 +97,11 @@ async function fetchIntraday(ticker){
       var res=await fetch(INTRADAY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
       if(!res.ok) throw new Error("HTTP "+res.status);
       var json=await res.json();
+      if(json&&json.rateLimited){
+        // J-Quants側でアクセス制限を検知：しばらくキュー全体を止めて様子を見る
+        INTRADAY_PAUSED_UNTIL=Date.now()+90*1000;
+        return null;
+      }
       var closes=json&&json.closes?json.closes:null;
       if(!closes||closes.length<2) return null;
       var result={closes:closes,times:json.times||[],date:json.date||null};
@@ -762,7 +769,7 @@ function fmtPriceLabel(v){
   return v>=1000?Math.round(v).toLocaleString("ja-JP"):v.toFixed(1);
 }
 function IntradayMiniChart(p){
-  var data=p.data,H=40;
+  var data=p.data,H=96;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   if(data===undefined){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
@@ -773,12 +780,13 @@ function IntradayMiniChart(p){
   var closes=data.closes,times=data.times||[];
   var dateLabel=formatChartDateLabel(data.date);
   var W=100;
-  var mn=Math.min.apply(null,closes),mx=Math.max.apply(null,closes),mid=(mn+mx)/2;
+  var mn=Math.min.apply(null,closes),mx=Math.max.apply(null,closes);
   var rng=mx-mn||1;
-  var up=closes[closes.length-1]>=closes[0];
   function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
   function toX(i){return(i/(closes.length-1))*(W-1);}
   var pts=closes.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
+  // 右側の価格目盛り：参考画像に合わせて上から4段（最高値〜最安値を均等分割）
+  var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
   // 下段の時刻ラベル：均等に最大4つ選ぶ
   var labelCount=Math.min(4,times.length);
   var timeLabels=[];
@@ -789,23 +797,22 @@ function IntradayMiniChart(p){
   return(
     <div>
       {dateLabel&&<div style={{fontSize:8,color:"#4a7090",textAlign:"right",marginBottom:1}}>{dateLabel}</div>}
-      <div style={{display:"flex",gap:4}}>
+      <div style={{display:"flex",gap:6}}>
         <div style={{flex:1,minWidth:0}}>
           <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
-            <line x1={0} y1={toY(mx)} x2={W} y2={toY(mx)} stroke="#152238" strokeWidth={0.6}/>
-            <line x1={0} y1={toY(mid)} x2={W} y2={toY(mid)} stroke="#152238" strokeWidth={0.6} strokeDasharray="2,2"/>
-            <line x1={0} y1={toY(mn)} x2={W} y2={toY(mn)} stroke="#152238" strokeWidth={0.6}/>
-            <polyline points={pts} fill="none" stroke={up?"#22d3a0":"#f43f5e"} strokeWidth={1.3} strokeLinejoin="round" strokeLinecap="round"/>
+            {priceLevels.map(function(v,i){
+              var y=toY(v);
+              return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
+            })}
+            <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={1.4} strokeLinejoin="round" strokeLinecap="round"/>
           </svg>
         </div>
-        <div style={{width:40,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:8,color:"#4a7090",textAlign:"right",height:H}}>
-          <span>{fmtPriceLabel(mx)}</span>
-          <span>{fmtPriceLabel(mid)}</span>
-          <span>{fmtPriceLabel(mn)}</span>
+        <div style={{width:46,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:9,color:"#8fa8c0",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
+          {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v)}</span>;})}
         </div>
       </div>
       {timeLabels.length>0&&(
-        <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:"#2a4060",marginTop:2}}>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#4a6080",marginTop:3}}>
           {timeLabels.map(function(t,i){return <span key={i}>{t}</span>;})}
         </div>
       )}
