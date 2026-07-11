@@ -56,6 +56,24 @@ var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 var SECTOR_API="https://daytrade-simulator.vercel.app/api/sector";
 var CORRELATION_API="https://daytrade-simulator.vercel.app/api/correlation";
+var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
+
+// ── 当日5分足（カード常時ミニ表示用）─────────────────────────────────────
+// J-Quantsの1分足をサーバー側(api/intraday.js)で5分足に集約して返す想定
+var INTRADAY_CACHE={}, INTRADAY_TTL=5*60*1000; // 5分足なのでTTLも5分
+async function fetchIntraday(ticker){
+  var now=Date.now();
+  if(INTRADAY_CACHE[ticker]&&now-INTRADAY_CACHE[ticker].ts<INTRADAY_TTL) return INTRADAY_CACHE[ticker].data;
+  try{
+    var res=await fetch(INTRADAY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    var json=await res.json();
+    var closes=json&&json.closes?json.closes:null;
+    if(!closes||closes.length<2) return null;
+    INTRADAY_CACHE[ticker]={ts:now,data:closes};
+    return closes;
+  }catch(e){return null;}
+}
 
 // 出来高ランキング取得（sector API失敗時の最終フォールバック用に残置）
 async function fetchRanking(market){
@@ -699,6 +717,30 @@ function SparklineWithMA(p){
   );
 }
 
+// ── 当日5分足ミニチャート（カードに常時表示）───────────────────────────
+// SparklineWithMAより軽量：軸なしの単色折れ線のみ。読み込み中/データなしはプレースホルダー表示。
+function IntradayMiniChart(p){
+  var closes=p.closes,H=32;
+  var wrapStyle={height:H,display:"flex",alignItems:"center",justifyContent:"center"};
+  if(closes===undefined){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
+  }
+  if(closes===null||closes.length<2){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>本日データなし</span></div>;
+  }
+  var W=100;
+  var mn=Math.min.apply(null,closes),mx=Math.max.apply(null,closes),rng=mx-mn||1;
+  var up=closes[closes.length-1]>=closes[0];
+  function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
+  function toX(i){return(i/(closes.length-1))*(W-1);}
+  var pts=closes.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
+  return(
+    <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
+      <polyline points={pts} fill="none" stroke={up?"#22d3a0":"#f43f5e"} strokeWidth={1.3} strokeLinejoin="round" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
 function ScoreRing(p){
   var sc=p.score,R=14,C=2*Math.PI*R,col=scoreColor(sc);
   return(
@@ -769,6 +811,15 @@ function StockCard(p){
   var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
   var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
+
+  // ── 当日5分足（カード常時ミニ表示）─────────────────────────────────────
+  var intradayS=useState(undefined);var intraday=intradayS[0],setIntraday=intradayS[1]; // undefined=読込中, null=データなし
+  useEffect(function(){
+    var alive=true;
+    setIntraday(undefined);
+    fetchIntraday(s.ticker).then(function(closes){if(alive)setIntraday(closes);});
+    return function(){alive=false;};
+  },[s.ticker]);
 
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
@@ -882,6 +933,10 @@ function StockCard(p){
             <div style={{fontSize:11,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>
           </div>
         </div>
+      </div>
+
+      <div style={{background:"#03080f",borderRadius:6,padding:"2px 4px"}}>
+        <IntradayMiniChart closes={intraday}/>
       </div>
 
       {isMobile&&<div style={{textAlign:"center",fontSize:11,color:"#2a4060"}}>{expanded?"▲ 閉じる":"▼ 詳細を見る"}</div>}
