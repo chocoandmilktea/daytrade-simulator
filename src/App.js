@@ -796,7 +796,7 @@ function IntradayMiniChart(p){
   }
   return(
     <div>
-      {dateLabel&&<div style={{fontSize:8,color:"#4a7090",textAlign:"right",marginBottom:1}}>{dateLabel}</div>}
+      {dateLabel&&<div style={{fontSize:10,color:"#6a90b0",textAlign:"right",marginBottom:2}}>{dateLabel}</div>}
       <div style={{display:"flex",gap:6}}>
         <div style={{flex:1,minWidth:0}}>
           <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
@@ -804,15 +804,15 @@ function IntradayMiniChart(p){
               var y=toY(v);
               return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
             })}
-            <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={1.4} strokeLinejoin="round" strokeLinecap="round"/>
+            <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.8} strokeLinejoin="round" strokeLinecap="round"/>
           </svg>
         </div>
-        <div style={{width:46,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:9,color:"#8fa8c0",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
+        <div style={{width:52,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
           {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v)}</span>;})}
         </div>
       </div>
       {timeLabels.length>0&&(
-        <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#4a6080",marginTop:3}}>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#6a90b0",marginTop:3}}>
           {timeLabels.map(function(t,i){return <span key={i}>{t}</span>;})}
         </div>
       )}
@@ -1632,9 +1632,11 @@ function AllStocksPanel(p){
   }
 
   var isMobile=window.innerWidth<768;
+  var isWide=window.innerWidth>=1400; // 画面が広い時はカードを3列にして横幅を狭くする
+  var cols=isMobile?1:(isWide?3:2);
   var stickyTop=isMobile?0:50;
   var cardGrid=(
-    <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
+    <div style={{display:"grid",gridTemplateColumns:"repeat("+cols+",1fr)",gap:8}}>
       {displayStocks.map(function(s){
         return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks}/>;
       })}
