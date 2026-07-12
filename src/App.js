@@ -815,7 +815,10 @@ function IntradayMiniChart(p){
   var timeLabels=pickTimeLabels(times,4);
   return(
     <div>
-      {dateLabel&&<div style={{fontSize:10,color:"#6a90b0",textAlign:"right",marginBottom:2}}>{dateLabel}</div>}
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
+        <span>5分足</span>
+        <span>{dateLabel}</span>
+      </div>
       <div style={{display:"flex",gap:6}}>
         <div style={{flex:1,minWidth:0}}>
           <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
