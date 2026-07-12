@@ -68,7 +68,7 @@ var INTRADAY_CACHE={}, INTRADAY_TTL=5*60*1000; // 5分足なのでTTLも5分
 // （同時3件・短い間隔、という前回の実装では実際には1分あたり300件近く出てしまい、
 // 　429エラー→リトライの連鎖で余計に悪化していたため、シンプルな直列キューに変更）
 var INTRADAY_QUEUE=[], INTRADAY_TIMER=null, INTRADAY_LAST_DISPATCH=0;
-var INTRADAY_MIN_INTERVAL=1100; // 60件/分に余裕を持たせて約1.1秒に1件ペース
+var INTRADAY_MIN_INTERVAL=1500; // 60件/分に余裕を持たせて約1.5秒に1件ペース（旧1100ms）
 var INTRADAY_PAUSED_UNTIL=0; // 429を検知したら、この時刻まではキューを進めない
 function scheduleIntradayQueue(){
   if(INTRADAY_TIMER||INTRADAY_QUEUE.length===0) return;
@@ -99,7 +99,7 @@ async function fetchIntraday(ticker){
       var json=await res.json();
       if(json&&json.rateLimited){
         // J-Quants側でアクセス制限を検知：しばらくキュー全体を止めて様子を見る
-        INTRADAY_PAUSED_UNTIL=Date.now()+90*1000;
+        INTRADAY_PAUSED_UNTIL=Date.now()+120*1000; // 90秒→120秒に延長（再燃防止）
         return null;
       }
       var closes=json&&json.closes?json.closes:null;
