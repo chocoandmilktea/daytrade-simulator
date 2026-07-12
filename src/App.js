@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
 var BADGE = {
@@ -910,13 +910,26 @@ function StockCard(p){
   var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
 
-  // ── 当日5分足（カード常時ミニ表示）─────────────────────────────────────
+  // ── 当日5分足（画面に表示された時だけ取得＝体感速度＆J-Quants負荷を改善）───
   var intradayS=useState(undefined);var intraday=intradayS[0],setIntraday=intradayS[1]; // undefined=読込中, null=データなし
+  var cardRef=useRef(null);
   useEffect(function(){
     var alive=true;
     setIntraday(undefined);
-    fetchIntraday(s.ticker).then(function(closes){if(alive)setIntraday(closes);});
-    return function(){alive=false;};
+    var el=cardRef.current;
+    if(!el||typeof IntersectionObserver==="undefined"){
+      // 万一IntersectionObserverが使えない環境なら、従来通り即時取得にフォールバック
+      fetchIntraday(s.ticker).then(function(closes){if(alive)setIntraday(closes);});
+      return function(){alive=false;};
+    }
+    var observer=new IntersectionObserver(function(entries){
+      if(entries[0].isIntersecting){
+        fetchIntraday(s.ticker).then(function(closes){if(alive)setIntraday(closes);});
+        observer.disconnect();
+      }
+    },{rootMargin:"300px"}); // 画面に入る少し手前から先読み開始
+    observer.observe(el);
+    return function(){alive=false;observer.disconnect();};
   },[s.ticker]);
 
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
@@ -996,7 +1009,7 @@ function StockCard(p){
   var cardBorder=isSelected?"#60a5fa":borderColor;
 
   return(
-    <div style={{background:isSelected?"#071e38":"#050e1c",border:"none",borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer",minWidth:0}}
+    <div ref={cardRef} style={{background:isSelected?"#071e38":"#050e1c",border:"none",borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer",minWidth:0}}
       onClick={function(){
         if(!isMobile){if(p.setSelectedStock)p.setSelectedStock(s);}
         else{setExpanded(function(v){return !v;});}
