@@ -59,7 +59,6 @@ var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 var SECTOR_API="https://daytrade-simulator.vercel.app/api/sector";
 var CORRELATION_API="https://daytrade-simulator.vercel.app/api/correlation";
 var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
-var WEEKLY_API="https://daytrade-simulator.vercel.app/api/weekly";
 
 // ── 当日5分足（カード常時ミニ表示用）─────────────────────────────────────
 // J-Quantsの1分足をサーバー側(api/intraday.js)で5分足に集約して返す想定
@@ -123,30 +122,6 @@ async function fetchIntraday(ticker){
   });
   INTRADAY_INFLIGHT[ticker]=p;
   p.finally(function(){delete INTRADAY_INFLIGHT[ticker];});
-  return p;
-}
-
-// ── 25週線・75週線（チャート上部の基準線用）──────────────────────────────
-// 週足MAは1日の中でほぼ動かないため24時間キャッシュ。日足取得(/equities/bars/daily)
-// は分足アドオンとは別枠のAPIのため、分足用の直列キュー(1.5秒間隔)には乗せず
-// 独立して取得する（キューを共有すると毎回+1.5秒の待ちが発生し体感速度が悪化するため）。
-var WEEKLY_CACHE={}, WEEKLY_TTL=24*60*60*1000, WEEKLY_INFLIGHT={};
-async function fetchWeekly(ticker){
-  var now=Date.now();
-  if(WEEKLY_CACHE[ticker]&&now-WEEKLY_CACHE[ticker].ts<WEEKLY_TTL) return WEEKLY_CACHE[ticker].data;
-  if(WEEKLY_INFLIGHT[ticker]) return WEEKLY_INFLIGHT[ticker];
-  var p=(async function(){
-    try{
-      var res=await fetch(WEEKLY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
-      if(!res.ok) throw new Error("HTTP "+res.status);
-      var json=await res.json();
-      var result={ma25:json.ma25||null,ma75:json.ma75||null};
-      WEEKLY_CACHE[ticker]={ts:now,data:result};
-      return result;
-    }catch(e){return null;}
-  })();
-  WEEKLY_INFLIGHT[ticker]=p;
-  p.finally(function(){delete WEEKLY_INFLIGHT[ticker];});
   return p;
 }
 
@@ -884,12 +859,23 @@ function IntradayMiniChart(p){
   );
 }
 
-// ── チャートモーダル用：1分足＋25週MA・75週MA基準線 ─────────────────────
-// dataはfetchIntradayの戻り値（{m5,m1,date} / undefined=読込中 / null=データなし）、
-// weeklyはfetchWeeklyの戻り値（{ma25,ma75} / undefined=読込中 / null=データなし）。
-// 週足MAは1日の中では動かないため、折れ線グラフの上に横基準線として重ねる。
+// ── チャート詳細用：1分足＋25期・75期の短期移動平均（iSPEED等と同じ考え方）───
+// dataはfetchIntradayの戻り値（{m5,m1,date} / undefined=読込中 / null=データなし）。
+// MAは「週足」ではなく、1分足そのものを25本・75本分で平均した短期MA。
+// 同じ1分足データ・同じX軸（今日の時刻）から計算するので、価格の折れ線と
+// 自然に重ねて表示できる（週足MAのように別軸になる問題が起きない）。
+function trailingSMA(closes,period){
+  var result=new Array(closes.length).fill(null);
+  var sum=0;
+  for(var i=0;i<closes.length;i++){
+    sum+=closes[i];
+    if(i>=period) sum-=closes[i-period];
+    if(i>=period-1) result[i]=sum/period;
+  }
+  return result;
+}
 function IntradayChart1m(p){
-  var data=p.data,weekly=p.weekly,H=140;
+  var data=p.data,H=140;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   if(data===undefined){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
@@ -899,19 +885,21 @@ function IntradayChart1m(p){
   }
   var closes=data.m1.closes,times=data.m1.times||[];
   var dateLabel=formatChartDateLabel(data.date);
-  var ma25=weekly&&weekly.ma25,ma75=weekly&&weekly.ma75;
+  var ma25=trailingSMA(closes,25),ma75=trailingSMA(closes,75);
   var W=100;
-  // 縦軸は1分足の値動きだけで決める（MAを混ぜると値幅が乖離した時にスケールが崩れ、
-  // 本来の値動きが潰れて見えてしまうため）。MAが表示レンジ内に収まる時だけ基準線を引く。
-  var mn=Math.min.apply(null,closes),mx=Math.max.apply(null,closes);
+  // 縦軸はMAも同じ1分足由来の値なので価格と一緒に含めてよい（週足MAと違い値幅が近いため）
+  var allVals=closes.concat(ma25.filter(function(v){return v!=null;})).concat(ma75.filter(function(v){return v!=null;}));
+  var mn=Math.min.apply(null,allVals),mx=Math.max.apply(null,allVals);
   var rng=mx-mn||1;
   var pad=rng*0.1;
   mn-=pad;mx+=pad;rng=mx-mn||1;
   function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
   function toX(i){return(i/(closes.length-1))*(W-1);}
-  var pts=closes.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
-  var ma25InRange=ma25!=null&&ma25>=mn&&ma25<=mx;
-  var ma75InRange=ma75!=null&&ma75>=mn&&ma75<=mx;
+  function toPts(arr){
+    return arr.map(function(v,i){return v==null?null:toX(i)+","+toY(v);}).filter(function(v){return v!=null;}).join(" ");
+  }
+  var pts=toPts(closes),pts25=toPts(ma25),pts75=toPts(ma75);
+  var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1];
   var timeLabels=pickTimeLabels(times,5);
   return(
     <div>
@@ -920,14 +908,13 @@ function IntradayChart1m(p){
         <span>{dateLabel}</span>
       </div>
       <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
-        {ma25InRange&&<line x1={0} y1={toY(ma25)} x2={W} y2={toY(ma25)} stroke="#fbbf24" strokeWidth={0.6} strokeDasharray="3,2"/>}
-        {ma75InRange&&<line x1={0} y1={toY(ma75)} x2={W} y2={toY(ma75)} stroke="#a78bfa" strokeWidth={0.6} strokeDasharray="3,2"/>}
+        {pts75&&<polyline points={pts75} fill="none" stroke="#a78bfa" strokeWidth={0.7}/>}
+        {pts25&&<polyline points={pts25} fill="none" stroke="#fbbf24" strokeWidth={0.7}/>}
         <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.8} strokeLinejoin="round" strokeLinecap="round"/>
       </svg>
       <div style={{display:"flex",gap:10,fontSize:10,marginTop:3,flexWrap:"wrap"}}>
-        {ma25!=null&&<span style={{color:"#fbbf24"}}>― 25週MA {fmtPriceLabel(ma25)}{!ma25InRange&&"（レンジ外）"}</span>}
-        {ma75!=null&&<span style={{color:"#a78bfa"}}>― 75週MA {fmtPriceLabel(ma75)}{!ma75InRange&&"（レンジ外）"}</span>}
-        {weekly&&ma25==null&&ma75==null&&<span style={{color:"#2a4060"}}>週足MA：データ不足（上場から日が浅い銘柄）</span>}
+        <span style={{color:"#fbbf24"}}>― 25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
+        <span style={{color:"#a78bfa"}}>― 75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
       </div>
       {timeLabels.length>0&&(
         <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#6a90b0",marginTop:3}}>
@@ -1033,9 +1020,7 @@ function StockCard(p){
 
   // ── チャート（カードが選択/展開された時だけ取得＝体感速度＆J-Quants負荷を改善）
   // intraday: false=未取得, undefined=読込中, null=データなし, {m5,m1,date}=取得済み
-  // weekly:   false=未取得, undefined=読込中, null=データなし, {ma25,ma75}=取得済み
   var intradayS=useState(false);var intraday=intradayS[0],setIntraday=intradayS[1];
-  var weeklyS=useState(false);var weekly=weeklyS[0],setWeekly=weeklyS[1];
 
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
@@ -1117,10 +1102,6 @@ function StockCard(p){
       setIntraday(undefined);
       fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
     }
-    if(weekly===false||weekly===null){
-      setWeekly(undefined);
-      fetchWeekly(s.ticker).then(function(r){setWeekly(r);});
-    }
   },[isSelected,expanded]);
 
   var cardBorder=isSelected?"#60a5fa":borderColor;
@@ -1183,7 +1164,7 @@ function StockCard(p){
 
           {/* チャート（1分足＋週足MA） */}
           <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
-            <IntradayChart1m data={intraday} weekly={weekly}/>
+            <IntradayChart1m data={intraday}/>
           </div>
 
           {/* シグナル詳細 */}
@@ -1397,15 +1378,12 @@ function StockDetailPanel(p){
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
 
-  // チャート（1分足＋週足MA）：この銘柄が選択された時に取得
-  // intraday/weekly: undefined=読込中, null=データなし, オブジェクト=取得済み
+  // チャート（1分足＋25期・75期の短期MA）：この銘柄が選択された時に取得
+  // intraday: undefined=読込中, null=データなし, オブジェクト=取得済み
   var intradayS=useState(undefined);var intraday=intradayS[0],setIntraday=intradayS[1];
-  var weeklyS=useState(undefined);var weekly=weeklyS[0],setWeekly=weeklyS[1];
   useEffect(function(){
     setIntraday(undefined);
-    setWeekly(undefined);
     fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
-    fetchWeekly(s.ticker).then(function(r){setWeekly(r);});
   },[s.ticker]);
 
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
@@ -1523,7 +1501,7 @@ function StockDetailPanel(p){
 
       {/* チャート（1分足＋週足MA） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
-        <IntradayChart1m data={intraday} weekly={weekly}/>
+        <IntradayChart1m data={intraday}/>
       </div>
 
       {/* シグナル詳細 */}
