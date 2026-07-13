@@ -9,8 +9,7 @@
 //   JPだけでなくUS銘柄も同じエンドポイントでそのまま取得できる副次的な利点もある。
 //
 // リクエスト例: /api/intraday?ticker=7203.T
-// レスポンス: { m5:{closes,times}, m1:{closes,times}, date }
-//   m5＝カードのミニチャート用（5分足）、m1＝チャートモーダル用（1分足）
+// レスポンス: { m1:{closes,times}, date }
 //   date は実際にデータが取れた日（JST, YYYY-MM-DD）
 
 const YAHOO_HEADERS = {
@@ -62,17 +61,17 @@ export default async function handler(req, res) {
     // まず当日分(range=1d)を試す。休場日等で空なら5日分に広げて直近営業日を拾う。
     let { bars, status } = await fetchYahooChart(ticker, "1d");
     if (status === 429) {
-      return res.status(200).json({ m5: { closes: [], times: [] }, m1: { closes: [], times: [] }, date: null, rateLimited: true });
+      return res.status(200).json({ m1: { closes: [], times: [] }, date: null, rateLimited: true });
     }
     if (bars.length === 0) {
       const wider = await fetchYahooChart(ticker, "5d");
       if (wider.status === 429) {
-        return res.status(200).json({ m5: { closes: [], times: [] }, m1: { closes: [], times: [] }, date: null, rateLimited: true });
+        return res.status(200).json({ m1: { closes: [], times: [] }, date: null, rateLimited: true });
       }
       bars = wider.bars;
     }
     if (bars.length === 0) {
-      return res.status(200).json({ m5: { closes: [], times: [] }, m1: { closes: [], times: [] }, date: null });
+      return res.status(200).json({ m1: { closes: [], times: [] }, date: null });
     }
 
     // JSTに変換した上で、最後（最新）の営業日の分だけに絞る
@@ -84,36 +83,9 @@ export default async function handler(req, res) {
     const closes1 = todayBars.map((b) => b.close);
     const times1 = todayBars.map((b) => b.time);
 
-    // 5分足（カードのミニチャート用）：時計の5分刻み（09:00, 09:05...）でグループ化し、
-    // 各グループの最後の終値を使う（実際の取引開始時刻から機械的に5本ずつ数える方式だと、
-    // 銘柄ごとに最初の約定時刻がズレて半端な時刻になってしまうため、時計基準に揃える）。
-    const closes5 = [];
-    const times5 = [];
-    let curBucket = null;
-    let curLast = null;
-    function flushBucket() {
-      if (curBucket !== null && curLast != null) {
-        closes5.push(curLast);
-        times5.push(curBucket);
-      }
-    }
-    for (const b of todayBars) {
-      const parts = b.time.split(":");
-      const hh = parts[0];
-      const mm = Math.floor(Number(parts[1]) / 5) * 5;
-      const bucketKey = hh + ":" + String(mm).padStart(2, "0");
-      if (bucketKey !== curBucket) {
-        flushBucket();
-        curBucket = bucketKey;
-      }
-      curLast = b.close;
-    }
-    flushBucket();
-
     // ブラウザ側の短時間キャッシュ用ヘッダー（同一分内の再取得を減らす）
     res.setHeader("Cache-Control", "public, max-age=60");
     return res.status(200).json({
-      m5: { closes: closes5, times: times5 },
       m1: { closes: closes1, times: times1 },
       date: latestDate,
     });
