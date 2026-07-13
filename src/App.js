@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
 var BADGE = {
@@ -216,6 +216,65 @@ function genSim(ticker){
   var price=rng()*400+60,closes=[],highs=[],lows=[];
   for(var d=0;d<63;d++){var v=rng()*0.025;price=Math.max(5,price*(1+rng()*0.006-0.003+(rng()-0.5)*v));closes.push(price);highs.push(price*(1+rng()*0.008));lows.push(price*(1-rng()*0.008));}
   return{closes:closes,highs:highs,lows:lows,currentPrice:price,previousClose:closes[closes.length-2],real:false};
+}
+
+// ── トレードシミュレーター（仮想売買の記録・検証）───────────────────────────
+// 「アプリ予想」＝アプリのシグナル判断に従った場合の検証、「個人予想」＝アプリの判断と異なる自分の判断の検証
+function fmtMoney(v,isJP){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);}
+function fmtPnl(v,isJP){var sign=v>=0?"+":"";return isJP?sign+"¥"+Math.round(v).toLocaleString():sign+"$"+v.toFixed(2);}
+
+function tradeStorageKey(kind){return kind==="app"?"trade_app_v1":"trade_personal_v1";}
+function loadTrades(kind){try{var v=localStorage.getItem(tradeStorageKey(kind));return v?JSON.parse(v):[];}catch(e){return[];}}
+function saveTrades(kind,list){try{localStorage.setItem(tradeStorageKey(kind),JSON.stringify(list));}catch(e){}}
+
+// 前回価格と今回価格の間にtargetが挟まっていれば「到達」とみなす（指値クロス判定・方向を問わない）
+function priceCrossed(prevPrice,curPrice,target){
+  if(prevPrice==null||curPrice==null||target==null||isNaN(target))return false;
+  var lo=Math.min(prevPrice,curPrice),hi=Math.max(prevPrice,curPrice);
+  return target>=lo&&target<=hi;
+}
+
+function addTradeRecord(kind,s,buyPrice,sellPrice){
+  var list=loadTrades(kind);
+  list.push({
+    id:"t"+Date.now()+Math.random().toString(36).slice(2,6),
+    ticker:s.ticker,name:s.name,market:s.market,
+    buyPrice:buyPrice,sellPrice:sellPrice,
+    status:"waiting", // waiting(待機中) → active(進行中) → done(完了)
+    startPrice:null,startAt:null,endPrice:null,endAt:null,
+    pnl:null,pnlPercent:null,
+    signalAtAdd:s.timing||null, // 登録時点のアプリ判定（BUY/WATCH/SKIP）＝後から検証するための記録
+    lastPrice:s.rawPrice!=null?s.rawPrice:null,
+    addedAt:new Date().toISOString()
+  });
+  saveTrades(kind,list);
+  return list;
+}
+function removeTradeRecord(kind,id){var list=loadTrades(kind).filter(function(t){return t.id!==id;});saveTrades(kind,list);return list;}
+
+// 最新価格（{ticker:price}）を全トレードに適用し、waiting→active→doneの状態遷移を判定
+function applyPricesToTrades(kind,priceMap){
+  var list=loadTrades(kind);
+  var changed=false;
+  var next=list.map(function(t){
+    if(t.status==="done")return t;
+    var cur=priceMap[t.ticker];
+    if(cur==null)return t;
+    var prev=t.lastPrice;
+    if(t.status==="waiting"&&priceCrossed(prev,cur,t.buyPrice)){
+      changed=true;
+      return Object.assign({},t,{status:"active",startPrice:t.buyPrice,startAt:new Date().toISOString(),lastPrice:cur});
+    }
+    if(t.status==="active"&&priceCrossed(prev,cur,t.sellPrice)){
+      changed=true;
+      var pnl=t.sellPrice-t.startPrice,pnlPercent=t.startPrice?(pnl/t.startPrice*100):0;
+      return Object.assign({},t,{status:"done",endPrice:t.sellPrice,endAt:new Date().toISOString(),pnl:pnl,pnlPercent:pnlPercent,lastPrice:cur});
+    }
+    if(cur!==prev){changed=true;return Object.assign({},t,{lastPrice:cur});}
+    return t;
+  });
+  if(changed)saveTrades(kind,next);
+  return next;
 }
 
 // ── AI分析 共通ユーティリティ ────────────────────────────────────────────────
@@ -1109,12 +1168,47 @@ function TickerPreviewModal(p){
   );
 }
 
+// ── トレード登録モーダル（買い/売り価格を入力し、アプリ予想 or 個人予想へ追加）─────
+function TradeAddModal(p){
+  var s=p.s;
+  var buyS=useState(s.rawPrice!=null?String(s.rawPrice):"");var buyVal=buyS[0],setBuyVal=buyS[1];
+  var sellS=useState("");var sellVal=sellS[0],setSellVal=sellS[1];
+  var isJP=s.market==="JP";
+  var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"8px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+  function valid(){var b=parseFloat(buyVal),se=parseFloat(sellVal);return !isNaN(b)&&b>0&&!isNaN(se)&&se>0;}
+  function add(kind){
+    if(!valid())return;
+    p.onAddTrade(kind,s,parseFloat(buyVal),parseFloat(sellVal));
+    p.onClose();
+  }
+  return(
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#040c18",border:"1px solid #0ea5e950",borderRadius:16,padding:"16px",width:"100%",maxWidth:420}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#0ea5e9"}}>🎯 トレード登録 - {s.ticker.replace(".T","")}</div>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+        </div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:12}}>価格が指定値に到達すると自動で開始・終了します（判定間隔：数分〜数十分）</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+          <div><div style={{fontSize:11,color:"#22d3a0",marginBottom:3}}>買い価格</div><input style={inp} type="number" value={buyVal} onChange={function(e){setBuyVal(e.target.value);}}/></div>
+          <div><div style={{fontSize:11,color:"#f43f5e",marginBottom:3}}>売り価格</div><input style={inp} type="number" value={sellVal} onChange={function(e){setSellVal(e.target.value);}}/></div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <button onClick={function(){add("app");}} disabled={!valid()} style={{background:valid()?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>🎯 アプリ予想タブへ追加</button>
+          <button onClick={function(){add("personal");}} disabled={!valid()} style={{background:valid()?"linear-gradient(135deg,#a78bfa,#7c3aed)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>👤 個人予想タブへ追加</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var expandedS=useState(false);var expanded=expandedS[0],setExpanded=expandedS[1];
   var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
+  var showTradeS=useState(false);var showTrade=showTradeS[0],setShowTrade=showTradeS[1];
   var showCorrS=useState(false);var showCorr=showCorrS[0],setShowCorr=showCorrS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
@@ -1280,6 +1374,7 @@ function StockCard(p){
             <button onClick={function(e){stopProp(e);if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} style={{background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
             <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
             <button onClick={function(e){stopProp(e);setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
+            <button onClick={function(e){stopProp(e);setShowTrade(function(v){return !v;});}} style={{background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
             <button onClick={function(e){stopProp(e);if(isUp)return;setShowCorr(true);if(!corrFetched&&!corrLoading)runCorrFetch();}} disabled={isUp} title={isUp?"上昇中の銘柄では使用できません":"逆相関で上昇しやすい銘柄を調べる"} style={{background:"transparent",border:"1px solid "+(isUp?"#1a2c40":"#2a4060"),borderRadius:6,color:isUp?"#2a4a60":"#4a7090",padding:"4px 9px",fontSize:14,cursor:isUp?"not-allowed":"pointer"}}>🔀</button>
           </div>
 
@@ -1431,6 +1526,8 @@ function StockCard(p){
             );
           })(),document.body)}
 
+          {showTrade&&createPortal(<TradeAddModal s={s} onAddTrade={p.onAddTrade} onClose={function(){setShowTrade(false);}}/>,document.body)}
+
           {showCorr&&createPortal(
             <div onClick={function(e){if(e.target===e.currentTarget)setShowCorr(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
               <div style={{background:"#040c18",border:"1px solid #a78bfa50",borderRadius:16,padding:"16px",width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
@@ -1508,6 +1605,7 @@ function StockDetailPanel(p){
   },[s.ticker]);
 
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
+  var showTradeS=useState(false);var showTrade=showTradeS[0],setShowTrade=showTradeS[1];
   var showCorrS=useState(false);var showCorr=showCorrS[0],setShowCorr=showCorrS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
@@ -1618,6 +1716,7 @@ function StockDetailPanel(p){
         <button onClick={function(){if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} style={{background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
         <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
         <button onClick={function(){setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
+        <button onClick={function(){setShowTrade(function(v){return !v;});}} style={{background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
         <button onClick={function(){if(isUp)return;setShowCorr(true);if(!corrFetched&&!corrLoading)runCorrFetch();}} disabled={isUp} title={isUp?"上昇中の銘柄では使用できません":"逆相関で上昇しやすい銘柄を調べる"} style={{background:"transparent",border:"1px solid "+(isUp?"#1a2c40":"#2a4060"),borderRadius:6,color:isUp?"#2a4a60":"#4a7090",padding:"4px 9px",fontSize:14,cursor:isUp?"not-allowed":"pointer"}}>🔀</button>
       </div>
 
@@ -1728,6 +1827,8 @@ function StockDetailPanel(p){
           </div>
         );
       })(),document.body)}
+
+      {showTrade&&createPortal(<TradeAddModal s={s} onAddTrade={p.onAddTrade} onClose={function(){setShowTrade(false);}}/>,document.body)}
 
       {showCorr&&createPortal(
         <div onClick={function(e){if(e.target===e.currentTarget)setShowCorr(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -1877,7 +1978,7 @@ function AllStocksPanel(p){
   var cardGrid=(
     <div style={{display:"grid",gridTemplateColumns:"repeat("+cols+",1fr)",gap:8}}>
       {displayStocks.map(function(s){
-        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks}/>;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>;
       })}
     </div>
   );
@@ -1910,7 +2011,7 @@ function AllStocksPanel(p){
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks}/>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
             </div>
           </div>
         )}
@@ -1977,7 +2078,7 @@ function FavPanel(p){
     <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
       {displayStocks.map(function(s){
         var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks}/>;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>;
       })}
     </div>
   );
@@ -2035,11 +2136,76 @@ function FavPanel(p){
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks}/>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
             </div>
           </div>
         )}
         {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:13}}>ティッカーを入力して追加できます</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── トレードタブ：アプリ予想／個人予想の一覧・損益集計 ─────────────────────────
+function TradePanel(p){
+  var stocks=p.stocks,toggleFav=p.toggleFav,favs=p.favs,vix=p.vix;
+  var subS=useState("app");var sub=subS[0],setSub=subS[1];
+  function isFavRef(t){return favs.indexOf(t)>=0;}
+  var list=sub==="app"?p.appTrades:p.personalTrades;
+  var doneList=list.filter(function(t){return t.status==="done";});
+  var totalPnl=doneList.reduce(function(a,t){return a+(t.pnl||0);},0);
+  var activeList=list.filter(function(t){return t.status==="active";});
+  var waitingCount=list.filter(function(t){return t.status==="waiting";}).length;
+  var STATUS_LABEL={waiting:"待機中",active:"進行中",done:"完了"};
+  var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0"};
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      <div style={{display:"flex",gap:6}}>
+        <TabBtn active={sub==="app"} onClick={function(){setSub("app");}} color="#0ea5e9" label={"🎯 アプリ予想 ("+p.appTrades.length+")"}/>
+        <TabBtn active={sub==="personal"} onClick={function(){setSub("personal");}} color="#a78bfa" label={"👤 個人予想 ("+p.personalTrades.length+")"}/>
+      </div>
+      <div style={{fontSize:11,color:"#4a7090",background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
+        {sub==="app"?"アプリの買いシグナル判断を忠実に守った場合の検証用":"アプリの判断とは異なる、自分自身の判断を検証するためのタブ"}
+      </div>
+
+      <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div>
+          <div style={{fontSize:11,color:"#4a7090"}}>合計損益（完了 {doneList.length}件）</div>
+          <div style={{fontSize:20,fontWeight:800,color:totalPnl>=0?"#22d3a0":"#f43f5e"}}>{doneList.length?fmtPnl(totalPnl,true):"—"}</div>
+        </div>
+        <div style={{fontSize:11,color:"#4a7090",textAlign:"right",lineHeight:1.8}}>
+          待機中 {waitingCount}件<br/>進行中 {activeList.length}件
+        </div>
+      </div>
+
+      {list.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:13}}>まだトレードが登録されていません。銘柄カードの🎯ボタンから登録してください</div>}
+
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {list.slice().reverse().map(function(t){
+          var s=stocks.find(function(x){return x.ticker===t.ticker;});
+          var isJP=t.market==="JP";
+          var unrealized=(t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?(t.lastPrice-t.startPrice):null;
+          return(
+            <div key={t.id} style={{background:"#03080f",border:"1px solid #0f2040",borderRadius:10,padding:8,display:"flex",flexDirection:"column",gap:6}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <span style={{fontSize:11,fontWeight:700,color:STATUS_COLOR[t.status]}}>● {STATUS_LABEL[t.status]}</span>
+                <button onClick={function(){if(window.confirm("このトレード記録を削除しますか？"))p.onRemoveTrade(sub,t.id);}} style={{background:"transparent",border:"none",color:"#4a5a70",fontSize:13,cursor:"pointer"}}>🗑</button>
+              </div>
+              <div style={{display:"flex",gap:12,fontSize:11,color:"#4a7090"}}>
+                <span>買い {fmtMoney(t.buyPrice,isJP)}</span>
+                <span>売り {fmtMoney(t.sellPrice,isJP)}</span>
+              </div>
+              {t.status==="done"&&<div style={{fontSize:16,fontWeight:800,color:t.pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnl(t.pnl,isJP)} <span style={{fontSize:11,fontWeight:400}}>({t.pnlPercent>=0?"+":""}{t.pnlPercent.toFixed(1)}%)</span></div>}
+              {t.status==="active"&&unrealized!=null&&<div style={{fontSize:13,color:unrealized>=0?"#22d3a0":"#f43f5e"}}>含み損益 {fmtPnl(unrealized,isJP)}</div>}
+              {s?(
+                <StockCard s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[t.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
+              ):(
+                <div style={{fontSize:11,color:"#2a4060",padding:"6px 0"}}>{t.ticker.replace(".T","")}（データ取得中… 「再スキャン」を実行すると表示されます）</div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -2622,7 +2788,7 @@ function HelpModal(p){
         })}
         <div style={{background:"#050e1c",borderRadius:8,padding:"10px 14px",marginTop:8}}>
           <div style={{fontSize:12,color:"#4a7090"}}>銘柄カードをタップ → 詳細シグナル表示</div>
-          <div style={{fontSize:12,color:"#4a7090",marginTop:4}}>💼ボタン → ポートフォリオに追加</div>
+          <div style={{fontSize:12,color:"#4a7090",marginTop:4}}>🎯ボタン → トレードタブに登録（買い/売り価格到達で自動判定）</div>
           <div style={{fontSize:12,color:"#4a7090",marginTop:4}}>★ボタン → お気に入り登録</div>
         </div>
       </div>
@@ -2710,6 +2876,44 @@ export default function App(){
     try{localStorage.setItem("group_names",JSON.stringify(nextNames));}catch(e){}
     syncToServer(favs,favGroups,nextNames);
   }
+
+  // ── トレードシミュレーター：状態管理・登録・削除・価格判定 ───────────────────
+  var atS=useState(function(){return loadTrades("app");});var appTrades=atS[0],setAppTrades=atS[1];
+  var ptS=useState(function(){return loadTrades("personal");});var personalTrades=ptS[0],setPersonalTrades=ptS[1];
+  function addTradeHandler(kind,s,buyPrice,sellPrice){
+    var next=addTradeRecord(kind,s,buyPrice,sellPrice);
+    if(kind==="app")setAppTrades(next);else setPersonalTrades(next);
+  }
+  function removeTradeHandler(kind,id){
+    var next=removeTradeRecord(kind,id);
+    if(kind==="app")setAppTrades(next);else setPersonalTrades(next);
+  }
+  // 保有中（waiting/active）のトレード銘柄について最新価格を取得し、指値到達を判定
+  // ※ useRefで最新のtrades配列を参照することで、5分間隔が状態更新のたびにリセットされるのを防ぐ
+  var tradesRefForCheck=useRef({app:appTrades,personal:personalTrades});
+  tradesRefForCheck.current={app:appTrades,personal:personalTrades};
+  useEffect(function(){
+    function checkTrades(){
+      var cur=tradesRefForCheck.current;
+      var tickers=[];
+      cur.app.concat(cur.personal).forEach(function(t){
+        if(t.status!=="done"&&tickers.indexOf(t.ticker)<0)tickers.push(t.ticker);
+      });
+      if(!tickers.length)return;
+      Promise.all(tickers.map(function(ticker){
+        return fetchYahoo(ticker).then(function(pd){return{ticker:ticker,price:pd.currentPrice};}).catch(function(){return{ticker:ticker,price:null};});
+      })).then(function(results){
+        var priceMap={};results.forEach(function(r){if(r.price!=null)priceMap[r.ticker]=r.price;});
+        if(Object.keys(priceMap).length===0)return;
+        setAppTrades(applyPricesToTrades("app",priceMap));
+        setPersonalTrades(applyPricesToTrades("personal",priceMap));
+      });
+    }
+    checkTrades();
+    var iv=setInterval(checkTrades,5*60*1000); // 5分間隔で保有中トレードの価格を確認
+    return function(){clearInterval(iv);};
+  },[]);
+
   var scan=useCallback(async function(){
     setLoading(true);
     CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止）
@@ -2723,6 +2927,14 @@ export default function App(){
       var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
       var uTickers=universe.map(function(s){return s.ticker;});
       favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
+      // トレード登録中（待機中・進行中）の銘柄も、カード表示のため必ずuniverseに含める
+      loadTrades("app").concat(loadTrades("personal")).forEach(function(t){
+        if(t.status==="done")return;
+        if(!universe.some(function(u){return u.ticker===t.ticker;})){
+          var isJP=t.ticker.endsWith(".T"),code=t.ticker.replace(".T","");
+          universe.push({ticker:t.ticker,name:t.name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
+        }
+      });
       setProgress({done:0,total:universe.length,msg:null});
       var results=[],BATCH=6;
       for(var i=0;i<universe.length;i+=BATCH){
@@ -2789,9 +3001,9 @@ export default function App(){
       .finally(function(){scan();});
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
-  var TABS=[["all","📋"],["fav","⭐"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"]];
-  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期"};
-  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","event":"決算/権利","index":"リンク","market":"市場予測","news":"ニュース","sync":"同期"};
+  var TABS=[["all","📋"],["fav","⭐"],["trade","🎯"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"]];
+  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期"};
+  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算/権利","index":"リンク","market":"市場予測","news":"ニュース","sync":"同期"};
   var isMobile=window.innerWidth<768;
   return(
     <div style={{minHeight:"100vh",background:"#040c18",backgroundAttachment:"fixed",fontFamily:"monospace",color:"#b8cce0"}}>
@@ -2836,8 +3048,9 @@ export default function App(){
           </div>
         )}
         <div style={{marginLeft:isMobile?0:50,padding:"10px 10px 120px"}}>
-          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading}/>}
-          {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading}/>}
+          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
+          {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
+          {activeTab==="trade"&&<TradePanel stocks={stocks} appTrades={appTrades} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="event"&&<EventPanel stocks={stocks}/>}
