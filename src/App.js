@@ -96,10 +96,16 @@ function enqueueIntraday(fn){
 // m5＝カードのミニチャート用（5分足）、m1＝チャートモーダル用（1分足）。
 // 同じJ-Quantsアクセス1回分のデータをサーバー側で両方の粒度に加工して返すため、
 // カードとモーダルを両方表示してもJ-Quantsへの追加リクエストは発生しない。
+//
+// INTRADAY_INFLIGHT: 同じ銘柄への呼び出しがほぼ同時に複数箇所（カードのミニ
+// チャートと詳細パネルなど）から来ても、進行中のPromiseを共有して二重リクエスト
+// にならないようにする。
+var INTRADAY_INFLIGHT={};
 async function fetchIntraday(ticker){
   var now=Date.now();
   if(INTRADAY_CACHE[ticker]&&now-INTRADAY_CACHE[ticker].ts<INTRADAY_TTL) return INTRADAY_CACHE[ticker].data;
-  return enqueueIntraday(async function(){
+  if(INTRADAY_INFLIGHT[ticker]) return INTRADAY_INFLIGHT[ticker];
+  var p=enqueueIntraday(async function(){
     try{
       var res=await fetch(INTRADAY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
       if(!res.ok) throw new Error("HTTP "+res.status);
@@ -115,16 +121,21 @@ async function fetchIntraday(ticker){
       return result;
     }catch(e){return null;}
   });
+  INTRADAY_INFLIGHT[ticker]=p;
+  p.finally(function(){delete INTRADAY_INFLIGHT[ticker];});
+  return p;
 }
 
-// ── 25週線・75週線（チャートモーダルの基準線用）─────────────────────────
-// 週足MAは1日の中でほぼ動かないため24時間キャッシュ。J-Quantsへのアクセスは
-// 分足と同じレート制限枠を共有するため、同じ直列キュー(enqueueIntraday)に乗せる。
-var WEEKLY_CACHE={}, WEEKLY_TTL=24*60*60*1000;
+// ── 25週線・75週線（チャート上部の基準線用）──────────────────────────────
+// 週足MAは1日の中でほぼ動かないため24時間キャッシュ。日足取得(/equities/bars/daily)
+// は分足アドオンとは別枠のAPIのため、分足用の直列キュー(1.5秒間隔)には乗せず
+// 独立して取得する（キューを共有すると毎回+1.5秒の待ちが発生し体感速度が悪化するため）。
+var WEEKLY_CACHE={}, WEEKLY_TTL=24*60*60*1000, WEEKLY_INFLIGHT={};
 async function fetchWeekly(ticker){
   var now=Date.now();
   if(WEEKLY_CACHE[ticker]&&now-WEEKLY_CACHE[ticker].ts<WEEKLY_TTL) return WEEKLY_CACHE[ticker].data;
-  return enqueueIntraday(async function(){
+  if(WEEKLY_INFLIGHT[ticker]) return WEEKLY_INFLIGHT[ticker];
+  var p=(async function(){
     try{
       var res=await fetch(WEEKLY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
       if(!res.ok) throw new Error("HTTP "+res.status);
@@ -133,7 +144,10 @@ async function fetchWeekly(ticker){
       WEEKLY_CACHE[ticker]={ts:now,data:result};
       return result;
     }catch(e){return null;}
-  });
+  })();
+  WEEKLY_INFLIGHT[ticker]=p;
+  p.finally(function(){delete WEEKLY_INFLIGHT[ticker];});
+  return p;
 }
 
 // 出来高ランキング取得（sector API失敗時の最終フォールバック用に残置）
@@ -821,7 +835,7 @@ function IntradayMiniChart(p){
   var data=p.data,H=96;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   if(data===false){
-    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>タップしてチャート表示</span></div>;
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>タップして詳細を見ると表示</span></div>;
   }
   if(data===undefined){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
@@ -943,26 +957,6 @@ function SignalDetailList(p){
   );
 }
 
-// ── チャートモーダル（カードのミニチャートをタップした時に表示）──────────
-// チャート（1分足＋週足MA基準線）を上部、シグナル詳細をその下に表示する。
-function ChartModal(p){
-  var s=p.stock;
-  return(
-    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2100,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
-      <div style={{background:"#040c18",border:"1px solid #60a5fa50",borderRadius:16,padding:16,width:"100%",maxWidth:380,maxHeight:"85vh",overflowY:"auto"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-          <div style={{fontSize:13,fontWeight:700,color:"#60a5fa"}}>📌 {s.ticker.replace(".T","")} {s.name}</div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
-        </div>
-        <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px",marginBottom:12}}>
-          <IntradayChart1m data={p.data} weekly={p.weekly}/>
-        </div>
-        <SignalDetailList signals={s.signals}/>
-      </div>
-    </div>
-  );
-}
-
 function ScoreRing(p){
   var sc=p.score,R=14,C=2*Math.PI*R,col=scoreColor(sc);
   return(
@@ -1034,24 +1028,11 @@ function StockCard(p){
   var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
 
-  // ── チャート（タップした時だけ取得＝体感速度＆J-Quants負荷を改善）────────
-  // intraday: false=未タップ, undefined=読込中, null=データなし, {m5,m1,date}=取得済み
-  // weekly:   false=未タップ, undefined=読込中, null=データなし, {ma25,ma75}=取得済み
+  // ── チャート（カードが選択/展開された時だけ取得＝体感速度＆J-Quants負荷を改善）
+  // intraday: false=未取得, undefined=読込中, null=データなし, {m5,m1,date}=取得済み
+  // weekly:   false=未取得, undefined=読込中, null=データなし, {ma25,ma75}=取得済み
   var intradayS=useState(false);var intraday=intradayS[0],setIntraday=intradayS[1];
   var weeklyS=useState(false);var weekly=weeklyS[0],setWeekly=weeklyS[1];
-  var showChartS=useState(false);var showChart=showChartS[0],setShowChart=showChartS[1];
-  function openChart(e){
-    stopProp(e);
-    setShowChart(true);
-    if(intraday===false||intraday===null){
-      setIntraday(undefined);
-      fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
-    }
-    if(weekly===false||weekly===null){
-      setWeekly(undefined);
-      fetchWeekly(s.ticker).then(function(r){setWeekly(r);});
-    }
-  }
 
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
@@ -1125,6 +1106,20 @@ function StockCard(p){
 
   var isMobile=window.innerWidth<768;
   var isSelected=!isMobile&&p.selectedStock&&p.selectedStock.ticker===s.ticker;
+
+  // 選択（デスクトップ）または展開（モバイル）＝「この銘柄を見ている」時だけ取得
+  useEffect(function(){
+    if(!isSelected&&!(isMobile&&expanded)) return;
+    if(intraday===false||intraday===null){
+      setIntraday(undefined);
+      fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
+    }
+    if(weekly===false||weekly===null){
+      setWeekly(undefined);
+      fetchWeekly(s.ticker).then(function(r){setWeekly(r);});
+    }
+  },[isSelected,expanded]);
+
   var cardBorder=isSelected?"#60a5fa":borderColor;
 
   return(
@@ -1165,10 +1160,9 @@ function StockCard(p){
         </div>
       </div>
 
-      <div onClick={openChart} style={{background:"#03080f",borderRadius:6,padding:"2px 4px",cursor:"pointer"}}>
+      <div style={{background:"#03080f",borderRadius:6,padding:"2px 4px"}}>
         <IntradayMiniChart data={intraday?{closes:intraday.m5.closes,times:intraday.m5.times,date:intraday.date}:intraday}/>
       </div>
-      {showChart&&createPortal(<ChartModal stock={s} data={intraday} weekly={weekly} onClose={function(){setShowChart(false);}}/>,document.body)}
 
       {isMobile&&<div style={{textAlign:"center",fontSize:11,color:"#2a4060"}}>{expanded?"▲ 閉じる":"▼ 詳細を見る"}</div>}
 
@@ -1182,6 +1176,11 @@ function StockCard(p){
             <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
             <button onClick={function(e){stopProp(e);setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
             <button onClick={function(e){stopProp(e);if(isUp)return;setShowCorr(true);if(!corrFetched&&!corrLoading)runCorrFetch();}} disabled={isUp} title={isUp?"上昇中の銘柄では使用できません":"逆相関で上昇しやすい銘柄を調べる"} style={{background:"transparent",border:"1px solid "+(isUp?"#1a2c40":"#2a4060"),borderRadius:6,color:isUp?"#2a4a60":"#4a7090",padding:"4px 9px",fontSize:14,cursor:isUp?"not-allowed":"pointer"}}>🔀</button>
+          </div>
+
+          {/* チャート（1分足＋週足MA） */}
+          <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
+            <IntradayChart1m data={intraday} weekly={weekly}/>
           </div>
 
           {/* シグナル詳細 */}
@@ -1395,6 +1394,17 @@ function StockDetailPanel(p){
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
 
+  // チャート（1分足＋週足MA）：この銘柄が選択された時に取得
+  // intraday/weekly: undefined=読込中, null=データなし, オブジェクト=取得済み
+  var intradayS=useState(undefined);var intraday=intradayS[0],setIntraday=intradayS[1];
+  var weeklyS=useState(undefined);var weekly=weeklyS[0],setWeekly=weeklyS[1];
+  useEffect(function(){
+    setIntraday(undefined);
+    setWeekly(undefined);
+    fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
+    fetchWeekly(s.ticker).then(function(r){setWeekly(r);});
+  },[s.ticker]);
+
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var showCorrS=useState(false);var showCorr=showCorrS[0],setShowCorr=showCorrS[1];
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
@@ -1507,23 +1517,14 @@ function StockDetailPanel(p){
         <button onClick={function(){setShowSim(function(v){return !v;});}} style={{background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
         <button onClick={function(){if(isUp)return;setShowCorr(true);if(!corrFetched&&!corrLoading)runCorrFetch();}} disabled={isUp} title={isUp?"上昇中の銘柄では使用できません":"逆相関で上昇しやすい銘柄を調べる"} style={{background:"transparent",border:"1px solid "+(isUp?"#1a2c40":"#2a4060"),borderRadius:6,color:isUp?"#2a4a60":"#4a7090",padding:"4px 9px",fontSize:14,cursor:isUp?"not-allowed":"pointer"}}>🔀</button>
       </div>
-      {/* シグナル詳細 */}
-      <div>
-        <div style={{fontSize:14,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
-        <div style={{display:"flex",flexDirection:"column",gap:4}}>
-          {s.signals.filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label.startsWith("RSI");}).map(function(sig,i){
-            return(
-              <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
-                <span style={{fontSize:14,color:"#4a7090"}}>{sig.label}</span>
-                <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                  <span style={{fontSize:14,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
-                  <span style={{fontSize:12,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+
+      {/* チャート（1分足＋週足MA） */}
+      <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
+        <IntradayChart1m data={intraday} weekly={weekly}/>
       </div>
+
+      {/* シグナル詳細 */}
+      <SignalDetailList signals={s.signals}/>
 
       {showAi&&createPortal(
         <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);setAiText("");setAiEntry(null);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
