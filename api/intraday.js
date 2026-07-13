@@ -96,7 +96,7 @@ export default async function handler(req, res) {
     const found = await findLatestBars(code, apiKey, 3);
     if (!found.date) {
       // データが1件も見つからなかった場合は、原因調査用に各試行の結果を含めて返す
-      return res.status(200).json({ closes: [], date: null, debug: found.log, rateLimited: !!found.rateLimited });
+      return res.status(200).json({ m5: { closes: [], times: [] }, m1: { closes: [], times: [] }, date: null, debug: found.log, rateLimited: !!found.rateLimited });
     }
 
     // 時計の5分刻み（09:00, 09:05, 09:10...）でグループ化し、各グループの最後の終値(C)を
@@ -127,9 +127,26 @@ export default async function handler(req, res) {
     }
     flushBucket();
 
+    // 1分足（チャートモーダル用）：時刻とC(終値)をそのまま抽出。
+    // 5分足の集計と同じ1回のJ-Quantsアクセス結果を使い回すので、追加リクエストは発生しない。
+    const closes1 = [];
+    const times1 = [];
+    for (const bar of found.bars) {
+      if (typeof bar.C !== "number") continue;
+      const t = bar.Time || "";
+      const parts = t.split(":");
+      if (parts.length < 2) continue;
+      times1.push(parts[0].padStart(2, "0") + ":" + parts[1].padStart(2, "0"));
+      closes1.push(bar.C);
+    }
+
     // ブラウザ側の短時間キャッシュ用ヘッダー（同一分内の再取得を減らす）
     res.setHeader("Cache-Control", "public, max-age=60");
-    return res.status(200).json({ closes: closes, times: times, date: found.date });
+    return res.status(200).json({
+      m5: { closes: closes, times: times },
+      m1: { closes: closes1, times: times1 },
+      date: found.date,
+    });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
