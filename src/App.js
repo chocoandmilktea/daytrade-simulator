@@ -234,12 +234,12 @@ function priceCrossed(prevPrice,curPrice,target){
   return target>=lo&&target<=hi;
 }
 
-function addTradeRecord(kind,s,buyPrice,sellPrice){
+function addTradeRecord(kind,s,buyPrice,sellPrice,shares){
   var list=loadTrades(kind);
   list.push({
     id:"t"+Date.now()+Math.random().toString(36).slice(2,6),
     ticker:s.ticker,name:s.name,market:s.market,
-    buyPrice:buyPrice,sellPrice:sellPrice,
+    buyPrice:buyPrice,sellPrice:sellPrice,shares:shares>0?shares:1,
     status:"waiting", // waiting(待機中) → active(進行中) → done(完了)
     startPrice:null,startAt:null,endPrice:null,endAt:null,
     pnl:null,pnlPercent:null,
@@ -251,6 +251,24 @@ function addTradeRecord(kind,s,buyPrice,sellPrice){
   return list;
 }
 function removeTradeRecord(kind,id){var list=loadTrades(kind).filter(function(t){return t.id!==id;});saveTrades(kind,list);return list;}
+
+// 売買価格・株数の編集（進行中・完了済みの場合は開始/終了価格や損益も再計算）
+function editTradeRecord(kind,id,updates){
+  var list=loadTrades(kind).map(function(t){
+    if(t.id!==id)return t;
+    var next=Object.assign({},t,updates);
+    if(t.status!=="waiting"&&updates.buyPrice!=null)next.startPrice=updates.buyPrice;
+    if(t.status==="done"){
+      if(updates.sellPrice!=null)next.endPrice=updates.sellPrice;
+      var pnlPerShare=next.endPrice-next.startPrice;
+      next.pnl=pnlPerShare*(next.shares||1);
+      next.pnlPercent=next.startPrice?(pnlPerShare/next.startPrice*100):0;
+    }
+    return next;
+  });
+  saveTrades(kind,list);
+  return list;
+}
 
 // 最新価格（{ticker:price}）を全トレードに適用し、waiting→active→doneの状態遷移を判定
 function applyPricesToTrades(kind,priceMap){
@@ -267,7 +285,7 @@ function applyPricesToTrades(kind,priceMap){
     }
     if(t.status==="active"&&priceCrossed(prev,cur,t.sellPrice)){
       changed=true;
-      var pnl=t.sellPrice-t.startPrice,pnlPercent=t.startPrice?(pnl/t.startPrice*100):0;
+      var pnlPerShare=t.sellPrice-t.startPrice,pnl=pnlPerShare*(t.shares||1),pnlPercent=t.startPrice?(pnlPerShare/t.startPrice*100):0;
       return Object.assign({},t,{status:"done",endPrice:t.sellPrice,endAt:new Date().toISOString(),pnl:pnl,pnlPercent:pnlPercent,lastPrice:cur});
     }
     if(cur!==prev){changed=true;return Object.assign({},t,{lastPrice:cur});}
@@ -1173,12 +1191,13 @@ function TradeAddModal(p){
   var s=p.s;
   var buyS=useState(s.rawPrice!=null?String(s.rawPrice):"");var buyVal=buyS[0],setBuyVal=buyS[1];
   var sellS=useState("");var sellVal=sellS[0],setSellVal=sellS[1];
+  var sharesS=useState("100");var sharesVal=sharesS[0],setSharesVal=sharesS[1];
   var isJP=s.market==="JP";
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"8px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
-  function valid(){var b=parseFloat(buyVal),se=parseFloat(sellVal);return !isNaN(b)&&b>0&&!isNaN(se)&&se>0;}
+  function valid(){var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);return !isNaN(b)&&b>0&&!isNaN(se)&&se>0&&!isNaN(sh)&&sh>0;}
   function add(kind){
     if(!valid())return;
-    p.onAddTrade(kind,s,parseFloat(buyVal),parseFloat(sellVal));
+    p.onAddTrade(kind,s,parseFloat(buyVal),parseFloat(sellVal),parseInt(sharesVal));
     p.onClose();
   }
   return(
@@ -1189,9 +1208,10 @@ function TradeAddModal(p){
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
         </div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:12}}>価格が指定値に到達すると自動で開始・終了します（判定間隔：数分〜数十分）</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
           <div><div style={{fontSize:11,color:"#22d3a0",marginBottom:3}}>買い価格</div><input style={inp} type="number" value={buyVal} onChange={function(e){setBuyVal(e.target.value);}}/></div>
           <div><div style={{fontSize:11,color:"#f43f5e",marginBottom:3}}>売り価格</div><input style={inp} type="number" value={sellVal} onChange={function(e){setSellVal(e.target.value);}}/></div>
+          <div><div style={{fontSize:11,color:"#4a7090",marginBottom:3}}>株数</div><input style={inp} type="number" value={sharesVal} onChange={function(e){setSharesVal(e.target.value);}}/></div>
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <button onClick={function(){add("app");}} disabled={!valid()} style={{background:valid()?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>🎯 アプリ予想タブへ追加</button>
@@ -2156,8 +2176,6 @@ function TradePanel(p){
   var totalPnl=doneList.reduce(function(a,t){return a+(t.pnl||0);},0);
   var activeList=list.filter(function(t){return t.status==="active";});
   var waitingCount=list.filter(function(t){return t.status==="waiting";}).length;
-  var STATUS_LABEL={waiting:"待機中",active:"進行中",done:"完了"};
-  var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0"};
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:10}}>
@@ -2184,29 +2202,71 @@ function TradePanel(p){
       <div style={{display:"flex",flexDirection:"column",gap:10}}>
         {list.slice().reverse().map(function(t){
           var s=stocks.find(function(x){return x.ticker===t.ticker;});
-          var isJP=t.market==="JP";
-          var unrealized=(t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?(t.lastPrice-t.startPrice):null;
           return(
-            <div key={t.id} style={{background:"#03080f",border:"1px solid #0f2040",borderRadius:10,padding:8,display:"flex",flexDirection:"column",gap:6}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:11,fontWeight:700,color:STATUS_COLOR[t.status]}}>● {STATUS_LABEL[t.status]}</span>
-                <button onClick={function(){if(window.confirm("このトレード記録を削除しますか？"))p.onRemoveTrade(sub,t.id);}} style={{background:"transparent",border:"none",color:"#4a5a70",fontSize:13,cursor:"pointer"}}>🗑</button>
-              </div>
-              <div style={{display:"flex",gap:12,fontSize:11,color:"#4a7090"}}>
-                <span>買い {fmtMoney(t.buyPrice,isJP)}</span>
-                <span>売り {fmtMoney(t.sellPrice,isJP)}</span>
-              </div>
-              {t.status==="done"&&<div style={{fontSize:16,fontWeight:800,color:t.pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnl(t.pnl,isJP)} <span style={{fontSize:11,fontWeight:400}}>({t.pnlPercent>=0?"+":""}{t.pnlPercent.toFixed(1)}%)</span></div>}
-              {t.status==="active"&&unrealized!=null&&<div style={{fontSize:13,color:unrealized>=0?"#22d3a0":"#f43f5e"}}>含み損益 {fmtPnl(unrealized,isJP)}</div>}
-              {s?(
-                <StockCard s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[t.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
-              ):(
-                <div style={{fontSize:11,color:"#2a4060",padding:"6px 0"}}>{t.ticker.replace(".T","")}（データ取得中… 「再スキャン」を実行すると表示されます）</div>
-              )}
-            </div>
+            <TradeItemCard key={t.id} t={t} s={s} kind={sub} stocks={stocks} toggleFav={toggleFav} isFav={isFavRef}
+              vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock}
+              onRescan={p.onRescan} rescanLoading={p.rescanLoading} onAddTrade={p.onAddTrade}
+              onRemoveTrade={p.onRemoveTrade} onEditTrade={p.onEditTrade}/>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ── トレード個別カード：ステータス表示・損益・売買価格/株数の編集 ─────────────
+function TradeItemCard(p){
+  var t=p.t,kind=p.kind;
+  var isJP=t.market==="JP";
+  var editS=useState(false);var editing=editS[0],setEditing=editS[1];
+  var buyS=useState(String(t.buyPrice));var buyVal=buyS[0],setBuyVal=buyS[1];
+  var sellS=useState(String(t.sellPrice));var sellVal=sellS[0],setSellVal=sellS[1];
+  var sharesS=useState(String(t.shares||1));var sharesVal=sharesS[0],setSharesVal=sharesS[1];
+  var STATUS_LABEL={waiting:"待機中",active:"進行中",done:"完了"};
+  var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0"};
+  var unrealized=(t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?((t.lastPrice-t.startPrice)*(t.shares||1)):null;
+  var editInp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px",fontSize:13,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+
+  function startEdit(){setBuyVal(String(t.buyPrice));setSellVal(String(t.sellPrice));setSharesVal(String(t.shares||1));setEditing(true);}
+  function saveEdit(){
+    var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
+    if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return;
+    p.onEditTrade(kind,t.id,{buyPrice:b,sellPrice:se,shares:sh});
+    setEditing(false);
+  }
+
+  return(
+    <div style={{background:"#03080f",border:"1px solid #0f2040",borderRadius:10,padding:8,display:"flex",flexDirection:"column",gap:6}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontSize:11,fontWeight:700,color:STATUS_COLOR[t.status]}}>● {STATUS_LABEL[t.status]}</span>
+        <div style={{display:"flex",gap:14}}>
+          <button onClick={editing?saveEdit:startEdit} style={{background:"transparent",border:"none",color:editing?"#22d3a0":"#4a5a70",fontSize:13,cursor:"pointer"}}>{editing?"💾 保存":"✏️"}</button>
+          {!editing&&<button onClick={function(){if(window.confirm("このトレード記録を削除しますか？"))p.onRemoveTrade(kind,t.id);}} style={{background:"transparent",border:"none",color:"#4a5a70",fontSize:13,cursor:"pointer"}}>🗑</button>}
+        </div>
+      </div>
+
+      {editing?(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+          <div><div style={{fontSize:10,color:"#22d3a0",marginBottom:2}}>買い</div><input type="number" value={buyVal} onChange={function(e){setBuyVal(e.target.value);}} style={editInp}/></div>
+          <div><div style={{fontSize:10,color:"#f43f5e",marginBottom:2}}>売り</div><input type="number" value={sellVal} onChange={function(e){setSellVal(e.target.value);}} style={editInp}/></div>
+          <div><div style={{fontSize:10,color:"#4a7090",marginBottom:2}}>株数</div><input type="number" value={sharesVal} onChange={function(e){setSharesVal(e.target.value);}} style={editInp}/></div>
+        </div>
+      ):(
+        <div style={{display:"flex",gap:12,fontSize:11,color:"#4a7090"}}>
+          <span>買い {fmtMoney(t.buyPrice,isJP)}</span>
+          <span>売り {fmtMoney(t.sellPrice,isJP)}</span>
+          <span>{t.shares||1}株</span>
+        </div>
+      )}
+
+      {t.status==="done"&&<div style={{fontSize:16,fontWeight:800,color:t.pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnl(t.pnl,isJP)} <span style={{fontSize:11,fontWeight:400}}>({t.pnlPercent>=0?"+":""}{t.pnlPercent.toFixed(1)}%)</span></div>}
+      {t.status==="active"&&unrealized!=null&&<div style={{fontSize:13,color:unrealized>=0?"#22d3a0":"#f43f5e"}}>含み損益 {fmtPnl(unrealized,isJP)}</div>}
+
+      {p.s?(
+        <StockCard s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[t.ticker]} allStocks={p.stocks} onAddTrade={p.onAddTrade}/>
+      ):(
+        <div style={{fontSize:11,color:"#2a4060",padding:"6px 0"}}>{t.ticker.replace(".T","")}（データ取得中… 「再スキャン」を実行すると表示されます）</div>
+      )}
     </div>
   );
 }
@@ -2880,12 +2940,16 @@ export default function App(){
   // ── トレードシミュレーター：状態管理・登録・削除・価格判定 ───────────────────
   var atS=useState(function(){return loadTrades("app");});var appTrades=atS[0],setAppTrades=atS[1];
   var ptS=useState(function(){return loadTrades("personal");});var personalTrades=ptS[0],setPersonalTrades=ptS[1];
-  function addTradeHandler(kind,s,buyPrice,sellPrice){
-    var next=addTradeRecord(kind,s,buyPrice,sellPrice);
+  function addTradeHandler(kind,s,buyPrice,sellPrice,shares){
+    var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares);
     if(kind==="app")setAppTrades(next);else setPersonalTrades(next);
   }
   function removeTradeHandler(kind,id){
     var next=removeTradeRecord(kind,id);
+    if(kind==="app")setAppTrades(next);else setPersonalTrades(next);
+  }
+  function editTradeHandler(kind,id,updates){
+    var next=editTradeRecord(kind,id,updates);
     if(kind==="app")setAppTrades(next);else setPersonalTrades(next);
   }
   // 保有中（waiting/active）のトレード銘柄について最新価格を取得し、指値到達を判定
@@ -3050,7 +3114,7 @@ export default function App(){
         <div style={{marginLeft:isMobile?0:50,padding:"10px 10px 120px"}}>
           {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
           {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
-          {activeTab==="trade"&&<TradePanel stocks={stocks} appTrades={appTrades} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler}/>}
+          {activeTab==="trade"&&<TradePanel stocks={stocks} appTrades={appTrades} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="event"&&<EventPanel stocks={stocks}/>}
