@@ -41,7 +41,9 @@ export default async function handler(req, res) {
     const dates = [];
     for (let i = 0; i < result.timestamp.length; i++) {
       if (closesRaw[i] == null) continue;
-      const d = new Date(result.timestamp[i] * 1000 + 9 * 60 * 60 * 1000); // JSTへシフト
+      // 日足のtimestampは既にその取引日を指すUTC時刻なので、シフトせずそのまま読む
+      // （分足と違い時刻情報は使わないため、+9時間シフトすると日付が前後にズレる場合があった）
+      const d = new Date(result.timestamp[i] * 1000);
       const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
       closes.push(closesRaw[i]);
       dates.push(dateStr);
