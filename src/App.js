@@ -808,9 +808,20 @@ function formatShortDate(isoDate){
   var d=new Date(isoDate+"T00:00:00");
   return (d.getMonth()+1)+"/"+d.getDate();
 }
-function fmtPriceLabel(v){
+// rngを渡すと、その値幅に応じた丸め単位にする（絶対価格だけで丸めると、値幅が
+// 狭い銘柄で複数の価格ラベルが同じ表示に潰れてしまうため）。rng省略時は従来通り。
+function fmtPriceLabel(v,rng){
   var av=Math.abs(v);
-  var step=av>=10000?100:av>=5000?50:av>=1000?10:av>=100?5:av>=10?1:0.5;
+  var step;
+  if(rng!=null&&rng>0){
+    var target=rng/20;
+    var mag=Math.pow(10,Math.floor(Math.log10(target)));
+    var norm=target/mag;
+    var niceNorm=norm<1.5?1:norm<3.5?2:norm<7.5?5:10;
+    step=Math.max(niceNorm*mag,0.1);
+  }else{
+    step=av>=10000?100:av>=5000?50:av>=1000?10:av>=100?5:av>=10?1:0.5;
+  }
   var rounded=Math.round(v/step)*step;
   return rounded>=1000?Math.round(rounded).toLocaleString("ja-JP"):rounded.toFixed(step<1?1:0);
 }
@@ -906,7 +917,7 @@ function DailyMiniChart(p){
           </svg>
         </div>
         <div style={{width:52,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
-          {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v)}</span>;})}
+          {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v,rng)}</span>;})}
         </div>
       </div>
       {dateLabels.length>0&&<TimeLabelRow timeLabels={dateLabels} toX={toX} W={W} rightGutter={58}/>}
@@ -983,7 +994,7 @@ function IntradayChart1m(p){
           </svg>
         </div>
         <div style={{width:52,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
-          {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v)}</span>;})}
+          {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v,rng)}</span>;})}
         </div>
       </div>
       <div style={{display:"flex",gap:10,fontSize:10,marginTop:3,flexWrap:"wrap"}}>
