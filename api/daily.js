@@ -3,7 +3,7 @@
 // データ取得元: Yahoo Finance（intraday.jsと同じ非公式チャートAPI）
 //
 // リクエスト例: /api/daily?ticker=7203.T
-// レスポンス: { closes:[...], dates:[...] }（直近5営業日分、JSTの日付文字列）
+// レスポンス: { closes:[...], dates:[...] }（直近3ヶ月分、JSTの日付文字列）
 
 const YAHOO_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -23,7 +23,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=5d`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
     const r = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(9000) });
     if (r.status === 429) {
       return res.status(200).json({ closes: [], dates: [], rateLimited: true });
