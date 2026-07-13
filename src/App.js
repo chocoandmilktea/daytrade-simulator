@@ -786,6 +786,9 @@ function fmtPriceLabel(v){
   return rounded>=1000?Math.round(rounded).toLocaleString("ja-JP"):rounded.toFixed(step<1?1:0);
 }
 // 時刻ラベル：できるだけ正時（9:00,10:00…）を優先して選ぶ。正時が少ない場合は均等間引きで補う。
+// label（表示文字列）とindex（元配列でのインデックス）を返す。呼び出し側はindexを使って
+// toX(index)でチャート上の実際の位置に合わせて配置する（昼休みなどで足の間隔が不均一な
+// ため、単純にflexboxで均等配置すると線の形と時刻表示がズレてしまう）。
 function pickTimeLabels(times,maxCount){
   var onHour=[];
   for(var i=0;i<times.length;i++){
@@ -804,7 +807,27 @@ function pickTimeLabels(times,maxCount){
     var n=Math.min(maxCount,times.length);
     for(var k2=0;k2<n;k2++) idxs.push(Math.round(k2*(times.length-1)/((n-1)||1)));
   }
-  return idxs.map(function(i){return times[i];});
+  return idxs.map(function(i){return {label:times[i],index:i};});
+}
+// timeLabelsの各ラベルを、toX(index)で計算した実際の位置にabsolute配置する。
+// chartWidthはSVG部分の幅(px相当のflex比率)、rightGutterは右側の価格目盛り列の幅(px)。
+function TimeLabelRow(p){
+  var timeLabels=p.timeLabels,toX=p.toX,W=p.W,rightGutter=p.rightGutter||0;
+  if(!timeLabels.length) return null;
+  return(
+    <div style={{display:"flex",gap:6,marginTop:3}}>
+      <div style={{position:"relative",flex:1,height:14,minWidth:0}}>
+        {timeLabels.map(function(t,i){
+          var leftPct=(toX(t.index)/(W-1))*100;
+          var isFirst=i===0,isLast=i===timeLabels.length-1;
+          return(
+            <span key={i} style={{position:"absolute",left:leftPct+"%",top:0,fontSize:11,color:"#6a90b0",whiteSpace:"nowrap",transform:isFirst?"translateX(0%)":isLast?"translateX(-100%)":"translateX(-50%)"}}>{t.label}</span>
+          );
+        })}
+      </div>
+      {rightGutter>0&&<div style={{width:rightGutter,flexShrink:0}}/>}
+    </div>
+  );
 }
 function IntradayMiniChart(p){
   var data=p.data,H=96;
@@ -850,17 +873,11 @@ function IntradayMiniChart(p){
           {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v)}</span>;})}
         </div>
       </div>
-      {timeLabels.length>0&&(
-        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#6a90b0",marginTop:3}}>
-          {timeLabels.map(function(t,i){return <span key={i}>{t}</span>;})}
-        </div>
-      )}
+      {timeLabels.length>0&&<TimeLabelRow timeLabels={timeLabels} toX={toX} W={W} rightGutter={58}/>}
     </div>
   );
 }
-
 // ── チャート詳細用：1分足＋25期・75期の短期移動平均（iSPEED等と同じ考え方）───
-// dataはfetchIntradayの戻り値（{m5,m1,date} / undefined=読込中 / null=データなし）。
 // MAは「週足」ではなく、1分足そのものを25本・75本分で平均した短期MA。
 // 同じ1分足データ・同じX軸（今日の時刻）から計算するので、価格の折れ線と
 // 自然に重ねて表示できる（週足MAのように別軸になる問題が起きない）。
@@ -883,9 +900,14 @@ function IntradayChart1m(p){
   if(data===null||!data.m1||!data.m1.closes||data.m1.closes.length<2){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
   }
-  var closes=data.m1.closes,times=data.m1.times||[];
+  var fullCloses=data.m1.closes,fullTimes=data.m1.times||[];
   var dateLabel=formatChartDateLabel(data.date);
-  var ma25=trailingSMA(closes,25),ma75=trailingSMA(closes,75);
+  // MAは全期間のデータで計算してから、表示だけ直近2時間（1分足120本）に絞る。
+  // 表示範囲の先頭でも正しいMA値になるよう、計算は絞り込み前の配列に対して行う。
+  var fullMa25=trailingSMA(fullCloses,25),fullMa75=trailingSMA(fullCloses,75);
+  var cropStart=Math.max(0,fullCloses.length-120);
+  var closes=fullCloses.slice(cropStart),times=fullTimes.slice(cropStart);
+  var ma25=fullMa25.slice(cropStart),ma75=fullMa75.slice(cropStart);
   var W=100;
   // 縦軸はMAも同じ1分足由来の値なので価格と一緒に含めてよい（週足MAと違い値幅が近いため）
   var allVals=closes.concat(ma25.filter(function(v){return v!=null;})).concat(ma75.filter(function(v){return v!=null;}));
@@ -900,27 +922,35 @@ function IntradayChart1m(p){
   }
   var pts=toPts(closes),pts25=toPts(ma25),pts75=toPts(ma75);
   var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1];
+  var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
   var timeLabels=pickTimeLabels(times,5);
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
-        <span>1分足</span>
+        <span>1分足（直近2時間）</span>
         <span>{dateLabel}</span>
       </div>
-      <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
-        {pts75&&<polyline points={pts75} fill="none" stroke="#a78bfa" strokeWidth={0.7}/>}
-        {pts25&&<polyline points={pts25} fill="none" stroke="#fbbf24" strokeWidth={0.7}/>}
-        <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.8} strokeLinejoin="round" strokeLinecap="round"/>
-      </svg>
+      <div style={{display:"flex",gap:6}}>
+        <div style={{flex:1,minWidth:0}}>
+          <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
+            {priceLevels.map(function(v,i){
+              var y=toY(v);
+              return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
+            })}
+            {pts75&&<polyline points={pts75} fill="none" stroke="#a78bfa" strokeWidth={0.6}/>}
+            {pts25&&<polyline points={pts25} fill="none" stroke="#22d3a0" strokeWidth={0.6}/>}
+            <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.5} strokeLinejoin="round" strokeLinecap="round"/>
+          </svg>
+        </div>
+        <div style={{width:52,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
+          {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v)}</span>;})}
+        </div>
+      </div>
       <div style={{display:"flex",gap:10,fontSize:10,marginTop:3,flexWrap:"wrap"}}>
-        <span style={{color:"#fbbf24"}}>― 25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
+        <span style={{color:"#22d3a0"}}>― 25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
         <span style={{color:"#a78bfa"}}>― 75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
       </div>
-      {timeLabels.length>0&&(
-        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#6a90b0",marginTop:3}}>
-          {timeLabels.map(function(t,i){return <span key={i}>{t}</span>;})}
-        </div>
-      )}
+      {timeLabels.length>0&&<TimeLabelRow timeLabels={timeLabels} toX={toX} W={W} rightGutter={58}/>}
     </div>
   );
 }
