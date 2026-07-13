@@ -80,6 +80,12 @@ async function handleJP(ticker, res) {
       earningsDate = emap[code] || null;
     } catch (e) {}
 
+    // 対TOPIX相対強弱用：直近のTOPIX騰落率（全銘柄共通の値なので1時間キャッシュ）
+    let topixChange = null;
+    try {
+      topixChange = await fetchTopixChange(apiKey);
+    } catch (e) {}
+
     // PER/PBR（財務情報のBPS・予想EPSから算出。24時間キャッシュ）
     // 権利落ち日（配当ありの銘柄のみ、次期末日の1営業日前を「予想」として概算）
     let per = null, pbr = null, exRightsDate = null;
@@ -107,6 +113,7 @@ async function handleJP(ticker, res) {
           per: per, pbr: pbr, analystTarget: null, sector: null,
           earningsDate: earningsDate,
           exRightsDate: exRightsDate,
+          topixChange: topixChange,
         }],
       },
     });
@@ -188,6 +195,37 @@ async function fetchJPEarningsMap(apiKey) {
 
   earningsCache = { map: map, ts: now };
   return map;
+}
+
+// ── 対TOPIX相対強弱：直近のTOPIX騰落率（全銘柄で共通の値のため1時間キャッシュ）──
+// J-Quants /v2/indices/bars/daily/topix は日次更新（O/H/L/Cの四本値）のため、
+// 直近10日分を取得して末尾2本（最新・その前日）から前日比%を算出する
+var topixCache = { change: null, ts: 0 };
+var TOPIX_TTL = 60 * 60 * 1000; // 1時間
+
+async function fetchTopixChange(apiKey) {
+  const now = Date.now();
+  if (topixCache.change !== null && now - topixCache.ts < TOPIX_TTL) return topixCache.change;
+
+  const to = getJSTDate(0);
+  const from = getJSTDate(10); // 休場日を挟んでも確実に2本以上取れる余裕を持たせる
+
+  const res = await fetch(`https://api.jquants.com/v2/indices/bars/daily/topix?from=${from}&to=${to}`, {
+    headers: { "x-api-key": apiKey },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error("topix " + res.status);
+  const json = await res.json();
+  const rows = (json.data || []).slice().sort(function(a, b) {
+    return a.Date < b.Date ? -1 : a.Date > b.Date ? 1 : 0;
+  });
+  if (rows.length < 2) throw new Error("insufficient topix data");
+
+  const last = rows[rows.length - 1], prev = rows[rows.length - 2];
+  const change = (last.C - prev.C) / prev.C * 100;
+
+  topixCache = { change: change, ts: now };
+  return change;
 }
 
 // ── JST日付文字列を取得（daysAgo日前、YYYYMMDD形式）────────────────────────
