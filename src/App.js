@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 
 var BADGE = {
@@ -12,6 +12,8 @@ var MKT = {
 };
 
 function scoreColor(n){ return n>=58?"#22d3a0":n>=38?"#fbbf24":"#f43f5e"; }
+function stateColor(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";}
+function stateLabel(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";}
 function bStyle(bg,border,text){ return{background:bg,border:"1px solid "+border,color:text,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:4}; }
 
 // 決算発表予定日のバッジ情報（日本株は「翌営業日リスト」照合のため常に直近扱い）
@@ -57,6 +59,7 @@ var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 var SECTOR_API="https://daytrade-simulator.vercel.app/api/sector";
 var CORRELATION_API="https://daytrade-simulator.vercel.app/api/correlation";
 var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
+var WEEKLY_API="https://daytrade-simulator.vercel.app/api/weekly";
 
 // ── 当日5分足（カード常時ミニ表示用）─────────────────────────────────────
 // J-Quantsの1分足をサーバー側(api/intraday.js)で5分足に集約して返す想定
@@ -89,6 +92,10 @@ function enqueueIntraday(fn){
   });
 }
 
+// レスポンス形式: { m5:{closes,times}, m1:{closes,times}, date }
+// m5＝カードのミニチャート用（5分足）、m1＝チャートモーダル用（1分足）。
+// 同じJ-Quantsアクセス1回分のデータをサーバー側で両方の粒度に加工して返すため、
+// カードとモーダルを両方表示してもJ-Quantsへの追加リクエストは発生しない。
 async function fetchIntraday(ticker){
   var now=Date.now();
   if(INTRADAY_CACHE[ticker]&&now-INTRADAY_CACHE[ticker].ts<INTRADAY_TTL) return INTRADAY_CACHE[ticker].data;
@@ -102,10 +109,28 @@ async function fetchIntraday(ticker){
         INTRADAY_PAUSED_UNTIL=Date.now()+120*1000; // 90秒→120秒に延長（再燃防止）
         return null;
       }
-      var closes=json&&json.closes?json.closes:null;
-      if(!closes||closes.length<2) return null;
-      var result={closes:closes,times:json.times||[],date:json.date||null};
+      if(!json||!json.m5||!json.m5.closes||json.m5.closes.length<2) return null;
+      var result={m5:json.m5,m1:json.m1||{closes:[],times:[]},date:json.date||null};
       INTRADAY_CACHE[ticker]={ts:now,data:result};
+      return result;
+    }catch(e){return null;}
+  });
+}
+
+// ── 25週線・75週線（チャートモーダルの基準線用）─────────────────────────
+// 週足MAは1日の中でほぼ動かないため24時間キャッシュ。J-Quantsへのアクセスは
+// 分足と同じレート制限枠を共有するため、同じ直列キュー(enqueueIntraday)に乗せる。
+var WEEKLY_CACHE={}, WEEKLY_TTL=24*60*60*1000;
+async function fetchWeekly(ticker){
+  var now=Date.now();
+  if(WEEKLY_CACHE[ticker]&&now-WEEKLY_CACHE[ticker].ts<WEEKLY_TTL) return WEEKLY_CACHE[ticker].data;
+  return enqueueIntraday(async function(){
+    try{
+      var res=await fetch(WEEKLY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      var json=await res.json();
+      var result={ma25:json.ma25||null,ma75:json.ma75||null};
+      WEEKLY_CACHE[ticker]={ts:now,data:result};
       return result;
     }catch(e){return null;}
   });
@@ -795,6 +820,9 @@ function pickTimeLabels(times,maxCount){
 function IntradayMiniChart(p){
   var data=p.data,H=96;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
+  if(data===false){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>タップしてチャート表示</span></div>;
+  }
   if(data===undefined){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
   }
@@ -838,6 +866,99 @@ function IntradayMiniChart(p){
           {timeLabels.map(function(t,i){return <span key={i}>{t}</span>;})}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── チャートモーダル用：1分足＋25週MA・75週MA基準線 ─────────────────────
+// dataはfetchIntradayの戻り値（{m5,m1,date} / undefined=読込中 / null=データなし）、
+// weeklyはfetchWeeklyの戻り値（{ma25,ma75} / undefined=読込中 / null=データなし）。
+// 週足MAは1日の中では動かないため、折れ線グラフの上に横基準線として重ねる。
+function IntradayChart1m(p){
+  var data=p.data,weekly=p.weekly,H=140;
+  var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
+  if(data===undefined){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
+  }
+  if(data===null||!data.m1||!data.m1.closes||data.m1.closes.length<2){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
+  }
+  var closes=data.m1.closes,times=data.m1.times||[];
+  var dateLabel=formatChartDateLabel(data.date);
+  var ma25=weekly&&weekly.ma25,ma75=weekly&&weekly.ma75;
+  var W=100;
+  var rangeVals=closes.slice();
+  if(ma25) rangeVals.push(ma25);
+  if(ma75) rangeVals.push(ma75);
+  var mn=Math.min.apply(null,rangeVals),mx=Math.max.apply(null,rangeVals);
+  var rng=mx-mn||1;
+  function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
+  function toX(i){return(i/(closes.length-1))*(W-1);}
+  var pts=closes.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
+  var timeLabels=pickTimeLabels(times,5);
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
+        <span>1分足</span>
+        <span>{dateLabel}</span>
+      </div>
+      <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
+        {ma25&&<line x1={0} y1={toY(ma25)} x2={W} y2={toY(ma25)} stroke="#fbbf24" strokeWidth={0.6} strokeDasharray="3,2"/>}
+        {ma75&&<line x1={0} y1={toY(ma75)} x2={W} y2={toY(ma75)} stroke="#a78bfa" strokeWidth={0.6} strokeDasharray="3,2"/>}
+        <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.8} strokeLinejoin="round" strokeLinecap="round"/>
+      </svg>
+      <div style={{display:"flex",gap:10,fontSize:10,marginTop:3}}>
+        {ma25&&<span style={{color:"#fbbf24"}}>― 25週MA {fmtPriceLabel(ma25)}</span>}
+        {ma75&&<span style={{color:"#a78bfa"}}>― 75週MA {fmtPriceLabel(ma75)}</span>}
+        {weekly&&!ma25&&!ma75&&<span style={{color:"#2a4060"}}>週足MA：データ不足（上場から日が浅い銘柄）</span>}
+      </div>
+      {timeLabels.length>0&&(
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#6a90b0",marginTop:3}}>
+          {timeLabels.map(function(t,i){return <span key={i}>{t}</span>;})}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── シグナル詳細（カードの展開パネルとチャートモーダルで共通利用）────────
+function SignalDetailList(p){
+  return(
+    <div>
+      <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
+      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        {(p.signals||[]).filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label.startsWith("RSI");}).map(function(sig,i){
+          return(
+            <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
+              <span style={{fontSize:12,color:"#4a7090"}}>{sig.label}</span>
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                <span style={{fontSize:12,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
+                <span style={{fontSize:8,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── チャートモーダル（カードのミニチャートをタップした時に表示）──────────
+// チャート（1分足＋週足MA基準線）を上部、シグナル詳細をその下に表示する。
+function ChartModal(p){
+  var s=p.stock;
+  return(
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2100,display:"flex",alignItems:"center",justifyContent:"center",padding:12}}>
+      <div style={{background:"#040c18",border:"1px solid #60a5fa50",borderRadius:16,padding:16,width:"100%",maxWidth:380,maxHeight:"85vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#60a5fa"}}>📌 {s.ticker.replace(".T","")} {s.name}</div>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+        </div>
+        <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px",marginBottom:12}}>
+          <IntradayChart1m data={p.data} weekly={p.weekly}/>
+        </div>
+        <SignalDetailList signals={s.signals}/>
+      </div>
     </div>
   );
 }
@@ -913,33 +1034,28 @@ function StockCard(p){
   var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
 
-  // ── 当日5分足（画面に表示された時だけ取得＝体感速度＆J-Quants負荷を改善）───
-  var intradayS=useState(undefined);var intraday=intradayS[0],setIntraday=intradayS[1]; // undefined=読込中, null=データなし
-  var cardRef=useRef(null);
-  useEffect(function(){
-    var alive=true;
-    setIntraday(undefined);
-    var el=cardRef.current;
-    if(!el||typeof IntersectionObserver==="undefined"){
-      // 万一IntersectionObserverが使えない環境なら、従来通り即時取得にフォールバック
-      fetchIntraday(s.ticker).then(function(closes){if(alive)setIntraday(closes);});
-      return function(){alive=false;};
+  // ── チャート（タップした時だけ取得＝体感速度＆J-Quants負荷を改善）────────
+  // intraday: false=未タップ, undefined=読込中, null=データなし, {m5,m1,date}=取得済み
+  // weekly:   false=未タップ, undefined=読込中, null=データなし, {ma25,ma75}=取得済み
+  var intradayS=useState(false);var intraday=intradayS[0],setIntraday=intradayS[1];
+  var weeklyS=useState(false);var weekly=weeklyS[0],setWeekly=weeklyS[1];
+  var showChartS=useState(false);var showChart=showChartS[0],setShowChart=showChartS[1];
+  function openChart(e){
+    stopProp(e);
+    setShowChart(true);
+    if(intraday===false||intraday===null){
+      setIntraday(undefined);
+      fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
     }
-    var observer=new IntersectionObserver(function(entries){
-      if(entries[0].isIntersecting){
-        fetchIntraday(s.ticker).then(function(closes){if(alive)setIntraday(closes);});
-        observer.disconnect();
-      }
-    },{rootMargin:"300px"}); // 画面に入る少し手前から先読み開始
-    observer.observe(el);
-    return function(){alive=false;observer.disconnect();};
-  },[s.ticker]);
+    if(weekly===false||weekly===null){
+      setWeekly(undefined);
+      fetchWeekly(s.ticker).then(function(r){setWeekly(r);});
+    }
+  }
 
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
-  var stateColor=function(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";};
-  var stateLabel=function(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";};
   var fromHighColor=s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0";
   var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
 
@@ -1012,7 +1128,7 @@ function StockCard(p){
   var cardBorder=isSelected?"#60a5fa":borderColor;
 
   return(
-    <div ref={cardRef} style={{background:isSelected?"#071e38":"#050e1c",border:"none",borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer",minWidth:0}}
+    <div style={{background:isSelected?"#071e38":"#050e1c",border:"none",borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer",minWidth:0}}
       onClick={function(){
         if(!isMobile){if(p.setSelectedStock)p.setSelectedStock(s);}
         else{setExpanded(function(v){return !v;});}
@@ -1049,9 +1165,10 @@ function StockCard(p){
         </div>
       </div>
 
-      <div style={{background:"#03080f",borderRadius:6,padding:"2px 4px"}}>
-        <IntradayMiniChart data={intraday}/>
+      <div onClick={openChart} style={{background:"#03080f",borderRadius:6,padding:"2px 4px",cursor:"pointer"}}>
+        <IntradayMiniChart data={intraday?{closes:intraday.m5.closes,times:intraday.m5.times,date:intraday.date}:intraday}/>
       </div>
+      {showChart&&createPortal(<ChartModal stock={s} data={intraday} weekly={weekly} onClose={function(){setShowChart(false);}}/>,document.body)}
 
       {isMobile&&<div style={{textAlign:"center",fontSize:11,color:"#2a4060"}}>{expanded?"▲ 閉じる":"▼ 詳細を見る"}</div>}
 
@@ -1068,22 +1185,7 @@ function StockCard(p){
           </div>
 
           {/* シグナル詳細 */}
-          <div>
-            <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
-            <div style={{display:"flex",flexDirection:"column",gap:4}}>
-              {s.signals.filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label.startsWith("RSI");}).map(function(sig,i){
-                return(
-                  <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
-                    <span style={{fontSize:12,color:"#4a7090"}}>{sig.label}</span>
-                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                      <span style={{fontSize:12,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
-                      <span style={{fontSize:8,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <SignalDetailList signals={s.signals}/>
 
           {showAi&&(
             <div style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"12px"}}>
@@ -1290,8 +1392,6 @@ function StockDetailPanel(p){
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
   var fromHighColor=s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0";
   var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
-  var stateColor=function(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";};
-  var stateLabel=function(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";};
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
 
