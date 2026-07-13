@@ -36,6 +36,15 @@ function exRightsInfo(dateStr){
   return{date:dateStr,days:days,label:label};
 }
 
+// 対TOPIX相対強弱バッジ（日本株のみ）。個別銘柄の当日騰落率からTOPIX騰落率を引いた差分
+// ±0.5%未満は誤差レベルとみなし非表示にする
+function relStrengthInfo(rel){
+  if(rel==null) return null;
+  if(Math.abs(rel)<0.5) return null;
+  var strong=rel>=0;
+  return{diff:rel,label:(strong?"+":"")+rel.toFixed(1)+"%",strong:strong};
+}
+
 // ── 決算日・権利落ち日のローカル記憶 ─────────────────────────────────────
 // 外部APIが当日中に日付を返さなくなっても、実際の予定日を過ぎるまで表示を継続するための保険
 var EVENT_DATE_CACHE_KEY="event_date_cache_v1";
@@ -185,7 +194,7 @@ async function buildStockUniverse(){
 // 15分足データ取得（メイン分析用・60日分）
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate};}
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange};}
   var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(15000),cache:"no-store"});
   if(!res.ok) throw new Error("HTTP "+res.status);
   var json=await res.json();
@@ -193,11 +202,11 @@ async function fetchYahoo(ticker){
   if(!result) throw new Error("empty");
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
-  var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null;
+  var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null,topixChange=result.topixChange!=null?result.topixChange:null;
   var filledClose=fill(q.close);
-  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate};
+  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange};
 }
 
 
@@ -213,6 +222,7 @@ function genSim(ticker){
 var AI_API_URL="https://daytrade-simulator.vercel.app/api/ai";
 function buildAiPrompt(s){
   var isJP=s.market==="JP";
+  var relPart=(isJP&&s.relStrength!=null)?("対TOPIX相対: "+(s.relStrength>=0?"+":"")+s.relStrength.toFixed(1)+"%（個別銘柄騰落率−TOPIX騰落率。市場全体を除いた銘柄固有の強さの目安）\n"):"";
   var histPart="";
   if(s.scoreHist&&s.scoreHist.length>=2){
     var days=s.tradeType==="short"?5:s.tradeType==="mid"?7:10;
@@ -230,6 +240,7 @@ function buildAiPrompt(s){
     "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: "+(s.fromLow>=0?"+":"")+s.fromLow.toFixed(1)+"%\n"+
     "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
     "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
+    relPart+
     histPart+
     "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
     "以下のトレード判断を数値で答えてください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n5. 🔮 今後の見通し: 必ずWeb検索でこの銘柄の最新ニュース・決算・材料を調べた上で、今後数日〜1週間程度で上昇/下落/中立のどれに向かいやすいかを予想し、確信度と根拠を1〜2文で述べてください\n\n"+
@@ -476,6 +487,21 @@ function analyzeStock(stock,pd,vixVal){
   // ────────────────────────────────────────────────────────────────────────────
 
   var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
+
+  // ── 対TOPIX相対強弱（日本株限定・最大6点）───────────────────────────────
+  // 個別銘柄の当日騰落率からTOPIXの当日騰落率を引いた差分。市場全体の地合いを
+  // 除いた「銘柄固有の強さ」を測る補助シグナル（過信厳禁、あくまで参考値）
+  var topixChange=(stock.market==="JP"&&pd.topixChange!=null)?pd.topixChange:null;
+  var relStrength=topixChange!=null?(parseFloat(change)-topixChange):null;
+  if(relStrength!=null){
+    if(relStrength>=1.5){sc+=6;signals.push({label:"対TOPIX",val:"市場より強い(+"+relStrength.toFixed(1)+"%)",state:1});}
+    else if(relStrength>=0.5){sc+=3;signals.push({label:"対TOPIX",val:"やや市場より強い(+"+relStrength.toFixed(1)+"%)",state:1});}
+    else if(relStrength<=-1.5){sc-=6;signals.push({label:"対TOPIX",val:"市場より弱い("+relStrength.toFixed(1)+"%)",state:-1});}
+    else if(relStrength<=-0.5){sc-=3;signals.push({label:"対TOPIX",val:"やや市場より弱い("+relStrength.toFixed(1)+"%)",state:-1});}
+    else{signals.push({label:"対TOPIX",val:"市場並み("+relStrength.toFixed(1)+"%)",state:0});}
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
   var dispPrice=stock.market==="JP"?"¥"+Math.round(price).toLocaleString():"$"+price.toFixed(2);
   // 52週相当: 60日分データの全体を使用
   var yearData=closes.slice(-YEAR_BARS);
@@ -737,6 +763,7 @@ function analyzeStock(stock,pd,vixVal){
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
     real:pd.real,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
     analystTarget:pd.analystTarget||null,earningsDate:resolveEventDate(stock.ticker,"earningsDate",pd.earningsDate||null),exRightsDate:resolveEventDate(stock.ticker,"exRightsDate",pd.exRightsDate||null),weekHigh:weekHigh,weekLow:weekLow,
+    topixChange:topixChange,relStrength:relStrength,
     high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
@@ -1215,6 +1242,7 @@ function StockCard(p){
           <div style={{fontSize:11,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
           {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
           {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
+          {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}
           {(function(){
             var aw=s.actualWinRate;
             var hasReal=aw&&aw.winRate!==null&&aw.total>=3;
@@ -1564,6 +1592,7 @@ function StockDetailPanel(p){
               {s.tradeLabel&&<span style={bStyle("#0a0a1a","1px solid "+s.tradeColor,s.tradeColor)}>{s.tradeLabel}</span>}
               {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
               {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
+          {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}
             </div>
             <div style={{fontSize:13,color:"#4a7090",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
           </div>
