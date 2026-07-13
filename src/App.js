@@ -59,6 +59,7 @@ var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
 var SECTOR_API="https://daytrade-simulator.vercel.app/api/sector";
 var CORRELATION_API="https://daytrade-simulator.vercel.app/api/correlation";
 var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
+var DAILY_API="https://daytrade-simulator.vercel.app/api/daily";
 
 // ── 当日5分足（カード常時ミニ表示用）─────────────────────────────────────
 // J-Quantsの1分足をサーバー側(api/intraday.js)で5分足に集約して返す想定
@@ -91,13 +92,10 @@ function enqueueIntraday(fn){
   });
 }
 
-// レスポンス形式: { m5:{closes,times}, m1:{closes,times}, date }
-// m5＝カードのミニチャート用（5分足）、m1＝チャートモーダル用（1分足）。
-// 同じJ-Quantsアクセス1回分のデータをサーバー側で両方の粒度に加工して返すため、
-// カードとモーダルを両方表示してもJ-Quantsへの追加リクエストは発生しない。
+// レスポンス形式: { m1:{closes,times}, date }（チャートモーダル用の1分足）
 //
-// INTRADAY_INFLIGHT: 同じ銘柄への呼び出しがほぼ同時に複数箇所（カードのミニ
-// チャートと詳細パネルなど）から来ても、進行中のPromiseを共有して二重リクエスト
+// INTRADAY_INFLIGHT: 同じ銘柄への呼び出しがほぼ同時に複数箇所（モバイルの展開
+// パネルと詳細パネルなど）から来ても、進行中のPromiseを共有して二重リクエスト
 // にならないようにする。
 var INTRADAY_INFLIGHT={};
 async function fetchIntraday(ticker){
@@ -110,18 +108,42 @@ async function fetchIntraday(ticker){
       if(!res.ok) throw new Error("HTTP "+res.status);
       var json=await res.json();
       if(json&&json.rateLimited){
-        // J-Quants側でアクセス制限を検知：しばらくキュー全体を止めて様子を見る
-        INTRADAY_PAUSED_UNTIL=Date.now()+120*1000; // 90秒→120秒に延長（再燃防止）
+        // アクセス制限を検知：しばらくキュー全体を止めて様子を見る
+        INTRADAY_PAUSED_UNTIL=Date.now()+120*1000;
         return null;
       }
-      if(!json||!json.m5||!json.m5.closes||json.m5.closes.length<2) return null;
-      var result={m5:json.m5,m1:json.m1||{closes:[],times:[]},date:json.date||null};
+      if(!json||!json.m1||!json.m1.closes||json.m1.closes.length<2) return null;
+      var result={m1:json.m1,date:json.date||null};
       INTRADAY_CACHE[ticker]={ts:now,data:result};
       return result;
     }catch(e){return null;}
   });
   INTRADAY_INFLIGHT[ticker]=p;
   p.finally(function(){delete INTRADAY_INFLIGHT[ticker];});
+  return p;
+}
+
+// ── 日足（カードのミニチャート用）────────────────────────────────────────
+// 直近3ヶ月の日足終値。値の変化が緩やかなので30分キャッシュ、分足用の直列
+// キューとは別枠で（軽いデータなので待たせる必要が薄いため）直接取得する。
+var DAILY_CACHE={}, DAILY_TTL=30*60*1000, DAILY_INFLIGHT={};
+async function fetchDaily(ticker){
+  var now=Date.now();
+  if(DAILY_CACHE[ticker]&&now-DAILY_CACHE[ticker].ts<DAILY_TTL) return DAILY_CACHE[ticker].data;
+  if(DAILY_INFLIGHT[ticker]) return DAILY_INFLIGHT[ticker];
+  var p=(async function(){
+    try{
+      var res=await fetch(DAILY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      var json=await res.json();
+      if(!json||!json.closes||json.closes.length<2) return null;
+      var result={closes:json.closes,dates:json.dates||[]};
+      DAILY_CACHE[ticker]={ts:now,data:result};
+      return result;
+    }catch(e){return null;}
+  })();
+  DAILY_INFLIGHT[ticker]=p;
+  p.finally(function(){delete DAILY_INFLIGHT[ticker];});
   return p;
 }
 
@@ -779,6 +801,13 @@ function formatChartDateLabel(isoDate){
   if(isToday) return "";
   return (d.getMonth()+1)+"/"+d.getDate()+"("+WEEKDAY_JA[d.getDay()]+")時点";
 }
+// 当日以外のデータの場合、時刻ラベルに付ける短い日付("7/10"形式)。
+// "14:00"だけだと今日の未来時刻に見えてしまう（実際は別の日）ため、日付を明示する。
+function formatShortDate(isoDate){
+  if(!isoDate) return "";
+  var d=new Date(isoDate+"T00:00:00");
+  return (d.getMonth()+1)+"/"+d.getDate();
+}
 function fmtPriceLabel(v){
   var av=Math.abs(v);
   var step=av>=10000?100:av>=5000?50:av>=1000?10:av>=100?5:av>=10?1:0.5;
@@ -829,7 +858,18 @@ function TimeLabelRow(p){
     </div>
   );
 }
-function IntradayMiniChart(p){
+// 日付ラベル：均等間引きでmaxCount個選ぶ（日足は「正時」のような区切りが無いため単純均等）
+function pickDateLabels(dates,maxCount){
+  var idxs=[];
+  var n=Math.min(maxCount,dates.length);
+  for(var k=0;k<n;k++) idxs.push(Math.round(k*(dates.length-1)/((n-1)||1)));
+  return idxs.map(function(i){
+    var d=new Date(dates[i]+"T00:00:00");
+    return {label:(d.getMonth()+1)+"/"+d.getDate(),index:i};
+  });
+}
+// ── カードのミニチャート用：日足（直近3ヶ月） ──────────────────────────
+function DailyMiniChart(p){
   var data=p.data,H=96;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   if(data===false){
@@ -841,23 +881,19 @@ function IntradayMiniChart(p){
   if(data===null||!data.closes||data.closes.length<2){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
   }
-  var closes=data.closes,times=data.times||[];
-  var dateLabel=formatChartDateLabel(data.date);
+  var closes=data.closes,dates=data.dates||[];
   var W=100;
   var mn=Math.min.apply(null,closes),mx=Math.max.apply(null,closes);
   var rng=mx-mn||1;
   function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
   function toX(i){return(i/(closes.length-1))*(W-1);}
   var pts=closes.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
-  // 右側の価格目盛り：参考画像に合わせて上から4段（最高値〜最安値を均等分割）
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
-  // 下段の時刻ラベル：正時（9:00,10:00…）優先で最大4つ選ぶ
-  var timeLabels=pickTimeLabels(times,4);
+  var dateLabels=pickDateLabels(dates,4);
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
-        <span>5分足</span>
-        <span>{dateLabel}</span>
+        <span>日足</span>
       </div>
       <div style={{display:"flex",gap:6}}>
         <div style={{flex:1,minWidth:0}}>
@@ -866,14 +902,14 @@ function IntradayMiniChart(p){
               var y=toY(v);
               return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
             })}
-            <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.8} strokeLinejoin="round" strokeLinecap="round"/>
+            <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.4} strokeLinejoin="round" strokeLinecap="round"/>
           </svg>
         </div>
         <div style={{width:52,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
           {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v)}</span>;})}
         </div>
       </div>
-      {timeLabels.length>0&&<TimeLabelRow timeLabels={timeLabels} toX={toX} W={W} rightGutter={58}/>}
+      {dateLabels.length>0&&<TimeLabelRow timeLabels={dateLabels} toX={toX} W={W} rightGutter={58}/>}
     </div>
   );
 }
@@ -924,6 +960,10 @@ function IntradayChart1m(p){
   var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1];
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
   var timeLabels=pickTimeLabels(times,5);
+  if(dateLabel){
+    var shortDate=formatShortDate(data.date);
+    timeLabels=timeLabels.map(function(t){return {label:shortDate+" "+t.label,index:t.index};});
+  }
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
@@ -937,9 +977,9 @@ function IntradayChart1m(p){
               var y=toY(v);
               return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
             })}
-            {pts75&&<polyline points={pts75} fill="none" stroke="#a78bfa" strokeWidth={0.6}/>}
-            {pts25&&<polyline points={pts25} fill="none" stroke="#22d3a0" strokeWidth={0.6}/>}
-            <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.5} strokeLinejoin="round" strokeLinecap="round"/>
+            {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={0.6}/>}
+            {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={0.6}/>}
+            <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.25} strokeLinejoin="round" strokeLinecap="round"/>
           </svg>
         </div>
         <div style={{width:52,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
@@ -947,8 +987,8 @@ function IntradayChart1m(p){
         </div>
       </div>
       <div style={{display:"flex",gap:10,fontSize:10,marginTop:3,flexWrap:"wrap"}}>
-        <span style={{color:"#22d3a0"}}>― 25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
-        <span style={{color:"#a78bfa"}}>― 75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
+        <span style={{color:"#a3e635"}}>― 25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
+        <span style={{color:"#f472b6"}}>― 75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
       </div>
       {timeLabels.length>0&&<TimeLabelRow timeLabels={timeLabels} toX={toX} W={W} rightGutter={58}/>}
     </div>
@@ -1048,8 +1088,10 @@ function StockCard(p){
   var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
 
-  // ── チャート（カードが選択/展開された時だけ取得＝体感速度＆J-Quants負荷を改善）
-  // intraday: false=未取得, undefined=読込中, null=データなし, {m5,m1,date}=取得済み
+  // ── チャート（カードが選択/展開された時だけ取得＝体感速度・API負荷を改善）───
+  // daily: カードのミニチャート用（日足）。false=未取得, undefined=読込中, null=データなし
+  // intraday: モバイル展開パネルのチャート用（1分足）。同上
+  var dailyS=useState(false);var daily=dailyS[0],setDaily=dailyS[1];
   var intradayS=useState(false);var intraday=intradayS[0],setIntraday=intradayS[1];
 
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
@@ -1125,14 +1167,24 @@ function StockCard(p){
   var isMobile=window.innerWidth<768;
   var isSelected=!isMobile&&p.selectedStock&&p.selectedStock.ticker===s.ticker;
 
-  // 選択（デスクトップ）または展開（モバイル）＝「この銘柄を見ている」時だけ取得
+  // 選択（デスクトップ）または展開（モバイル）＝「この銘柄を見ている」時だけ日足を取得
   useEffect(function(){
     if(!isSelected&&!(isMobile&&expanded)) return;
+    if(daily===false||daily===null){
+      setDaily(undefined);
+      fetchDaily(s.ticker).then(function(r){setDaily(r);});
+    }
+  },[isSelected,expanded]);
+
+  // モバイル展開パネルのチャート（1分足）はモバイルで展開された時だけ取得
+  // （デスクトップ版の同等表示はStockDetailPanel側で独自に取得するため不要）
+  useEffect(function(){
+    if(!(isMobile&&expanded)) return;
     if(intraday===false||intraday===null){
       setIntraday(undefined);
       fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
     }
-  },[isSelected,expanded]);
+  },[expanded]);
 
   var cardBorder=isSelected?"#60a5fa":borderColor;
 
@@ -1175,7 +1227,7 @@ function StockCard(p){
       </div>
 
       <div style={{background:"#03080f",borderRadius:6,padding:"2px 4px"}}>
-        <IntradayMiniChart data={intraday?{closes:intraday.m5.closes,times:intraday.m5.times,date:intraday.date}:intraday}/>
+        <DailyMiniChart data={daily}/>
       </div>
 
       {isMobile&&<div style={{textAlign:"center",fontSize:11,color:"#2a4060"}}>{expanded?"▲ 閉じる":"▼ 詳細を見る"}</div>}
