@@ -901,14 +901,17 @@ function IntradayChart1m(p){
   var dateLabel=formatChartDateLabel(data.date);
   var ma25=weekly&&weekly.ma25,ma75=weekly&&weekly.ma75;
   var W=100;
-  var rangeVals=closes.slice();
-  if(ma25) rangeVals.push(ma25);
-  if(ma75) rangeVals.push(ma75);
-  var mn=Math.min.apply(null,rangeVals),mx=Math.max.apply(null,rangeVals);
+  // 縦軸は1分足の値動きだけで決める（MAを混ぜると値幅が乖離した時にスケールが崩れ、
+  // 本来の値動きが潰れて見えてしまうため）。MAが表示レンジ内に収まる時だけ基準線を引く。
+  var mn=Math.min.apply(null,closes),mx=Math.max.apply(null,closes);
   var rng=mx-mn||1;
+  var pad=rng*0.1;
+  mn-=pad;mx+=pad;rng=mx-mn||1;
   function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
   function toX(i){return(i/(closes.length-1))*(W-1);}
   var pts=closes.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
+  var ma25InRange=ma25!=null&&ma25>=mn&&ma25<=mx;
+  var ma75InRange=ma75!=null&&ma75>=mn&&ma75<=mx;
   var timeLabels=pickTimeLabels(times,5);
   return(
     <div>
@@ -917,14 +920,14 @@ function IntradayChart1m(p){
         <span>{dateLabel}</span>
       </div>
       <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
-        {ma25&&<line x1={0} y1={toY(ma25)} x2={W} y2={toY(ma25)} stroke="#fbbf24" strokeWidth={0.6} strokeDasharray="3,2"/>}
-        {ma75&&<line x1={0} y1={toY(ma75)} x2={W} y2={toY(ma75)} stroke="#a78bfa" strokeWidth={0.6} strokeDasharray="3,2"/>}
+        {ma25InRange&&<line x1={0} y1={toY(ma25)} x2={W} y2={toY(ma25)} stroke="#fbbf24" strokeWidth={0.6} strokeDasharray="3,2"/>}
+        {ma75InRange&&<line x1={0} y1={toY(ma75)} x2={W} y2={toY(ma75)} stroke="#a78bfa" strokeWidth={0.6} strokeDasharray="3,2"/>}
         <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.8} strokeLinejoin="round" strokeLinecap="round"/>
       </svg>
-      <div style={{display:"flex",gap:10,fontSize:10,marginTop:3}}>
-        {ma25&&<span style={{color:"#fbbf24"}}>― 25週MA {fmtPriceLabel(ma25)}</span>}
-        {ma75&&<span style={{color:"#a78bfa"}}>― 75週MA {fmtPriceLabel(ma75)}</span>}
-        {weekly&&!ma25&&!ma75&&<span style={{color:"#2a4060"}}>週足MA：データ不足（上場から日が浅い銘柄）</span>}
+      <div style={{display:"flex",gap:10,fontSize:10,marginTop:3,flexWrap:"wrap"}}>
+        {ma25!=null&&<span style={{color:"#fbbf24"}}>― 25週MA {fmtPriceLabel(ma25)}{!ma25InRange&&"（レンジ外）"}</span>}
+        {ma75!=null&&<span style={{color:"#a78bfa"}}>― 75週MA {fmtPriceLabel(ma75)}{!ma75InRange&&"（レンジ外）"}</span>}
+        {weekly&&ma25==null&&ma75==null&&<span style={{color:"#2a4060"}}>週足MA：データ不足（上場から日が浅い銘柄）</span>}
       </div>
       {timeLabels.length>0&&(
         <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#6a90b0",marginTop:3}}>
@@ -1774,7 +1777,7 @@ function AllStocksPanel(p){
   var cardGrid=(
     <div style={{display:"grid",gridTemplateColumns:"repeat("+cols+",1fr)",gap:8}}>
       {displayStocks.map(function(s){
-        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks}/>;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks}/>;
       })}
     </div>
   );
@@ -1874,7 +1877,7 @@ function FavPanel(p){
     <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
       {displayStocks.map(function(s){
         var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks}/>;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks}/>;
       })}
     </div>
   );
