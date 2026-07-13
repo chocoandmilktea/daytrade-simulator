@@ -1,16 +1,14 @@
 // api/weekly.js
 // 25週線・75週線（週足の単純移動平均）を返すエンドポイント（チャートモーダルの基準線用）
-// J-Quantsの日足データを取得し、週足終値に集計してから移動平均を計算する。
+// J-Quantsの日足データ(/v2/equities/bars/daily)を取得し、週足終値に集計してから
+// 移動平均を計算する。株式分割・併合をまたぐケースがあるため、終値は調整済み
+// 終値(AdjC)を使用する（未調整のCだと分割前後で不連続になりMAが歪むため）。
 // 週足MAは1日の中でほぼ動かないため、サーバー側で24時間キャッシュする。
 //
 // 必要な環境変数: JQUANTS_API_KEY
 // リクエスト例: /api/weekly?ticker=7203.T
 // レスポンス例: { "ma25": 2650.4, "ma75": 2480.1, "weeks": 92 }
 //   ※ 上場から日が浅く必要な週数に満たない場合は、該当するMAをnullで返す
-//
-// 【要確認】日足取得のエンドポイントURL（/v2/equities/bars/day）は、分足
-// （/v2/equities/bars/minute）と同じ命名規則を仮定したものです。J-Quantsの
-// APIリファレンスで実際のパス名をご確認の上、異なる場合は書き換えてください。
 
 var CACHE = {}, TTL = 24 * 60 * 60 * 1000; // 24時間
 
@@ -35,7 +33,7 @@ function toWeeklyCloses(dailyBars) {
       if (curKey !== null) weekly.push(lastClose);
       curKey = weekKey;
     }
-    lastClose = bar.C;
+    lastClose = bar.AdjC != null ? bar.AdjC : bar.C;
   }
   if (curKey !== null) weekly.push(lastClose);
   return weekly;
@@ -76,7 +74,7 @@ export default async function handler(req, res) {
     const from = new Date();
     from.setDate(from.getDate() - 600); // 約85週分、休場日込みで余裕を持たせる
 
-    const url = `https://api.jquants.com/v2/equities/bars/day?code=${code}&from=${formatDateCompact(from)}&to=${formatDateCompact(today)}`;
+    const url = `https://api.jquants.com/v2/equities/bars/daily?code=${code}&from=${formatDateCompact(from)}&to=${formatDateCompact(today)}`;
     const r = await fetch(url, { headers: { "x-api-key": apiKey }, signal: AbortSignal.timeout(9000) });
     if (!r.ok) {
       const errText = await r.text();
