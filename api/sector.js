@@ -115,7 +115,7 @@ function getJSTDateLabel() {
 }
 
 // ── ②J-Quants業種マスタ（コード→会社名・業種名）。24時間キャッシュ ──────────
-// ※ Sector33CodeName は想定フィールド名。実際のAPIレスポンス項目名は導入時に要確認
+// ※ 実際のJ-Quantsレスポンスで確認済み：33業種名はS33Nm（Vercelログで確認: 2026-07-14）
 
 let masterCache = { ts: 0, nameMap: null, sectorMap: null };
 
@@ -129,7 +129,6 @@ async function fetchJQuantsMaster(apiKey, dateStr8) {
   if (!res.ok) throw new Error("master api: " + res.status);
   const json = await res.json();
   const rows = json?.data || json || [];
-  console.log("[sector.js] master row sample:", JSON.stringify(rows[0])); // ← フィールド名確認用の一時ログ。確認後は削除してOK
 
   const nameMap = {};
   const sectorMap = {};
@@ -137,7 +136,7 @@ async function fetchJQuantsMaster(apiKey, dateStr8) {
     const code = String(row.Code || "").replace(/0$/, "");
     if (!code) return;
     if (row.CoName) nameMap[code] = row.CoName;
-    if (row.Sector33CodeName) sectorMap[code] = row.Sector33CodeName;
+    if (row.S33Nm) sectorMap[code] = row.S33Nm;
   });
 
   masterCache = { ts: now, nameMap, sectorMap };
