@@ -3157,6 +3157,7 @@ export default function App(){
       var jpCount=universe.length;
       var sectorLabel=uResult.sectors&&uResult.sectors.length?uResult.sectors.map(function(s){return s.name;}).join("/"):"通常ランキング";
       setProgress({done:0,total:0,msg:"JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始..."});
+      await new Promise(function(r){setTimeout(r,800);}); // ↑のメッセージが一瞬で上書きされて表示されないのを防ぐため少し待つ
       // 次回「前回の業種を表示」で使えるよう、実際に読み込んだ業種を保存
       if(uResult.sectors&&uResult.sectors.length){
         try{localStorage.setItem("last_sectors",JSON.stringify(uResult.sectors.map(function(s){return s.name;})));}catch(e){}
