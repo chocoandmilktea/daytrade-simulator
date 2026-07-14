@@ -2146,8 +2146,10 @@ function FavPanel(p){
   }
   function isFavRef(t){return favs.indexOf(t)>=0;}
   var isMobile=window.innerWidth<768;
+  var isWide=window.innerWidth>=1400; // 全銘柄タブと同じ基準で3列にする
+  var favCols=isMobile?1:(isWide?3:2);
   var cardGrid=(
-    <div style={{display:"grid",gridTemplateColumns:isMobile?"repeat(1,1fr)":"repeat(2,1fr)",gap:8}}>
+    <div style={{display:"grid",gridTemplateColumns:"repeat("+favCols+",1fr)",gap:8}}>
       {displayStocks.map(function(s){
         var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
         return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>;
@@ -2229,6 +2231,9 @@ function TradePanel(p){
   var activeList=list.filter(function(t){return t.status==="active";});
   var doneList=list.filter(function(t){return t.status==="done";});
   var totalPnl=doneList.reduce(function(a,t){return a+(t.pnl||0);},0);
+  // 勝率：完了トレードのうち損益がプラスだった割合／的中率：利確ラインに到達して完了した割合
+  var winRate=doneList.length?Math.round(doneList.filter(function(t){return(t.pnl||0)>0;}).length/doneList.length*100):null;
+  var hitRate=doneList.length?Math.round(doneList.filter(function(t){return t.exitReason==="take_profit";}).length/doneList.length*100):null;
   var selTrade=selId?list.find(function(t){return t.id===selId;}):null;
   var selStock=selTrade?stocks.find(function(x){return x.ticker===selTrade.ticker;}):null;
 
@@ -2256,10 +2261,20 @@ function TradePanel(p){
         {sub==="app"?"アプリの買いシグナル判断を忠実に守った場合の検証用":"アプリの判断とは異なる、自分自身の判断を検証するためのタブ"}
       </div>
 
-      <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
         <div>
           <div style={{fontSize:11,color:"#4a7090"}}>合計損益（完了 {doneList.length}件）</div>
           <div style={{fontSize:20,fontWeight:800,color:totalPnl>=0?"#22d3a0":"#f43f5e"}}>{doneList.length?fmtPnl(totalPnl,true):"—"}</div>
+        </div>
+        <div style={{display:"flex",gap:16}}>
+          <div style={{textAlign:"center"}}>
+            <div style={{fontSize:11,color:"#4a7090"}}>的中率</div>
+            <div style={{fontSize:17,fontWeight:800,color:"#0ea5e9"}}>{hitRate!=null?hitRate+"%":"—"}</div>
+          </div>
+          <div style={{textAlign:"center"}}>
+            <div style={{fontSize:11,color:"#4a7090"}}>勝率</div>
+            <div style={{fontSize:17,fontWeight:800,color:"#fbbf24"}}>{winRate!=null?winRate+"%":"—"}</div>
+          </div>
         </div>
         <button onClick={p.onRefreshTrades} disabled={p.tradeRefreshing} style={{background:p.tradeRefreshing?"#0f2040":"#0a1a3a",border:"1px solid #0ea5e9",borderRadius:8,color:"#0ea5e9",padding:"8px 12px",fontSize:12,fontWeight:700,cursor:p.tradeRefreshing?"not-allowed":"pointer"}}>{p.tradeRefreshing?"更新中…":"🔄 価格更新"}</button>
       </div>
@@ -3015,6 +3030,7 @@ export default function App(){
   var startModeS=useState(null);var startMode=startModeS[0],setStartMode=startModeS[1]; // null=未選択（選択画面表示中）
   var pickerOpenS=useState(false);var sectorPickerOpen=pickerOpenS[0],setSectorPickerOpen=pickerOpenS[1];
   var pickedS=useState([]);var pickedSectors=pickedS[0],setPickedSectors=pickedS[1];
+  var rescanMenuOpenS=useState(false);var rescanMenuOpen=rescanMenuOpenS[0],setRescanMenuOpen=rescanMenuOpenS[1]; // 全銘柄タブの再スキャンボタン用メニュー
   function toggleSectorPick(name){
     setPickedSectors(function(prev){
       if(prev.indexOf(name)>=0)return prev.filter(function(n){return n!==name;});
@@ -3171,6 +3187,33 @@ export default function App(){
       setRescanLoading(function(prev){var n=Object.assign({},prev);delete n[ticker];return n;});
     }
   },[stocks]);
+  // 「今の銘柄でリロード」：業種の再選定は行わず、現在表示中の銘柄だけ最新データで再分析
+  var reloadCurrentUniverse=useCallback(async function(){
+    setLoading(true);
+    CACHE={};
+    var universe=stocks.map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol};});
+    setProgress({done:0,total:universe.length,msg:null});
+    try{
+      var results=[],BATCH=6;
+      for(var i=0;i<universe.length;i+=BATCH){
+        var batch=universe.slice(i,i+BATCH);
+        await Promise.all(batch.map(async function(stock){
+          var pd;
+          try{pd=await fetchYahoo(stock.ticker);}catch(err){pd=genSim(stock.ticker);}
+          try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+          setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+        }));
+        if(i+BATCH<universe.length)await new Promise(function(r){setTimeout(r,300);});
+      }
+      results.sort(function(x,y){return y.score-x.score;});
+      setStocks(results);
+      setTs(new Date().toLocaleTimeString("ja-JP"));
+    }catch(err){
+      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
+    }finally{
+      setLoading(false);
+    }
+  },[stocks,vix]);
   useEffect(function(){
     fetch(VERCEL_API+"?ticker="+encodeURIComponent("^VIX")+"&range=5d")
       .then(function(r){return r.json();})
@@ -3205,6 +3248,44 @@ export default function App(){
   var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算/権利","index":"リンク","market":"市場予測","news":"ニュース","sync":"同期"};
   var isMobile=window.innerWidth<768;
 
+  var sectorPickerModal=sectorPickerOpen&&createPortal(
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:520,maxHeight:"80vh",display:"flex",flexDirection:"column",color:"#b8cce0"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:8}}>業種を選択（{pickedSectors.length}/3）</div>
+        <div style={{overflowY:"auto",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 10px",marginBottom:10}}>
+          {JP_33_SECTORS.map(function(name){
+            var checked=pickedSectors.indexOf(name)>=0;
+            return(
+              <label key={name} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:checked?"#0ea5e930":"transparent",borderRadius:6,cursor:"pointer",fontSize:12,color:"#b8cce0"}}>
+                <input type="checkbox" checked={checked} onChange={function(){toggleSectorPick(name);}}/>
+                {name}
+              </label>
+            );
+          })}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={function(){setSectorPickerOpen(false);}} style={{flex:1,padding:"10px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
+          <button onClick={confirmManualSectors} disabled={!pickedSectors.length} style={{flex:1,padding:"10px 0",background:pickedSectors.length?"#0ea5e9":"#1e3050",border:"none",borderRadius:8,color:"#fff",fontSize:12,fontWeight:700,cursor:pickedSectors.length?"pointer":"default",fontFamily:"monospace"}}>この業種で読み込む</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+
+  // 再スキャンメニュー（全銘柄タブの「再スキャン」ボタンから開く：起動時と同じ3択＋現在の銘柄でリロード）
+  var rescanMenu=rescanMenuOpen&&createPortal(
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:8,color:"#b8cce0"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:4}}>🔄 再スキャン方法を選択</div>
+        <button onClick={function(){setRescanMenuOpen(false);startOmakase();}} style={{padding:"12px 10px",background:"#0ea5e9",border:"none",borderRadius:8,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>🤖 おまかせ（AIがトレンド業種を選定）</button>
+        <button onClick={function(){setRescanMenuOpen(false);setPickedSectors([]);setSectorPickerOpen(true);}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>📋 業種コード一覧から選ぶ</button>
+        <button onClick={function(){setRescanMenuOpen(false);reloadCurrentUniverse();}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>🔁 今の銘柄でリロード</button>
+        <button onClick={function(){setRescanMenuOpen(false);}} style={{padding:"8px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
+      </div>
+    </div>,
+    document.body
+  );
+
   if(startMode===null){
     return(
       <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20,gap:14}}>
@@ -3218,29 +3299,7 @@ export default function App(){
         <button onClick={startLastSectors} style={{width:260,padding:"14px 12px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
           🔁 前回の業種を表示
         </button>
-        {sectorPickerOpen&&createPortal(
-          <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-            <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:520,maxHeight:"80vh",display:"flex",flexDirection:"column",color:"#b8cce0"}}>
-              <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:8}}>業種を選択（{pickedSectors.length}/3）</div>
-              <div style={{overflowY:"auto",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 10px",marginBottom:10}}>
-                {JP_33_SECTORS.map(function(name){
-                  var checked=pickedSectors.indexOf(name)>=0;
-                  return(
-                    <label key={name} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:checked?"#0ea5e930":"transparent",borderRadius:6,cursor:"pointer",fontSize:12,color:"#b8cce0"}}>
-                      <input type="checkbox" checked={checked} onChange={function(){toggleSectorPick(name);}}/>
-                      {name}
-                    </label>
-                  );
-                })}
-              </div>
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={function(){setSectorPickerOpen(false);}} style={{flex:1,padding:"10px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
-                <button onClick={confirmManualSectors} disabled={!pickedSectors.length} style={{flex:1,padding:"10px 0",background:pickedSectors.length?"#0ea5e9":"#1e3050",border:"none",borderRadius:8,color:"#fff",fontSize:12,fontWeight:700,cursor:pickedSectors.length?"pointer":"default",fontFamily:"monospace"}}>この業種で読み込む</button>
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
+        {sectorPickerModal}
       </div>
     );
   }
@@ -3269,6 +3328,8 @@ export default function App(){
           </div>
         )}
         {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);}}/>,document.body)}
+        {sectorPickerModal}
+        {rescanMenu}
       </div>
       {activeTab==="market"&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:100,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"10px 10px 80px",transform:"translateZ(0)"}}
@@ -3288,7 +3349,7 @@ export default function App(){
           </div>
         )}
         <div style={{marginLeft:isMobile?0:50,padding:"10px 10px 120px"}}>
-          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={scan} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
+          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={function(){setRescanMenuOpen(true);}} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
           {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
           {activeTab==="trade"&&<TradePanel stocks={stocks} appTrades={appTrades} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler} onForceComplete={forceCompleteHandler} onRefreshTrades={refreshTradePrices} tradeRefreshing={tradeRefreshing}/>}
           {activeTab==="index"&&<IndexPanel/>}
