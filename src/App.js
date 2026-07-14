@@ -2101,11 +2101,6 @@ function AllStocksPanel(p){
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8}}>
         <MarketBar/>
-        {p.sweepStats&&(
-          <div style={{background:"#1f150480",border:"1px solid #f59e0b40",borderRadius:8,padding:"6px 10px",marginBottom:6,fontSize:11,color:"#fbbf24"}}>
-            🌐 全業種スイープ結果：BUY {stocks.length}件を抽出（対象{p.sweepStats.total}件中、実データ取得失敗{p.sweepStats.fake}件は除外）
-          </div>
-        )}
         {isMobile?cardGrid:(
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
@@ -3133,7 +3128,6 @@ export default function App(){
   var pickerOpenS=useState(false);var sectorPickerOpen=pickerOpenS[0],setSectorPickerOpen=pickerOpenS[1];
   var pickedS=useState([]);var pickedSectors=pickedS[0],setPickedSectors=pickedS[1];
   var rescanMenuOpenS=useState(false);var rescanMenuOpen=rescanMenuOpenS[0],setRescanMenuOpen=rescanMenuOpenS[1]; // 全銘柄タブの再スキャンボタン用メニュー
-  var sweepStatsS=useState(null);var sweepStats=sweepStatsS[0],setSweepStats=sweepStatsS[1]; // 全業種スイープの結果サマリ（実データ取得失敗件数など）
   function toggleSectorPick(name){
     setPickedSectors(function(prev){
       if(prev.indexOf(name)>=0)return prev.filter(function(n){return n!==name;});
@@ -3261,7 +3255,6 @@ export default function App(){
 
   var scan=useCallback(async function(manualSectors,skipAI){
     setLoading(true);
-    setSweepStats(null);
     CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止）
     setProgress({done:0,total:0,msg:skipAI?"前回データなし・通常ランキング取得中...":(manualSectors&&manualSectors.length?"指定業種の銘柄取得中...":"AI業種選定中...")});
     try{
@@ -3349,60 +3342,6 @@ export default function App(){
       setLoading(false);
     }
   },[stocks,vix]);
-
-  // ── 全業種スイープ：33業種を6業種ずつ6ラウンドに分けて巡回し、各業種の出来高上位10銘柄だけを分析。
-  //    BUY判定の銘柄のみ蓄積する。速度は通常スキャンより落とし（4件並列・500ms待機）レート制限リスクを抑える。
-  //    実データ取得に失敗した銘柄（real:false）はBUY判定に含めず、件数だけ集計してユーザーに提示する。
-  var sweepAllSectors=useCallback(async function(){
-    setStartMode("sweep");
-    setLoading(true);
-    setSweepStats(null);
-    CACHE={};
-    var ROUND=6,SWEEP_BATCH=4,SWEEP_WAIT=500;
-    var rounds=[];
-    for(var i=0;i<JP_33_SECTORS.length;i+=ROUND)rounds.push(JP_33_SECTORS.slice(i,i+ROUND));
-    var buyResults=[],seenTicker={},fakeCount=0,totalCount=0;
-    try{
-      for(var r=0;r<rounds.length;r++){
-        var roundSectors=rounds[r];
-        setProgress({done:0,total:0,msg:"["+(r+1)+"/"+rounds.length+"] "+roundSectors.join("/")+" の出来高上位を取得中..."});
-        var rankings=await Promise.all(roundSectors.map(function(name){
-          return fetchSectorRanking([name]).catch(function(){return{stocks:null,sectors:[]};});
-        }));
-        var universe=[];
-        rankings.forEach(function(res){
-          (res.stocks||[]).slice().sort(function(a,b){return(b.volume||0)-(a.volume||0);}).slice(0,10).forEach(function(s){
-            if(!seenTicker[s.ticker]){seenTicker[s.ticker]=true;universe.push(s);}
-          });
-        });
-        setProgress({done:0,total:universe.length,msg:null});
-        for(var i2=0;i2<universe.length;i2+=SWEEP_BATCH){
-          var batch=universe.slice(i2,i2+SWEEP_BATCH);
-          await Promise.all(batch.map(async function(stock){
-            var pd;
-            try{pd=await fetchYahoo(stock.ticker);}catch(err){pd=genSim(stock.ticker);}
-            totalCount++;
-            if(!pd.real){
-              fakeCount++; // 実データ取得失敗→BUY候補には入れない（偽データ混入防止）
-            }else{
-              try{var analyzed=analyzeStock(stock,pd,vix);if(analyzed.timing==="BUY")buyResults.push(analyzed);}
-              catch(e){console.error("analyzeStock error",stock.ticker,e);}
-            }
-            setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
-          }));
-          if(i2+SWEEP_BATCH<universe.length)await new Promise(function(res){setTimeout(res,SWEEP_WAIT);});
-        }
-        buyResults.sort(function(x,y){return y.score-x.score;});
-        setStocks(buyResults.slice()); // ラウンドごとに途中経過を反映
-      }
-      setSweepStats({fake:fakeCount,total:totalCount});
-      setTs(new Date().toLocaleTimeString("ja-JP"));
-    }catch(err){
-      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
-    }finally{
-      setLoading(false);
-    }
-  },[vix]);
   useEffect(function(){
     fetch(VERCEL_API+"?ticker="+encodeURIComponent("^VIX")+"&range=5d")
       .then(function(r){return r.json();})
@@ -3469,7 +3408,6 @@ export default function App(){
         <button onClick={function(){setRescanMenuOpen(false);startOmakase();}} style={{padding:"12px 10px",background:"#0ea5e9",border:"none",borderRadius:8,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>🤖 おまかせ（AIがトレンド業種を選定）</button>
         <button onClick={function(){setRescanMenuOpen(false);setPickedSectors([]);setSectorPickerOpen(true);}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>📋 業種コード一覧から選ぶ</button>
         <button onClick={function(){setRescanMenuOpen(false);reloadCurrentUniverse();}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>🔁 今の銘柄でリロード</button>
-        <button onClick={function(){setRescanMenuOpen(false);sweepAllSectors();}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #f59e0b",borderRadius:8,color:"#fbbf24",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>🌐 全業種スイープ（出来高上位10×6業種・BUYのみ抽出／目安3〜5分）</button>
         <button onClick={function(){setRescanMenuOpen(false);}} style={{padding:"8px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
       </div>
     </div>,
@@ -3496,9 +3434,6 @@ export default function App(){
         </button>
         <button onClick={startLastSectors} style={{width:260,padding:"14px 12px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
           🔁 前回の業種を表示
-        </button>
-        <button onClick={sweepAllSectors} style={{width:260,padding:"14px 12px",background:"#050f20",border:"1px solid #f59e0b",borderRadius:8,color:"#fbbf24",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
-          🌐 全業種スイープ（BUYのみ抽出／目安3〜5分）
         </button>
         {sectorPickerModal}
       </div>
@@ -3550,7 +3485,7 @@ export default function App(){
           </div>
         )}
         <div style={{marginLeft:isMobile?0:50,padding:"10px 10px 120px"}}>
-          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={function(){setRescanMenuOpen(true);}} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} sweepStats={sweepStats}/>}
+          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={function(){setRescanMenuOpen(true);}} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
           {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
           {activeTab==="trade"&&<TradePanel stocks={stocks} appTrades={appTrades} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler} onForceComplete={forceCompleteHandler} onRefreshTrades={refreshTradePrices} tradeRefreshing={tradeRefreshing}/>}
           {activeTab==="index"&&<IndexPanel/>}
