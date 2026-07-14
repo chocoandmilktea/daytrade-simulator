@@ -129,6 +129,7 @@ async function fetchJQuantsMaster(apiKey, dateStr8) {
   if (!res.ok) throw new Error("master api: " + res.status);
   const json = await res.json();
   const rows = json?.data || json || [];
+  console.log("[sector.js] master row sample:", JSON.stringify(rows[0])); // ← フィールド名確認用の一時ログ。確認後は削除してOK
 
   const nameMap = {};
   const sectorMap = {};
