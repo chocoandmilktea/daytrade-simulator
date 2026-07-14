@@ -2847,18 +2847,22 @@ function SyncPanel(p){
       try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}
       if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
       if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
+      if(data.appTrades){saveTrades("app",data.appTrades);p.setAppTrades(data.appTrades);}
+      if(data.personalTrades){saveTrades("personal",data.personalTrades);p.setPersonalTrades(data.personalTrades);}
       try{localStorage.setItem("daytrade_uid",id);}catch(e){}
       setSyncStatus("ok");
       setTimeout(function(){setSyncStatus(null);scan();},1500);
     }catch(e){setSyncStatus("error");setTimeout(function(){setSyncStatus(null);},2500);}
   }
   var favCount=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]").length;}catch(e){return 0;}})();
+  var tradeCount=(function(){try{return loadTrades("app").length+loadTrades("personal").length;}catch(e){return 0;}})();
   return(
     <div>
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
         <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:10}}>🔗 デバイス間同期</div>
         <div style={{display:"flex",gap:12,marginBottom:14}}>
           <div style={{background:"#050e1c",borderRadius:8,padding:"10px 16px"}}><div style={{fontSize:11,color:"#2a6090"}}>お気に入り</div><div style={{fontSize:18,fontWeight:800,color:"#fbbf24"}}>{favCount}銘柄</div></div>
+          <div style={{background:"#050e1c",borderRadius:8,padding:"10px 16px"}}><div style={{fontSize:11,color:"#2a6090"}}>トレード</div><div style={{fontSize:18,fontWeight:800,color:"#0ea5e9"}}>{tradeCount}件</div></div>
         </div>
         <div style={{fontSize:12,color:"#4a7090",marginBottom:8}}>あなたのデバイスID</div>
         <div style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:8,padding:"10px 12px",fontFamily:"monospace",fontSize:15,color:"#b8cce0",wordBreak:"break-all",marginBottom:10}}>{userId}</div>
@@ -2871,7 +2875,7 @@ function SyncPanel(p){
       </div>
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
         <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>別デバイスのIDで同期</div>
-        <div style={{fontSize:12,color:"#4a7090",marginBottom:10}}>他のデバイスのIDを入力するとお気に入りが引き継がれます</div>
+        <div style={{fontSize:12,color:"#4a7090",marginBottom:10}}>他のデバイスのIDを入力するとお気に入り・トレードが引き継がれます</div>
         <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box",marginBottom:10}} value={input} placeholder="別デバイスのIDを貼り付け" onChange={function(e){setInput(e.target.value);}}/>
         <button onClick={syncById} disabled={!input.trim()||syncStatus==="loading"} style={{width:"100%",background:input.trim()?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:14,fontWeight:700,cursor:input.trim()?"pointer":"not-allowed",fontFamily:"monospace"}}>
           {syncStatus==="loading"?"同期中...":syncStatus==="ok"?"✅ 同期完了！":syncStatus==="error"?"❌ IDが見つかりません":"このIDで同期する"}
@@ -2879,13 +2883,13 @@ function SyncPanel(p){
       </div>
       <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#4a90c0",marginBottom:10}}>使い方</div>
-        {[["1","iPadで「IDをコピー」をタップ"],["2","iPhoneのDaySimulatorを開く"],["3","🔗タブ → IDを貼り付けて「同期」"],["4","お気に入りが反映される"]].map(function(row){
+        {[["1","iPadで「IDをコピー」をタップ"],["2","iPhoneのDaySimulatorを開く"],["3","🔗タブ → IDを貼り付けて「同期」"],["4","お気に入り・トレードが反映される"]].map(function(row){
           return(<div key={row[0]} style={{display:"flex",gap:10,marginBottom:8,alignItems:"flex-start"}}>
             <span style={{background:"#0ea5e9",color:"#fff",borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>{row[0]}</span>
             <span style={{fontSize:13,color:"#b8cce0"}}>{row[1]}</span>
           </div>);
         })}
-        <div style={{fontSize:11,color:"#2a6060",marginTop:8}}>※ お気に入り登録・変更時に自動でサーバーに保存されます</div>
+        <div style={{fontSize:11,color:"#2a6060",marginTop:8}}>※ お気に入り・トレードの登録・変更時に自動でサーバーに保存されます</div>
       </div>
     </div>
   );
@@ -3153,8 +3157,15 @@ export default function App(){
   var fgS=useState(function(){try{var v=localStorage.getItem("fav_groups");return v?JSON.parse(v):{};}catch(e){return{};}});var favGroups=fgS[0],setFavGroups=fgS[1];
   var gnS=useState(function(){try{var v=localStorage.getItem("group_names");return v?Object.assign({},DEFAULT_GROUP_NAMES,JSON.parse(v)):Object.assign({},DEFAULT_GROUP_NAMES);}catch(e){return Object.assign({},DEFAULT_GROUP_NAMES);}});var groupNames=gnS[0],setGroupNames=gnS[1];
   var NOTIFY_API="https://daytrade-simulator.vercel.app/api/notify";
-  function syncToServer(nextFavs,nextGroups,nextGroupNames){
-    fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({favs:nextFavs,scoreHist:getAllScoreHist(),groups:nextGroups,groupNames:nextGroupNames})}).catch(function(){});
+  function syncToServer(nextFavs,nextGroups,nextGroupNames,nextAppTrades,nextPersonalTrades){
+    fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      favs:nextFavs,
+      scoreHist:getAllScoreHist(),
+      groups:nextGroups,
+      groupNames:nextGroupNames,
+      appTrades:nextAppTrades!==undefined?nextAppTrades:appTrades,
+      personalTrades:nextPersonalTrades!==undefined?nextPersonalTrades:personalTrades
+    })}).catch(function(){});
   }
   var favPickerS=useState(null);var favPickerTicker=favPickerS[0],setFavPickerTicker=favPickerS[1];
   // groupNum: 0=全体(未分類) / 1〜5=グループ / null=お気に入り削除
@@ -3201,19 +3212,23 @@ export default function App(){
   var tradeRefreshingS=useState(false);var tradeRefreshing=tradeRefreshingS[0],setTradeRefreshing=tradeRefreshingS[1];
   function addTradeHandler(kind,s,buyPrice,sellPrice,shares,stopPrice){
     var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice);
-    if(kind==="app")setAppTrades(next);else setPersonalTrades(next);
+    if(kind==="app"){setAppTrades(next);syncToServer(favs,favGroups,groupNames,next,undefined);}
+    else{setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,undefined,next);}
   }
   function removeTradeHandler(kind,id){
     var next=removeTradeRecord(kind,id);
-    if(kind==="app")setAppTrades(next);else setPersonalTrades(next);
+    if(kind==="app"){setAppTrades(next);syncToServer(favs,favGroups,groupNames,next,undefined);}
+    else{setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,undefined,next);}
   }
   function editTradeHandler(kind,id,updates){
     var next=editTradeRecord(kind,id,updates);
-    if(kind==="app")setAppTrades(next);else setPersonalTrades(next);
+    if(kind==="app"){setAppTrades(next);syncToServer(favs,favGroups,groupNames,next,undefined);}
+    else{setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,undefined,next);}
   }
   function forceCompleteHandler(kind,id,curPrice){
     var next=forceCompleteTradeRecord(kind,id,curPrice);
-    if(kind==="app")setAppTrades(next);else setPersonalTrades(next);
+    if(kind==="app"){setAppTrades(next);syncToServer(favs,favGroups,groupNames,next,undefined);}
+    else{setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,undefined,next);}
   }
   // 保有中（waiting/active）のトレード銘柄の価格を手動で更新（🔄ボタン）。自動の定期更新は行わない
   function refreshTradePrices(){
@@ -3229,8 +3244,11 @@ export default function App(){
     })).then(function(results){
       var priceMap={};results.forEach(function(r){if(r.price!=null)priceMap[r.ticker]=r.price;});
       if(Object.keys(priceMap).length>0){
-        setAppTrades(applyPricesToTrades("app",priceMap));
-        setPersonalTrades(applyPricesToTrades("personal",priceMap));
+        var nextApp=applyPricesToTrades("app",priceMap);
+        var nextPersonal=applyPricesToTrades("personal",priceMap);
+        setAppTrades(nextApp);
+        setPersonalTrades(nextPersonal);
+        syncToServer(favs,favGroups,groupNames,nextApp,nextPersonal);
       }
     }).finally(function(){setTradeRefreshing(false);});
   }
@@ -3347,6 +3365,8 @@ export default function App(){
         if(data.favs&&data.favs.length>0){setFavs(data.favs.slice());try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}}
         if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
         if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
+        if(data.appTrades){saveTrades("app",data.appTrades);setAppTrades(data.appTrades);}
+        if(data.personalTrades){saveTrades("personal",data.personalTrades);setPersonalTrades(data.personalTrades);}
         if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(ticker){localStorage.setItem("sh_"+ticker,JSON.stringify(data.scoreHist[ticker]));});}catch(e){}}
       })
       .catch(function(){});
@@ -3471,7 +3491,7 @@ export default function App(){
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="event"&&<EventPanel stocks={stocks}/>}
-          {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} scan={scan}/>}
+          {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} setAppTrades={setAppTrades} setPersonalTrades={setPersonalTrades} scan={scan}/>}
           {activeTab==="guide"&&<GuidePanel/>}
         </div>
       </div>
