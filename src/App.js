@@ -182,13 +182,18 @@ async function fetchSectorRanking(manualSectors){
   }catch(e){return{stocks:null,sectors:[]};}
 }
 
-async function buildStockUniverse(manualSectors){
-  var primary=await fetchSectorRanking(manualSectors);
-  var jp=primary.stocks;
-  var sectors=primary.sectors;
-  // sector API自体が失敗した場合のみ、従来の出来高ランキングにフォールバック
-  // （AIが有効な業種を返せなかった場合はsector.js内部で既にフォールバック済み）
-  if(!jp||jp.length===0){jp=await fetchRanking("jp")||[];sectors=[];}
+async function buildStockUniverse(manualSectors,skipAI){
+  var jp,sectors;
+  if(skipAI){
+    // 前回の業種データが無い場合のフォールバック：AI選定を呼ばず通常の出来高ランキングを使う
+    jp=await fetchRanking("jp")||[];
+    sectors=[];
+  }else{
+    var primary=await fetchSectorRanking(manualSectors);
+    jp=primary.stocks;
+    sectors=primary.sectors;
+    if(!jp||jp.length===0){jp=await fetchRanking("jp")||[];sectors=[];}
+  }
   var seen={},out=[];
   jp.forEach(function(s){if(!seen[s.ticker]){seen[s.ticker]=true;out.push(s);}});
   return{stocks:out,sectors:sectors};
@@ -3024,8 +3029,8 @@ export default function App(){
   }
   function startLastSectors(){
     var last=(function(){try{return JSON.parse(localStorage.getItem("last_sectors")||"[]");}catch(e){return[];}})();
-    if(!last.length){setStartMode("omakase");scan();return;}
     setStartMode("last");
+    if(!last.length){scan(null,true);return;} // 前回データなし→AIは呼ばず通常ランキング
     scan(last);
   }
 
@@ -3103,12 +3108,12 @@ export default function App(){
     }).finally(function(){setTradeRefreshing(false);});
   }
 
-  var scan=useCallback(async function(manualSectors){
+  var scan=useCallback(async function(manualSectors,skipAI){
     setLoading(true);
     CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止）
-    setProgress({done:0,total:0,msg:manualSectors&&manualSectors.length?"指定業種の銘柄取得中...":"AI業種選定中..."});
+    setProgress({done:0,total:0,msg:skipAI?"前回データなし・通常ランキング取得中...":(manualSectors&&manualSectors.length?"指定業種の銘柄取得中...":"AI業種選定中...")});
     try{
-      var uResult=await buildStockUniverse(manualSectors);
+      var uResult=await buildStockUniverse(manualSectors,skipAI);
       var universe=uResult.stocks.slice();
       var jpCount=universe.length;
       var sectorLabel=uResult.sectors&&uResult.sectors.length?uResult.sectors.map(function(s){return s.name;}).join("/"):"通常ランキング";
@@ -3213,13 +3218,13 @@ export default function App(){
         </button>
         {sectorPickerOpen&&createPortal(
           <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-            <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:420,maxHeight:"80vh",display:"flex",flexDirection:"column"}}>
+            <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:520,maxHeight:"80vh",display:"flex",flexDirection:"column",color:"#b8cce0"}}>
               <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:8}}>業種を選択（{pickedSectors.length}/3）</div>
-              <div style={{overflowY:"auto",display:"flex",flexDirection:"column",gap:4,marginBottom:10}}>
+              <div style={{overflowY:"auto",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 10px",marginBottom:10}}>
                 {JP_33_SECTORS.map(function(name){
                   var checked=pickedSectors.indexOf(name)>=0;
                   return(
-                    <label key={name} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:checked?"#0ea5e930":"transparent",borderRadius:6,cursor:"pointer",fontSize:12}}>
+                    <label key={name} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:checked?"#0ea5e930":"transparent",borderRadius:6,cursor:"pointer",fontSize:12,color:"#b8cce0"}}>
                       <input type="checkbox" checked={checked} onChange={function(){toggleSectorPick(name);}}/>
                       {name}
                     </label>
