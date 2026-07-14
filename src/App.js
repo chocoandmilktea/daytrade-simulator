@@ -1280,7 +1280,6 @@ function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var expandedS=useState(false);var expanded=expandedS[0],setExpanded=expandedS[1];
-  var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var showTradeS=useState(false);var showTrade=showTradeS[0],setShowTrade=showTradeS[1];
   var showCorrS=useState(false);var showCorr=showCorrS[0],setShowCorr=showCorrS[1];
@@ -1400,7 +1399,6 @@ function StockCard(p){
         if(!isMobile){if(p.setSelectedStock)p.setSelectedStock(s);}
         else{setExpanded(function(v){return !v;});}
       }}>
-      {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);}}/>,document.body)}
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:"flex",gap:4,alignItems:"center"}}>
@@ -1443,7 +1441,6 @@ function StockCard(p){
         <div onClick={stopProp} style={{borderTop:"1px solid #0f2040",paddingTop:10,display:"flex",flexDirection:"column",gap:10}}>
 
           <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"flex-end"}}>
-            <button onClick={function(e){stopProp(e);setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:28,height:28,fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
             <button onClick={copyTradePrompt} title="判定プロンプトをコピー" style={{background:promptCopied?"#052e16":"transparent",border:"1px solid "+(promptCopied?"#22d3a0":"#2a4060"),borderRadius:6,color:promptCopied?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>{promptCopied?"✓":"📋"}</button>
             <button onClick={function(e){stopProp(e);if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} style={{background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
             <button onClick={runAiAnalysis} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:6,color:"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🤖</button>
@@ -1691,7 +1688,6 @@ function StockDetailPanel(p){
   var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
   var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
-  var showHelpS=useState(false);var showHelp=showHelpS[0],setShowHelp=showHelpS[1];
 
   var aiEntryS=useState(null);var aiEntry=aiEntryS[0],setAiEntry=aiEntryS[1];
 
@@ -1753,7 +1749,6 @@ function StockDetailPanel(p){
 
   return(
     <div style={{background:"#050e1c",border:"none",borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
-     {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);}}/>,document.body)}
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",gap:6,alignItems:"center",minWidth:0,flex:1}}>
           <ScoreRing score={s.score}/>
@@ -1770,7 +1765,6 @@ function StockDetailPanel(p){
           </div>
         </div>
         <div style={{display:"flex",gap:4,alignItems:"center"}}>
-          <button onClick={function(){setShowHelp(true);}} style={{background:"transparent",border:"1px solid #1e4070",borderRadius:"50%",color:"#4a90c0",width:26,height:26,fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
           <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060"}}>{isFav(s.ticker)?"★":"☆"}</button>
         </div>
       </div>
@@ -2931,68 +2925,120 @@ function SignalAccuracyModal(p){
   );
 }
 
-function HelpModal(p){
-  var onClose=p.onClose;
-  var SECTIONS=[
-    {title:"📊 データ取得",items:["米国株：Yahoo Finance・15分足（直近60日）","日本株：J-Quants・1分足（直近10営業日）","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
-    {title:"🔗 デバイス同期",items:["お気に入り登録時にサーバーへ自動保存","起動時にサーバーからデータを自動取得","Pushoverでデバイスに同期IDを通知","同期タブでIDを入力して別デバイスと同期"]},
-    {title:"📖 指標の見方（RSI・BB・BB収束・OBV・出来高）",items:[
-      "【確認用】RSI（相対力指数）：30以下で売られすぎ・反発狙いの補助確認。70以上で買われすぎ・過熱感の補助確認。BBのシグナルと合わせて判断する",
-      "【メイン判断】BB（ボリンジャーバンド）：バンドの収縮＝エネルギー蓄積→ブレイクアウト狙いの買い準備。バンドの拡大＝トレンド発生中。下限タッチで反発買い候補、上限タッチで過熱感・利確検討",
-      "【収束確認】BB収束：バンドが狭まっている状態＝エネルギー蓄積中。収束率が高いほどブレイクアウトの可能性が高まる",
-      "【方向確認】OBV（板代替）：終値の位置で買い・売り優勢を判定。高値引けに近いほど買い圧力が強い。BB判断と方向が一致しているか確認する",
-      "【勢い確認】出来高：平均比2倍以上の急増＋高値引けなら買いシグナル強化。出来高増＋安値引けなら売り圧力増大で警戒"
+function GuidePanel(){
+  var openS=useState("all");var openKey=openS[0],setOpenKey=openS[1];
+  var CATS=[
+    {key:"all",icon:"📋",label:"全銘柄",sections:[
+      {title:null,items:["銘柄カードをタップ → 詳細シグナル表示"]},
+      {title:"📊 データ取得の方法",items:["米国株：Yahoo Finance・15分足（直近60日）","日本株：J-Quants・1分足（直近10営業日）","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
+      {title:"📖 指標の見方（RSI・BB・BB収束・OBV・出来高）",items:[
+        "【確認用】RSI（相対力指数）：30以下で売られすぎ・反発狙いの補助確認。70以上で買われすぎ・過熱感の補助確認。BBのシグナルと合わせて判断する",
+        "【メイン判断】BB（ボリンジャーバンド）：バンドの収縮＝エネルギー蓄積→ブレイクアウト狙いの買い準備。バンドの拡大＝トレンド発生中。下限タッチで反発買い候補、上限タッチで過熱感・利確検討",
+        "【収束確認】BB収束：バンドが狭まっている状態＝エネルギー蓄積中。収束率が高いほどブレイクアウトの可能性が高まる",
+        "【方向確認】OBV（板代替）：終値の位置で買い・売り優勢を判定。高値引けに近いほど買い圧力が強い。BB判断と方向が一致しているか確認する",
+        "【勢い確認】出来高：平均比2倍以上の急増＋高値引けなら買いシグナル強化。出来高増＋安値引けなら売り圧力増大で警戒"
+      ]},
+      {title:"📈 実績勝率について",items:[
+        "カード左側に表示される勝率の見方",
+        "具体的には：①スコアが60点以上になった日＝アプリが「これは買いシグナルが強い」と判断した日",
+        "②その翌日に実際に株価が上がっていたら「当たり（win）」、下がっていたら「外れ」",
+        "③これを繰り返し記録して「当たった回数 ÷ 判定した回数」を計算 → それが「実績勝率」",
+        "【推定】スコア×0.72で算出した暫定値。グレー表示。データ不足中に表示されます",
+        "【実績】スコア60以上を記録した翌日に実際に価格が上昇したかを集計した実績値。3回以上のデータが溜まると自動で切り替わります",
+        "スコア帯は60〜79 / 80〜99 / 100の3段階で集計。毎日スキャンするほど精度が上がります",
+        "色の見方：緑=60%以上、黄=50〜59%、赤=50%未満"
+      ]},
+      {title:"📉 下値サポート目安の見方",items:["S1（20日安値）：直近20日間の最安値。短期の下値サポートライン。ここを割ると次のS2が目安","S2（60日安値）：直近60日間の最安値。中期の強いサポートライン。S1を割り込んだ場合の次の目安","ATR×1.5下限：14日間の平均値幅（ATR）×1.5を現在値から引いた価格。統計的な下値の限界目安","活用法：S1割れで警戒、S2割れで損切り検討、ATR下限は最悪ケースの想定として使用"]},
+      {title:"🔘 銘柄詳細のアイコン行",items:[
+        "📋：AI判定用のプロンプトをクリップボードにコピー（claude.aiなどに貼り付けて使う用）",
+        "🔄：この銘柄だけを最新データで再スキャン",
+        "🤖：AIによる分析・上昇予測をポップアップ表示",
+        "💹：損益シミュレーターをポップアップ表示（買値・株数から利確/損切りラインの損益を試算）",
+        "🔀：逆相関で上昇しやすい銘柄をポップアップ表示（下落中の銘柄でのみ使用可）",
+        "逆相関の数値（例：-0.51）：2銘柄の値動きの関係の強さを-1〜+1で表す相関係数。+1に近いほど同じ方向に動きやすく、-1に近いほど逆方向に動きやすい（0は無関係）。過去60営業日程度のデータに基づく統計的傾向であり、将来を保証するものではない"
+      ]},
     ]},
-    {title:"📈 実績勝率について",items:[
-      "カード左側に表示される勝率の見方",
-      "具体的には：①スコアが60点以上になった日＝アプリが「これは買いシグナルが強い」と判断した日",
-      "②その翌日に実際に株価が上がっていたら「当たり（win）」、下がっていたら「外れ」",
-      "③これを繰り返し記録して「当たった回数 ÷ 判定した回数」を計算 → それが「実績勝率」",
-      "【推定】スコア×0.72で算出した暫定値。グレー表示。データ不足中に表示されます",
-      "【実績】スコア60以上を記録した翌日に実際に価格が上昇したかを集計した実績値。3回以上のデータが溜まると自動で切り替わります",
-      "スコア帯は60〜79 / 80〜99 / 100の3段階で集計。毎日スキャンするほど精度が上がります",
-      "色の見方：緑=60%以上、黄=50〜59%、赤=50%未満"
+    {key:"fav",icon:"⭐",label:"お気に入り",sections:[
+      {title:null,items:[
+        "★/☆ボタンでお気に入りの登録・解除",
+        "グループ1〜5に分類可能（グループ名は選択中に表示される✎アイコンで編集）",
+        "「全体」フィルターで登録済みお気に入りを全件表示",
+        "検索欄にティッカーコード（例：AAPL、7203）を入力すると新規銘柄を追加登録できる（登録グループも指定可）",
+        "市場（US/JP）で絞り込み、スコア順・上昇率順で並び替え可能",
+        "「📊的中率」ボタンでお気に入り銘柄のシグナル的中率を確認"
+      ]},
     ]},
-    {title:"📉 下値サポート目安の見方",items:["S1（20日安値）：直近20日間の最安値。短期の下値サポートライン。ここを割ると次のS2が目安","S2（60日安値）：直近60日間の最安値。中期の強いサポートライン。S1を割り込んだ場合の次の目安","ATR×1.5下限：14日間の平均値幅（ATR）×1.5を現在値から引いた価格。統計的な下値の限界目安","活用法：S1割れで警戒、S2割れで損切り検討、ATR下限は最悪ケースの想定として使用"]},
-    {title:"🔘 銘柄詳細のアイコン行",items:[
-      "📋：AI判定用のプロンプトをクリップボードにコピー（claude.aiなどに貼り付けて使う用）",
-      "🔄：この銘柄だけを最新データで再スキャン",
-      "🤖：AIによる分析・上昇予測をポップアップ表示",
-      "💹：損益シミュレーターをポップアップ表示（買値・株数から利確/損切りラインの損益を試算）",
-      "🔀：逆相関で上昇しやすい銘柄をポップアップ表示（下落中の銘柄でのみ使用可）",
-      "逆相関の数値（例：-0.51）：2銘柄の値動きの関係の強さを-1〜+1で表す相関係数。+1に近いほど同じ方向に動きやすく、-1に近いほど逆方向に動きやすい（0は無関係）。過去60営業日程度のデータに基づく統計的傾向であり、将来を保証するものではない"
+    {key:"trade",icon:"🎯",label:"トレード",sections:[
+      {title:null,items:[
+        "銘柄カードの🎯ボタンからトレード登録（買い価格・売り価格＝利確ライン・株数を入力。損切り価格は任意）",
+        "「🎯アプリ予想」：アプリの買いシグナル判断を忠実に守った場合の検証用タブ",
+        "「👤個人予想」：アプリの判断とは別に、自分自身の判断を検証するためのタブ",
+        "価格が指定値に到達すると自動で「待機中→進行中→完了」に遷移（判定は🔄価格更新ボタンで反映）",
+        "完了したトレードの合計損益・勝率を集計表示",
+        "「📊的中率」でアプリ予想に登録した銘柄のシグナル的中率を確認（個人予想では非表示）",
+        "詳細モーダルの📱iSPEEDボタンで銘柄コードをコピーし、iSPEEDアプリへ遷移（日本株のみ）"
+      ]},
+    ]},
+    {key:"event",icon:"📅",label:"決算・権利落ち",sections:[
+      {title:null,items:[
+        "スキャン済み銘柄のうち、決算発表予定日・権利落ち予定日が判明しているものだけを一覧表示",
+        "日付が近い順に自動でソート",
+        "権利落ち予定日は財務情報から算出した概算予想（確定値ではない点に注意）"
+      ]},
+    ]},
+    {key:"index",icon:"🌍",label:"リンク",sections:[
+      {title:null,items:[
+        "投資信託の詳細ページや証券会社のホーム画面など、よく使う外部サイトへのショートカット一覧",
+        "タップすると該当ページを新しいタブで開く"
+      ]},
+    ]},
+    {key:"market",icon:"📡",label:"市場予測",sections:[
+      {title:null,items:[
+        "「🔄分析実行」でAIがWeb検索を使って最新ニュースを取得し、アプリ内の市場データ（VIX・日本市場の上昇銘柄比率・スコア上位銘柄・ゴールデンクロス/デッドクロスの発生状況）と合わせて分析",
+        "出力は「今日の相場環境／注目市場・セクター／注目銘柄／リスク要因／来週の見通し／個人投資家へのアドバイス」の6セクション構成",
+        "注目銘柄については、具体的なエントリー・利確・損切りの目安価格まで提示"
+      ]},
+    ]},
+    {key:"news",icon:"📰",label:"ニュース",sections:[
+      {title:null,items:[
+        "「🔄最新ニュース取得」でTDnet適時開示とYahooファイナンスの見出しを取得し、AIが「金融政策／決算・業績／経済指標／相場急変／セクター動向」の5カテゴリに要約",
+        "実際に取得したデータのみを要約対象とし、Web検索やAIの独自知識は使用しない",
+        "画面下部には外部ニュースサイトへのリンクも用意"
+      ]},
     ]},
   ];
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:500,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
-      onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}
-      onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:520,maxHeight:"92vh",overflowY:"scroll",WebkitOverflowScrolling:"touch"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>DaySimulator 使い方</div>
-          <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:14,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
-        </div>
-        {SECTIONS.map(function(sec,i){
-          return(
-            <div key={i} style={{marginBottom:14}}>
-              <div style={{fontSize:14,fontWeight:700,color:"#4a90c0",marginBottom:6,borderBottom:"1px solid #0f2040",paddingBottom:4}}>{sec.title}</div>
-              {sec.items.map(function(item,j){
-                return(
-                  <div key={j} style={{display:"flex",gap:8,marginBottom:5,alignItems:"flex-start"}}>
-                    <span style={{color:"#22d3a0",fontSize:12,marginTop:1,flexShrink:0}}>•</span>
-                    <span style={{fontSize:13,color:"#b8cce0"}}>{item}</span>
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
-        <div style={{background:"#050e1c",borderRadius:8,padding:"10px 14px",marginTop:8}}>
-          <div style={{fontSize:12,color:"#4a7090"}}>銘柄カードをタップ → 詳細シグナル表示</div>
-          <div style={{fontSize:12,color:"#4a7090",marginTop:4}}>🎯ボタン → トレードタブに登録（買い/売り価格到達で自動判定）</div>
-          <div style={{fontSize:12,color:"#4a7090",marginTop:4}}>★ボタン → お気に入り登録</div>
-        </div>
-      </div>
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {CATS.map(function(cat){
+        var open=openKey===cat.key;
+        return(
+          <div key={cat.key} style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden"}}>
+            <button onClick={function(){setOpenKey(open?null:cat.key);}} style={{width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",border:"none",padding:"12px 14px",cursor:"pointer",color:"#e0f0ff",fontSize:14,fontWeight:700,fontFamily:"monospace"}}>
+              <span>{cat.icon} {cat.label}</span>
+              <span style={{color:"#4a7090",fontSize:12}}>{open?"▲":"▼"}</span>
+            </button>
+            {open&&(
+              <div style={{padding:"12px 14px"}}>
+                {cat.sections.map(function(sec,i){
+                  return(
+                    <div key={i} style={{marginBottom:12}}>
+                      {sec.title&&<div style={{fontSize:13,fontWeight:700,color:"#4a90c0",marginBottom:6,borderBottom:"1px solid #0f2040",paddingBottom:4}}>{sec.title}</div>}
+                      {sec.items.map(function(item,j){
+                        return(
+                          <div key={j} style={{display:"flex",gap:8,marginBottom:5,alignItems:"flex-start"}}>
+                            <span style={{color:"#22d3a0",fontSize:12,marginTop:1,flexShrink:0}}>•</span>
+                            <span style={{fontSize:13,color:"#b8cce0"}}>{item}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -3261,10 +3307,9 @@ export default function App(){
       })
       .catch(function(){});
   },[]);
-  var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
-  var TABS=[["all","📋"],["fav","⭐"],["trade","🎯"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"]];
-  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期"};
-  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算/権利","index":"リンク","market":"市場予測","news":"ニュース","sync":"同期"};
+  var TABS=[["all","📋"],["fav","⭐"],["trade","🎯"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"],["guide","📘"]];
+  var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期","guide":"使い方"};
+  var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算/権利","index":"リンク","market":"市場予測","news":"ニュース","sync":"同期","guide":"使い方"};
   var isMobile=window.innerWidth<768;
 
   var sectorPickerModal=sectorPickerOpen&&createPortal(
@@ -3346,7 +3391,6 @@ export default function App(){
             })}
           </div>
         )}
-        {showHelp&&createPortal(<HelpModal onClose={function(){setShowHelp(false);}}/>,document.body)}
         {sectorPickerModal}
         {rescanMenu}
       </div>
@@ -3375,6 +3419,7 @@ export default function App(){
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="event"&&<EventPanel stocks={stocks}/>}
           {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} scan={scan}/>}
+          {activeTab==="guide"&&<GuidePanel/>}
         </div>
       </div>
     </div>
