@@ -191,8 +191,10 @@ async function buildStockUniverse(manualSectors,skipAI){
   }else{
     var primary=await fetchSectorRanking(manualSectors);
     jp=primary.stocks;
-    sectors=primary.sectors;
-    if(!jp||jp.length===0){jp=await fetchRanking("jp")||[];sectors=[];}
+    sectors=primary.sectors; // 業種名は保持（銘柄0件でも選定自体は成立しているため、次回「前回の業種」で使う）
+    if(!jp||jp.length===0){
+      jp=await fetchRanking("jp")||[]; // 表示する銘柄だけ通常ランキングで代替。sectorsはリセットしない
+    }
   }
   var seen={},out=[];
   jp.forEach(function(s){if(!seen[s.ticker]){seen[s.ticker]=true;out.push(s);}});
