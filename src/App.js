@@ -525,25 +525,27 @@ function accumulateSignalStats(hist,daysAfter,stats){
   }
 }
 
-// お気に入り登録銘柄全体のscoreHistを横断してシグナル別的中率を算出
-// daysAfter: 1=翌日判定, 3=3営業日後判定
+// 指定tickerリストのscoreHistを横断してシグナル別的中率を算出（翌営業日判定のみ）
 // 戻り値: [{signal,winRate,total}, ...] 的中率が高い順
-function calcFavSignalAccuracy(daysAfter){
-  daysAfter=daysAfter||1;
-  var favList=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]");}catch(e){return[];}})();
+function calcSignalAccuracy(tickers){
   var stats={};
-  favList.forEach(function(ticker){
+  (tickers||[]).forEach(function(ticker){
     var hist=(function(){try{return JSON.parse(localStorage.getItem("sh_"+ticker)||"[]");}catch(e){return[];}})();
-    accumulateSignalStats(hist,daysAfter,stats);
+    accumulateSignalStats(hist,1,stats);
   });
   return Object.keys(stats).map(function(k){
     var s=stats[k];
     return{signal:k,winRate:s.t>0?Math.round(s.w/s.t*100):null,total:s.t};
   }).sort(function(a,b){return(b.winRate||0)-(a.winRate||0);});
 }
-// ブラウザのコンソールから確認できるように公開（例: getSignalAccuracy(3)）
+// お気に入り登録銘柄全体で集計（お気に入りタブ用）
+function calcFavSignalAccuracy(){
+  var favList=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]");}catch(e){return[];}})();
+  return calcSignalAccuracy(favList);
+}
+// ブラウザのコンソールから確認できるように公開（例: getSignalAccuracy()）
 if(typeof window!=="undefined"){
-  window.getSignalAccuracy=function(daysAfter){return calcFavSignalAccuracy(daysAfter||1);};
+  window.getSignalAccuracy=function(){return calcFavSignalAccuracy();};
 }
 // ──────────────────────────────────────────────────────────────────────
 
@@ -2235,6 +2237,9 @@ function TradePanel(p){
   var totalPnl=doneList.reduce(function(a,t){return a+(t.pnl||0);},0);
   // 勝率：完了トレードのうち損益がプラスだった割合
   var winRate=doneList.length?Math.round(doneList.filter(function(t){return(t.pnl||0)>0;}).length/doneList.length*100):null;
+  // 的中率の集計対象：アプリ予想で登録した銘柄のみ（お気に入りタブの集計とは分離）。個人予想では的中率自体を出さない
+  var appTradeTickers=sub==="app"?Array.from(new Set(p.appTrades.map(function(t){return t.ticker;}))):[];
+  var showAccuracy=sub==="app";
   var selTrade=selId?list.find(function(t){return t.id===selId;}):null;
   var selStock=selTrade?stocks.find(function(x){return x.ticker===selTrade.ticker;}):null;
 
@@ -2263,21 +2268,21 @@ function TradePanel(p){
       </div>
 
       <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-        <div style={{width:isMobile?"100%":"60%",flexShrink:0,display:"flex",flexDirection:"column",gap:10,minWidth:0}}>
+        <div style={{width:(isMobile||!showAccuracy)?"100%":"60%",flexShrink:0,display:"flex",flexDirection:"column",gap:10,minWidth:0}}>
           <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
             <div>
               <div style={{fontSize:11,color:"#4a7090"}}>合計損益（完了 {doneList.length}件）</div>
               <div style={{fontSize:20,fontWeight:800,color:totalPnl>=0?"#22d3a0":"#f43f5e"}}>{doneList.length?fmtPnl(totalPnl,true):"—"}</div>
             </div>
-            {isMobile&&(
-              <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                <div style={{textAlign:"center"}}>
-                  <div style={{fontSize:11,color:"#4a7090"}}>勝率</div>
-                  <div style={{fontSize:17,fontWeight:800,color:"#fbbf24"}}>{winRate!=null?winRate+"%":"—"}</div>
-                </div>
-                <button onClick={function(){setShowAcc(true);}} style={{background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"6px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>📊的中率</button>
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              <div style={{textAlign:"center"}}>
+                <div style={{fontSize:11,color:"#4a7090"}}>勝率</div>
+                <div style={{fontSize:17,fontWeight:800,color:"#fbbf24"}}>{winRate!=null?winRate+"%":"—"}</div>
               </div>
-            )}
+              {isMobile&&showAccuracy&&(
+                <button onClick={function(){setShowAcc(true);}} style={{background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"6px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>📊的中率</button>
+              )}
+            </div>
             <button onClick={p.onRefreshTrades} disabled={p.tradeRefreshing} style={{background:p.tradeRefreshing?"#0f2040":"#0a1a3a",border:"1px solid #0ea5e9",borderRadius:8,color:"#0ea5e9",padding:"8px 12px",fontSize:12,fontWeight:700,cursor:p.tradeRefreshing?"not-allowed":"pointer",whiteSpace:"nowrap"}}>{p.tradeRefreshing?"更新中…":"🔄 価格更新"}</button>
           </div>
 
@@ -2288,17 +2293,15 @@ function TradePanel(p){
           {Section("完了",doneList,"#22d3a0")}
         </div>
 
-        {!isMobile&&(
+        {!isMobile&&showAccuracy&&(
           <div style={{flex:1,position:"sticky",top:0,background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:16,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-            <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:2}}>📊 シグナル的中率</div>
-            <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>勝率（完了トレードの黒字割合）</div>
-            <div style={{fontSize:26,fontWeight:800,color:"#fbbf24",marginBottom:16}}>{winRate!=null?winRate+"%":"—"}</div>
-            <SignalAccuracyContent/>
+            <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:10}}>📊 シグナル的中率（アプリ予想銘柄）</div>
+            <SignalAccuracyContent tickers={appTradeTickers}/>
           </div>
         )}
       </div>
 
-      {showAcc&&createPortal(<SignalAccuracyModal onClose={function(){setShowAcc(false);}}/>,document.body)}
+      {showAcc&&createPortal(<SignalAccuracyModal tickers={appTradeTickers} onClose={function(){setShowAcc(false);}}/>,document.body)}
 
       {selTrade&&createPortal(
         <TradeDetailModal t={selTrade} s={selStock} kind={sub} stocks={stocks} toggleFav={toggleFav} isFav={isFavRef}
@@ -2876,23 +2879,17 @@ function formatSigKeyLabel(key){
   return label+" "+stateLabel;
 }
 
-// シグナル的中率の中身（お気に入りタブのボタン・トレードタブの右パネル両方から使う）
-function SignalAccuracyContent(){
-  var daysS=useState(1);var days=daysS[0],setDays=daysS[1];
-  var data=calcFavSignalAccuracy(days);
-  function dBtn(val,label){
-    var active=days===val;
-    return(<button onClick={function(){setDays(val);}} style={{flex:1,background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"6px 0",fontSize:12,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
+// シグナル的中率の中身（お気に入りタブ／トレードタブ両方から使う）
+// tickers省略時はお気に入り銘柄で集計。指定時はそのtickerだけで集計（トレードタブ用・お気に入りとは分離）
+function SignalAccuracyContent(p){
+  var tickers=p&&p.tickers;
+  var data=tickers?calcSignalAccuracy(tickers):calcFavSignalAccuracy();
+  var emptyLabel=tickers?"アプリ予想の登録銘柄":"お気に入り銘柄";
   return(
     <div>
-      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>お気に入り登録銘柄の過去データを集計。各シグナルが出た時、その後株価が上がった割合です</div>
-      <div style={{display:"flex",gap:6,marginBottom:12}}>
-        {dBtn(1,"翌日判定")}
-        {dBtn(3,"3営業日後判定")}
-      </div>
+      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?"アプリ予想で登録した銘柄":"お気に入り登録銘柄")+"の過去データを集計。各シグナルが出た翌営業日に株価が上がった割合です"}</div>
       {data.length===0?(
-        <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだデータがありません。お気に入り銘柄を毎日スキャンすると溜まっていきます。</div>
+        <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだデータがありません。{emptyLabel}を毎日スキャンすると溜まっていきます。</div>
       ):(
         <div>
           <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
@@ -2929,7 +2926,7 @@ function SignalAccuracyModal(p){
           <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>📊 シグナル的中率</div>
           <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:14,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
         </div>
-        <SignalAccuracyContent/>
+        <SignalAccuracyContent tickers={p.tickers}/>
       </div>
     </div>
   );
