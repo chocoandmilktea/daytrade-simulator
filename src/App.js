@@ -169,9 +169,12 @@ async function fetchRanking(market){
 }
 
 // AI業種選定→J-Quants絞り込みランキング取得（メインの取得経路）
-async function fetchSectorRanking(){
+// manualSectors指定時はAIのweb_search選定をスキップし、指定業種のランキングのみ取得（トークン節約）
+async function fetchSectorRanking(manualSectors){
   try{
-    var res=await fetch(SECTOR_API,{signal:AbortSignal.timeout(25000)});
+    var url=SECTOR_API;
+    if(manualSectors&&manualSectors.length){url+="?sectors="+encodeURIComponent(manualSectors.join(","));}
+    var res=await fetch(url,{signal:AbortSignal.timeout(25000)});
     if(!res.ok) throw new Error("sector "+res.status);
     var json=await res.json();
     var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume||0,change:s.change||0};});
@@ -179,8 +182,8 @@ async function fetchSectorRanking(){
   }catch(e){return{stocks:null,sectors:[]};}
 }
 
-async function buildStockUniverse(){
-  var primary=await fetchSectorRanking();
+async function buildStockUniverse(manualSectors){
+  var primary=await fetchSectorRanking(manualSectors);
   var jp=primary.stocks;
   var sectors=primary.sectors;
   // sector API自体が失敗した場合のみ、従来の出来高ランキングにフォールバック
@@ -2999,6 +3002,33 @@ export default function App(){
   var predLoadS=useState(false);var predictionLoading=predLoadS[0],setPredictionLoading=predLoadS[1];
   var selStockS=useState(null);var selectedStock=selStockS[0],setSelectedStock=selStockS[1];
   var k=useState("all");var activeTab=k[0],setActiveTab=k[1];
+
+  // ── 起動時の業種選択（おまかせ／業種一覧／前回の業種） ──────────────────────
+  var JP_33_SECTORS=["水産・農林業","鉱業","建設業","食料品","繊維製品","パルプ・紙","化学","医薬品","石油・石炭製品","ゴム製品","ガラス・土石製品","鉄鋼","非鉄金属","金属製品","機械","電気機器","輸送用機器","精密機器","その他製品","電気・ガス業","陸運業","海運業","空運業","倉庫・運輸関連業","情報・通信業","卸売業","小売業","銀行業","証券、商品先物取引業","保険業","その他金融業","不動産業","サービス業"];
+  var startModeS=useState(null);var startMode=startModeS[0],setStartMode=startModeS[1]; // null=未選択（選択画面表示中）
+  var pickerOpenS=useState(false);var sectorPickerOpen=pickerOpenS[0],setSectorPickerOpen=pickerOpenS[1];
+  var pickedS=useState([]);var pickedSectors=pickedS[0],setPickedSectors=pickedS[1];
+  function toggleSectorPick(name){
+    setPickedSectors(function(prev){
+      if(prev.indexOf(name)>=0)return prev.filter(function(n){return n!==name;});
+      if(prev.length>=3)return prev; // AIと同じく最大3業種まで
+      return prev.concat([name]);
+    });
+  }
+  function startOmakase(){setStartMode("omakase");scan();}
+  function confirmManualSectors(){
+    if(!pickedSectors.length)return;
+    setSectorPickerOpen(false);
+    setStartMode("manual");
+    scan(pickedSectors);
+  }
+  function startLastSectors(){
+    var last=(function(){try{return JSON.parse(localStorage.getItem("last_sectors")||"[]");}catch(e){return[];}})();
+    if(!last.length){setStartMode("omakase");scan();return;}
+    setStartMode("last");
+    scan(last);
+  }
+
   var userIdS=useState(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}});var userId=userIdS[0];
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
   function getAllScoreHist(){var result={};try{Object.keys(localStorage).forEach(function(k){if(k.startsWith("sh_"))result[k.slice(3)]=JSON.parse(localStorage.getItem(k)||"[]");});}catch(e){}return result;}
@@ -3073,16 +3103,20 @@ export default function App(){
     }).finally(function(){setTradeRefreshing(false);});
   }
 
-  var scan=useCallback(async function(){
+  var scan=useCallback(async function(manualSectors){
     setLoading(true);
     CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止）
-    setProgress({done:0,total:0,msg:"AI業種選定中..."});
+    setProgress({done:0,total:0,msg:manualSectors&&manualSectors.length?"指定業種の銘柄取得中...":"AI業種選定中..."});
     try{
-      var uResult=await buildStockUniverse();
+      var uResult=await buildStockUniverse(manualSectors);
       var universe=uResult.stocks.slice();
       var jpCount=universe.length;
       var sectorLabel=uResult.sectors&&uResult.sectors.length?uResult.sectors.map(function(s){return s.name;}).join("/"):"通常ランキング";
       setProgress({done:0,total:0,msg:"JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始..."});
+      // 次回「前回の業種を表示」で使えるよう、実際に読み込んだ業種を保存
+      if(uResult.sectors&&uResult.sectors.length){
+        try{localStorage.setItem("last_sectors",JSON.stringify(uResult.sectors.map(function(s){return s.name;})));}catch(e){}
+      }
       var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
       var uTickers=universe.map(function(s){return s.ticker;});
       favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
@@ -3156,14 +3190,54 @@ export default function App(){
         if(data.portfolio&&data.portfolio.length>0){try{localStorage.setItem("portfolio_v1",JSON.stringify(data.portfolio));}catch(e){}}
         if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(ticker){localStorage.setItem("sh_"+ticker,JSON.stringify(data.scoreHist[ticker]));});}catch(e){}}
       })
-      .catch(function(){})
-      .finally(function(){scan();});
+      .catch(function(){});
   },[]);
   var helpS=useState(false);var showHelp=helpS[0],setShowHelp=helpS[1];
   var TABS=[["all","📋"],["fav","⭐"],["trade","🎯"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"]];
   var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期"};
   var TAB_SHORT={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算/権利","index":"リンク","market":"市場予測","news":"ニュース","sync":"同期"};
   var isMobile=window.innerWidth<768;
+
+  if(startMode===null){
+    return(
+      <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20,gap:14}}>
+        <div style={{fontSize:15,fontWeight:800,color:"#e0f0ff",marginBottom:6}}>📊 どの業種で始めますか？</div>
+        <button onClick={startOmakase} style={{width:260,padding:"14px 12px",background:"#0ea5e9",border:"none",borderRadius:8,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
+          🤖 おまかせ（AIがトレンド業種を選定）
+        </button>
+        <button onClick={function(){setPickedSectors([]);setSectorPickerOpen(true);}} style={{width:260,padding:"14px 12px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
+          📋 業種コード一覧から選ぶ（最大3業種）
+        </button>
+        <button onClick={startLastSectors} style={{width:260,padding:"14px 12px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
+          🔁 前回の業種を表示
+        </button>
+        {sectorPickerOpen&&createPortal(
+          <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:420,maxHeight:"80vh",display:"flex",flexDirection:"column"}}>
+              <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:8}}>業種を選択（{pickedSectors.length}/3）</div>
+              <div style={{overflowY:"auto",display:"flex",flexDirection:"column",gap:4,marginBottom:10}}>
+                {JP_33_SECTORS.map(function(name){
+                  var checked=pickedSectors.indexOf(name)>=0;
+                  return(
+                    <label key={name} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:checked?"#0ea5e930":"transparent",borderRadius:6,cursor:"pointer",fontSize:12}}>
+                      <input type="checkbox" checked={checked} onChange={function(){toggleSectorPick(name);}}/>
+                      {name}
+                    </label>
+                  );
+                })}
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={function(){setSectorPickerOpen(false);}} style={{flex:1,padding:"10px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
+                <button onClick={confirmManualSectors} disabled={!pickedSectors.length} style={{flex:1,padding:"10px 0",background:pickedSectors.length?"#0ea5e9":"#1e3050",border:"none",borderRadius:8,color:"#fff",fontSize:12,fontWeight:700,cursor:pickedSectors.length?"pointer":"default",fontFamily:"monospace"}}>この業種で読み込む</button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+      </div>
+    );
+  }
+
   return(
     <div style={{minHeight:"100vh",background:"#040c18",backgroundAttachment:"fixed",fontFamily:"monospace",color:"#b8cce0"}}>
       <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",marginLeft:isMobile?0:50}}>
