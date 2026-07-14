@@ -1276,6 +1276,32 @@ function TradeAddModal(p){
   );
 }
 
+// ── ⭐ボタンタップ時の保存先選択モーダル：全体(未分類)／グループ1〜5／削除 ─────
+function FavPickerModal(p){
+  var ticker=p.ticker,favs=p.favs,favGroups=p.favGroups,groupNames=p.groupNames,onSelect=p.onSelect,onRemove=p.onRemove,onClose=p.onClose;
+  var isMember=favs.indexOf(ticker)>=0;
+  var curGroup=favGroups[ticker]||0;
+  function optBtn(val,label){
+    var active=isMember&&curGroup===val;
+    return(
+      <button key={val} onClick={function(){onSelect(val);}} style={{padding:"12px 10px",background:active?"#0ea5e9":"#050f20",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:8,color:active?"#fff":"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace",textAlign:"left"}}>
+        {active?"✓ ":""}{label}
+      </button>
+    );
+  }
+  return(
+    <div onClick={function(e){if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:8,color:"#b8cce0"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:4}}>⭐ {ticker.replace(".T","")} の保存先</div>
+        {optBtn(0,"全体（未分類）")}
+        {[1,2,3,4,5].map(function(n){return optBtn(n,groupNames[n]);})}
+        {isMember&&<button onClick={onRemove} style={{padding:"12px 10px",background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:8,color:"#f43f5e",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace",marginTop:4}}>🗑 お気に入り削除</button>}
+        <button onClick={onClose} style={{padding:"8px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
+      </div>
+    </div>
+  );
+}
+
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
@@ -2100,7 +2126,7 @@ function FavPanel(p){
   var filterS=useState("ALL");var filterMkt=filterS[0],setFilterMkt=filterS[1];
   var sortS=useState("score");var sortBy=sortS[0],setSortBy=sortS[1];
   var groupFilterS=useState(0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1]; // 0=全体
-  var addGroupS=useState(1);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
+  var addGroupS=useState(0);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
   var showAccS=useState(false);var showAcc=showAccS[0],setShowAcc=showAccS[1];
   async function addByTicker(){
     var raw=searchTicker.trim().toUpperCase();if(!raw)return;
@@ -2118,7 +2144,7 @@ function FavPanel(p){
     }catch(e){setSearchStatus("error");setTimeout(function(){setSearchStatus(null);},2000);}
   }
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
-  var groupedStocks=groupFilter===0?favStocks:favStocks.filter(function(s){return(favGroups[s.ticker]||1)===groupFilter;});
+  var groupedStocks=groupFilter===0?favStocks:favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
   var displayStocks=(filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){
     if(sortBy==="score") return b.score-a.score;
     if(sortBy==="change") return parseFloat(b.change)-parseFloat(a.change);
@@ -2160,6 +2186,7 @@ function FavPanel(p){
           <div style={{display:"flex",gap:8}}>
             <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:14,fontFamily:"monospace",flex:1}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
             <select value={addGroup} onChange={function(e){setAddGroup(Number(e.target.value));}} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#fbbf24",padding:"0 6px",fontSize:13,fontFamily:"monospace"}}>
+              <option value={0}>全体（未分類）</option>
               {[1,2,3,4,5].map(function(n){return <option key={n} value={n}>{groupNames[n]}</option>;})}
             </select>
             <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"8px 16px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>追加</button>
@@ -3129,12 +3156,24 @@ export default function App(){
   function syncToServer(nextFavs,nextGroups,nextGroupNames){
     fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({favs:nextFavs,scoreHist:getAllScoreHist(),groups:nextGroups,groupNames:nextGroupNames})}).catch(function(){});
   }
-  function toggleFav(ticker,groupNum){setFavs(function(prev){
-    var isAdding=prev.indexOf(ticker)<0;
-    var next=isAdding?prev.concat([ticker]):prev.filter(function(t){return t!==ticker;});
-    try{localStorage.setItem("fav_tickers",JSON.stringify(next));}catch(e){}
-    var nextGroups=Object.assign({},favGroups);
-    if(isAdding){nextGroups[ticker]=groupNum||1;}else{delete nextGroups[ticker];}
+  var favPickerS=useState(null);var favPickerTicker=favPickerS[0],setFavPickerTicker=favPickerS[1];
+  // groupNum: 0=全体(未分類) / 1〜5=グループ / null=お気に入り削除
+  function applyFav(ticker,groupNum){setFavs(function(prev){
+    var isMember=prev.indexOf(ticker)>=0;
+    if(groupNum===null){
+      if(!isMember)return prev;
+      var next=prev.filter(function(t){return t!==ticker;});
+      try{localStorage.setItem("fav_tickers",JSON.stringify(next));}catch(e){}
+      var nextGroups=Object.assign({},favGroups);delete nextGroups[ticker];
+      setFavGroups(nextGroups);
+      try{localStorage.setItem("fav_groups",JSON.stringify(nextGroups));}catch(e){}
+      syncToServer(next,nextGroups,groupNames);
+      return next;
+    }
+    var isAdding=!isMember;
+    var next=isAdding?prev.concat([ticker]):prev;
+    if(isAdding){try{localStorage.setItem("fav_tickers",JSON.stringify(next));}catch(e){}}
+    var nextGroups=Object.assign({},favGroups);nextGroups[ticker]=groupNum;
     setFavGroups(nextGroups);
     try{localStorage.setItem("fav_groups",JSON.stringify(nextGroups));}catch(e){}
     syncToServer(next,nextGroups,groupNames);
@@ -3143,6 +3182,11 @@ export default function App(){
     }
     return next;
   });}
+  // ⭐ボタンからの呼び出し(引数1つ)は保存先選択モーダルを開く。groupNum指定時（addByTicker等）は直接反映
+  function toggleFav(ticker,groupNum){
+    if(groupNum===undefined){setFavPickerTicker(ticker);return;}
+    applyFav(ticker,groupNum);
+  }
   function isFav(ticker){return favs.indexOf(ticker)>=0;}
   function renameGroup(groupNum,name){
     var nextNames=Object.assign({},groupNames);nextNames[groupNum]=name;
@@ -3350,6 +3394,14 @@ export default function App(){
     document.body
   );
 
+  var favPickerModal=favPickerTicker&&createPortal(
+    <FavPickerModal ticker={favPickerTicker} favs={favs} favGroups={favGroups} groupNames={groupNames}
+      onSelect={function(g){applyFav(favPickerTicker,g);setFavPickerTicker(null);}}
+      onRemove={function(){applyFav(favPickerTicker,null);setFavPickerTicker(null);}}
+      onClose={function(){setFavPickerTicker(null);}}/>,
+    document.body
+  );
+
   if(startMode===null){
     return(
       <div style={{minHeight:"100vh",background:"#040c18",fontFamily:"monospace",color:"#b8cce0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:20,gap:14}}>
@@ -3393,6 +3445,7 @@ export default function App(){
         )}
         {sectorPickerModal}
         {rescanMenu}
+        {favPickerModal}
       </div>
       {activeTab==="market"&&(
         <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:100,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"10px 10px 80px",transform:"translateZ(0)"}}
