@@ -23,7 +23,9 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
-    const sectors = await getPromisingSectors(req);
+    // ユーザーが業種を明示指定した場合（業種一覧選択／前回の業種）はAI選定(web_search)を丸ごとスキップ
+    const manualSectors = parseManualSectors(req);
+    const sectors = manualSectors || await getPromisingSectors(req);
 
     if (!sectors.length) {
       const fallback = await getPlainJPRanking(req);
@@ -33,13 +35,23 @@ export default async function handler(req, res) {
     const stocks = await getSectorRanking(req, sectors);
     return res.status(200).json({
       market: "jp",
-      mode: "sector",
+      mode: manualSectors ? "manual" : "sector",
       sectors: sectors.map(function(s) { return { name: s.name, reason: s.reason }; }),
       stocks: stocks,
     });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
+}
+
+// クエリ ?sectors=業種名1,業種名2 が指定されていれば、それを直接セクターとして使う（最大3件）
+// AIのweb_search選定を通さないため、業種一覧選択・前回の業種再取得の際のトークン消費がゼロになる
+function parseManualSectors(req) {
+  const raw = req.query.sectors;
+  if (!raw) return null;
+  const names = String(raw).split(",").map(function(s) { return s.trim(); }).filter(Boolean).slice(0, 3);
+  if (!names.length) return null;
+  return names.map(function(name) { return { name: name, reason: "ユーザー選択" }; });
 }
 
 // ── ①AIによるセクター選定（24時間キャッシュ） ──────────────────────────────
@@ -89,20 +101,12 @@ async function askAIForSectors(req) {
   if (!r.ok) throw new Error("ai api: " + r.status);
   const json = await r.json();
   try {
-    const parsed = JSON.parse(extractJson(json.text || ""));
+    const clean = (json.text || "").replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(clean);
     return parsed.sectors || [];
   } catch (e) {
     return []; // パース失敗時は「該当なし」として通常ランキングにフォールバック
   }
-}
-
-// web_search使用時、AIの応答に「〜を検索します」等の実況テキストが混ざり込むため、
-// 最初の「{」〜最後の「}」までを抜き出してからJSON.parseする
-function extractJson(text) {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) return text;
-  return text.slice(start, end + 1);
 }
 
 function getJSTDateLabel() {
@@ -111,7 +115,7 @@ function getJSTDateLabel() {
 }
 
 // ── ②J-Quants業種マスタ（コード→会社名・業種名）。24時間キャッシュ ──────────
-// ※ 業種名フィールドはJ-Quants v2公式ドキュメント確認済み: S33Nm（33業種コード名）
+// ※ Sector33CodeName は想定フィールド名。実際のAPIレスポンス項目名は導入時に要確認
 
 let masterCache = { ts: 0, nameMap: null, sectorMap: null };
 
@@ -132,7 +136,7 @@ async function fetchJQuantsMaster(apiKey, dateStr8) {
     const code = String(row.Code || "").replace(/0$/, "");
     if (!code) return;
     if (row.CoName) nameMap[code] = row.CoName;
-    if (row.S33Nm) sectorMap[code] = row.S33Nm;
+    if (row.Sector33CodeName) sectorMap[code] = row.Sector33CodeName;
   });
 
   masterCache = { ts: now, nameMap, sectorMap };
