@@ -1,6 +1,6 @@
 // api/ranking.js
-// ハイブリッド方式：出来高上位50 + 値上がり率上位20（出来高フィルター付き）
-// US: Yahoo Finance / JP: J-Quants
+// ハイブリッド方式：出来高上位 + 値上がり率上位20（出来高フィルター付き）
+// JP: 出来高上位40 / US: 出来高上位50（US: Yahoo Finance, JP: J-Quants）
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -227,11 +227,11 @@ async function getJPRanking(req) {
 
   if (!bars.length) throw new Error("No JP bar data");
 
-  // 出来高上位50
+  // 出来高上位40
   const byVolume = bars
     .slice()
     .sort(function(a, b) { return (b.Vo || 0) - (a.Vo || 0); })
-    .slice(0, 50)
+    .slice(0, 40)
     .map(function(bar) { return mapJPBar(bar, names, jqNames); });
 
   // 値上がり率上位：出来高フィルター通過後20件
