@@ -3250,6 +3250,9 @@ export default function App(){
 
   // ── 起動時の業種選択（おまかせ／業種一覧／前回の業種） ──────────────────────
   var JP_33_SECTORS=["水産・農林業","鉱業","建設業","食料品","繊維製品","パルプ・紙","化学","医薬品","石油・石炭製品","ゴム製品","ガラス・土石製品","鉄鋼","非鉄金属","金属製品","機械","電気機器","輸送用機器","精密機器","その他製品","電気・ガス業","陸運業","海運業","空運業","倉庫・運輸関連業","情報・通信業","卸売業","小売業","銀行業","証券、商品先物取引業","保険業","その他金融業","不動産業","サービス業"];
+  // 業種ごとの値動きの速さ・材料の効き方から3区分に分類（一般的な傾向の目安・固定値）
+  var SECTOR_STYLE={"水産・農林業":"swing","鉱業":"scalp","建設業":"day","食料品":"swing","繊維製品":"swing","パルプ・紙":"swing","化学":"day","医薬品":"swing","石油・石炭製品":"swing","ゴム製品":"day","ガラス・土石製品":"day","鉄鋼":"scalp","非鉄金属":"scalp","金属製品":"day","機械":"day","電気機器":"scalp","輸送用機器":"day","精密機器":"scalp","その他製品":"day","電気・ガス業":"swing","陸運業":"swing","海運業":"scalp","空運業":"swing","倉庫・運輸関連業":"swing","情報・通信業":"scalp","卸売業":"day","小売業":"day","銀行業":"day","証券、商品先物取引業":"scalp","保険業":"swing","その他金融業":"swing","不動産業":"swing","サービス業":"day"};
+  var SECTOR_STYLE_GROUPS=[["scalp","⚡ スキャル向き（値動き速い）"],["day","☀️ デイトレ向き"],["swing","📈 スイング向き（トレンド持続）"]];
   var startModeS=useState(null);var startMode=startModeS[0],setStartMode=startModeS[1]; // null=未選択（選択画面表示中）
   var pickerOpenS=useState(false);var sectorPickerOpen=pickerOpenS[0],setSectorPickerOpen=pickerOpenS[1];
   var pickedS=useState([]);var pickedSectors=pickedS[0],setPickedSectors=pickedS[1];
@@ -3503,14 +3506,25 @@ export default function App(){
     <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:520,maxHeight:"80vh",display:"flex",flexDirection:"column",color:"#b8cce0"}}>
         <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:8}}>業種を選択（{pickedSectors.length}/3）</div>
-        <div style={{overflowY:"auto",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 10px",marginBottom:10}}>
-          {JP_33_SECTORS.map(function(name){
-            var checked=pickedSectors.indexOf(name)>=0;
+        <div style={{overflowY:"auto",marginBottom:10}}>
+          {SECTOR_STYLE_GROUPS.map(function(g){
+            var key=g[0],label=g[1];
+            var list=JP_33_SECTORS.filter(function(name){return SECTOR_STYLE[name]===key;});
             return(
-              <label key={name} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:checked?"#0ea5e930":"transparent",borderRadius:6,cursor:"pointer",fontSize:12,color:"#b8cce0"}}>
-                <input type="checkbox" checked={checked} onChange={function(){toggleSectorPick(name);}}/>
-                {name}
-              </label>
+              <div key={key} style={{marginBottom:10}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",margin:"4px 0 4px"}}>{label}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 10px"}}>
+                  {list.map(function(name){
+                    var checked=pickedSectors.indexOf(name)>=0;
+                    return(
+                      <label key={name} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:checked?"#0ea5e930":"transparent",borderRadius:6,cursor:"pointer",fontSize:12,color:"#b8cce0"}}>
+                        <input type="checkbox" checked={checked} onChange={function(){toggleSectorPick(name);}}/>
+                        {name}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </div>
