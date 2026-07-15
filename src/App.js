@@ -2566,47 +2566,6 @@ function MarketPredictionPanel(p){
   function isFavRef(t){return favs.indexOf(t)>=0;}
   var lastUpdS=useState(null);var lastUpd=lastUpdS[0],setLastUpd=lastUpdS[1];
 
-  // ── スコア×AI判定 ダブルチェック（スコア上位5件・手動実行・stateはApp側で保持しタブ切替でも保持）───
-  var dblTop5=stocks.slice().sort(function(a,b){return b.score-a.score;}).slice(0,5);
-  var dblLoading=p.dblLoading,setDblLoading=p.setDblLoading;
-  var dblVerdicts=p.dblVerdicts,setDblVerdicts=p.setDblVerdicts;
-  var dblUpd=p.dblUpd,setDblUpd=p.setDblUpd;
-  var dblErr=p.dblErr,setDblErr=p.setDblErr;
-
-  async function runDoubleCheck(){
-    if(dblLoading||dblTop5.length===0) return;
-    setDblLoading(true);setDblErr("");setDblVerdicts({});
-    try{
-      var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          prompt:buildVolumeRankingPrompt(dblTop5,dblTop5.length,false),
-          system:"必ず自分でWeb検索ツールを使って各銘柄の最新ニュースを確認してから判定してください。ユーザーに質問や確認を求めず、自律的に判定を完了してください。",
-          useWebSearch:true
-        }),signal:AbortSignal.timeout(45000)});
-      var data=await res.json();
-      if(data.error) throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
-      var text=typeof data.text==="string"?data.text:"";
-      var lines=text.split("\n");
-      var map={};
-      dblTop5.forEach(function(s){
-        var key=s.ticker.replace(".T","");
-        var line=lines.find(function(l){return l.indexOf(key)!==-1;});
-        if(!line) return;
-        var vm=line.match(/(買い|売り|見送り)/);
-        if(!vm) return;
-        var reason=line.slice(line.indexOf(vm[1])+vm[1].length).replace(/^[\s—\-ー：:）)]+/,"").trim();
-        map[key]={verdict:vm[1],reason:reason};
-      });
-      setDblVerdicts(map);
-      if(Object.keys(map).length===0) setDblErr("AIの回答から判定を抽出できませんでした。");
-      else setDblUpd(new Date().toLocaleTimeString("ja-JP"));
-    }catch(e){
-      setDblErr("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));
-    }
-    setDblLoading(false);
-  }
-  // ────────────────────────────────────────────────────────────────────────
-
   async function runPrediction(){
     if(predictionLoading||stocks.length===0) return;
     setPredictionLoading(true);
@@ -2689,47 +2648,6 @@ function MarketPredictionPanel(p){
         </div>
         {lastUpd&&<div style={{fontSize:11,color:"#2a6090"}}>最終更新: {lastUpd}</div>}
         {stocks.length===0&&<div style={{fontSize:11,color:"#f43f5e",marginTop:4}}>※ 先にスキャンを実行してください</div>}
-      </div>
-
-      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:12}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <div>
-            <div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>🎯 スコア×AI判定 ダブルチェック</div>
-            <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>スコア上位5件をAIが個別に買い/売り/見送り判定</div>
-          </div>
-          <button onClick={runDoubleCheck} disabled={dblLoading||dblTop5.length===0}
-            style={{background:dblLoading?"#0a1828":"linear-gradient(135deg,#22d3a0,#059669)",border:"none",borderRadius:8,color:"#fff",padding:"10px 16px",fontSize:13,fontWeight:700,cursor:dblLoading||dblTop5.length===0?"not-allowed":"pointer",fontFamily:"monospace",flexShrink:0}}>
-            {dblLoading?"判定中...":"🎯 AI判定を実行"}
-          </button>
-        </div>
-        {dblUpd&&<div style={{fontSize:11,color:"#2a6090"}}>最終更新: {dblUpd}</div>}
-        {dblErr&&<div style={{fontSize:11,color:"#f43f5e",marginTop:4}}>{dblErr}</div>}
-        {dblTop5.length===0&&<div style={{fontSize:11,color:"#f43f5e",marginTop:4}}>※ 先にスキャンを実行してください</div>}
-        {Object.keys(dblVerdicts).length>0&&(
-          <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:6}}>
-            {dblTop5.map(function(s){
-              var key=s.ticker.replace(".T","");
-              var v=dblVerdicts[key];
-              var pass=s.score>=60&&v&&v.verdict==="買い";
-              var vColor=v?(v.verdict==="買い"?"#22d3a0":v.verdict==="売り"?"#f43f5e":"#fbbf24"):"#4a7090";
-              return(
-                <div key={s.ticker} style={{background:pass?"#052e16":"#040c18",border:"1px solid "+(pass?"#22d3a0":"#1e3050"),borderRadius:8,padding:"8px 10px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                      {toggleFav&&<button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFavRef(s.ticker)?"#fbbf24":"#2a4060"}}>{isFavRef(s.ticker)?"★":"☆"}</button>}
-                      <span style={{fontSize:12,fontWeight:700,color:"#e0f0ff"}}>{key} {s.name}</span>
-                    </div>
-                    <span style={{fontSize:11,color:scoreColor(s.score)}}>スコア{s.score}</span>
-                  </div>
-                  <div style={{fontSize:11,color:vColor,marginTop:3}}>
-                    {v?("AI判定: "+v.verdict+(v.reason?"　"+v.reason:"")):"判定なし（AI回答から抽出できず）"}
-                  </div>
-                  {pass&&<div style={{fontSize:11,fontWeight:700,color:"#22d3a0",marginTop:3}}>✅ ダブル合格（スコア60以上 かつ AI買い判定）</div>}
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:12}}>
@@ -3285,10 +3203,6 @@ export default function App(){
   var usdJpyS=useState(null);var usdJpy=usdJpyS[0],setUsdJpy=usdJpyS[1];
   var predResS=useState("");var predictionResult=predResS[0],setPredictionResult=predResS[1];
   var predLoadS=useState(false);var predictionLoading=predLoadS[0],setPredictionLoading=predLoadS[1];
-  var dblLoadS=useState(false);var dblLoading=dblLoadS[0],setDblLoading=dblLoadS[1];
-  var dblVerdS=useState({});var dblVerdicts=dblVerdS[0],setDblVerdicts=dblVerdS[1];
-  var dblUpdS2=useState(null);var dblUpd=dblUpdS2[0],setDblUpd=dblUpdS2[1];
-  var dblErrS2=useState("");var dblErr=dblErrS2[0],setDblErr=dblErrS2[1];
   var selStockS=useState(null);var selectedStock=selStockS[0],setSelectedStock=selStockS[1];
   var k=useState("all");var activeTab=k[0],setActiveTab=k[1];
 
@@ -3655,7 +3569,7 @@ export default function App(){
           {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
           {activeTab==="trade"&&<TradePanel stocks={stocks} appTrades={appTrades} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler} onForceComplete={forceCompleteHandler} onRefreshTrades={refreshTradePrices} tradeRefreshing={tradeRefreshing}/>}
           {activeTab==="index"&&<IndexPanel/>}
-          {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading} dblLoading={dblLoading} setDblLoading={setDblLoading} dblVerdicts={dblVerdicts} setDblVerdicts={setDblVerdicts} dblUpd={dblUpd} setDblUpd={setDblUpd} dblErr={dblErr} setDblErr={setDblErr} favs={favs} toggleFav={toggleFav}/>}
+          {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading} favs={favs} toggleFav={toggleFav}/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="event"&&<EventPanel stocks={stocks}/>}
           {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} setAppTrades={setAppTrades} setPersonalTrades={setPersonalTrades} scan={scan}/>}
