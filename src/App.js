@@ -207,10 +207,10 @@ async function fetchYahoo(ticker){
   var now=Date.now();
   if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange};}
   var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(25000),cache:"no-store"});
-  if(!res.ok) throw new Error("HTTP "+res.status);
-  var json=await res.json();
+  var json=await res.json().catch(function(){return null;});
+  if(!res.ok) throw new Error(json&&json.error?json.error:("HTTP "+res.status)); // サーバー側のエラー詳細をそのまま伝える
   var result=json&&json.chart&&json.chart.result&&json.chart.result[0];
-  if(!result) throw new Error("empty");
+  if(!result) throw new Error("empty response");
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
   var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null,topixChange=result.topixChange!=null?result.topixChange:null;
@@ -222,20 +222,25 @@ async function fetchYahoo(ticker){
 
 
 // 取得失敗（タイムアウト等）の場合、1回だけ自動で再試行。それでもダメならシミュレーションデータで代替
+// ★診断用：実際の失敗理由をconsoleに出し、カード側でも表示できるようgenSimに理由を渡す
 async function fetchYahooSafe(ticker){
   try{return await fetchYahoo(ticker);}
   catch(err){
+    console.warn("[fetchYahoo] "+ticker+" 1回目失敗: "+err.message);
     try{return await fetchYahoo(ticker);}
-    catch(err2){return genSim(ticker);}
+    catch(err2){
+      console.error("[fetchYahoo] "+ticker+" 2回目も失敗→シミュレーションデータで代替: "+err2.message);
+      return genSim(ticker,err2.message);
+    }
   }
 }
 
-function genSim(ticker){
+function genSim(ticker,errMsg){
   var h=0;for(var i=0;i<ticker.length;i++)h=(Math.imul(31,h)+ticker.charCodeAt(i))|0;
   var s=Math.abs(h);function rng(){s=(s*1664525+1013904223)&0x7fffffff;return s/0x7fffffff;}
   var price=rng()*400+60,closes=[],highs=[],lows=[];
   for(var d=0;d<63;d++){var v=rng()*0.025;price=Math.max(5,price*(1+rng()*0.006-0.003+(rng()-0.5)*v));closes.push(price);highs.push(price*(1+rng()*0.008));lows.push(price*(1-rng()*0.008));}
-  return{closes:closes,highs:highs,lows:lows,currentPrice:price,previousClose:closes[closes.length-2],real:false};
+  return{closes:closes,highs:highs,lows:lows,currentPrice:price,previousClose:closes[closes.length-2],real:false,error:errMsg||null};
 }
 
 // ── トレードシミュレーター（仮想売買の記録・検証）───────────────────────────
@@ -914,7 +919,7 @@ function analyzeStock(stock,pd,vixVal){
     volume:stock.volume||0,volSurge:(typeof surge!=="undefined"?surge:1),
     price:dispPrice,rawPrice:pd.real?price:null,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,breakdown:breakdown,change:change,spark:closes.slice(-30),
-    real:pd.real,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
+    real:pd.real,failReason:pd.error||null,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
     analystTarget:pd.analystTarget||null,earningsDate:resolveEventDate(stock.ticker,"earningsDate",pd.earningsDate||null),exRightsDate:resolveEventDate(stock.ticker,"exRightsDate",pd.exRightsDate||null),weekHigh:weekHigh,weekLow:weekLow,
     topixChange:topixChange,relStrength:relStrength,
     high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
@@ -1525,6 +1530,7 @@ function StockCard(p){
         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:14,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
+            {s.real===false&&s.failReason&&<div style={{fontSize:9,color:"#f43f5e",maxWidth:100,textAlign:"right"}}>{s.failReason}</div>}
             {s.real!==false&&<div style={{fontSize:11,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>}
           </div>
         </div>
