@@ -206,7 +206,7 @@ async function buildStockUniverse(manualSectors,skipAI){
 async function fetchYahoo(ticker){
   var now=Date.now();
   if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange};}
-  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(15000),cache:"no-store"});
+  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(25000),cache:"no-store"});
   if(!res.ok) throw new Error("HTTP "+res.status);
   var json=await res.json();
   var result=json&&json.chart&&json.chart.result&&json.chart.result[0];
@@ -220,6 +220,15 @@ async function fetchYahoo(ticker){
   return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange};
 }
 
+
+// 取得失敗（タイムアウト等）の場合、1回だけ自動で再試行。それでもダメならシミュレーションデータで代替
+async function fetchYahooSafe(ticker){
+  try{return await fetchYahoo(ticker);}
+  catch(err){
+    try{return await fetchYahoo(ticker);}
+    catch(err2){return genSim(ticker);}
+  }
+}
 
 function genSim(ticker){
   var h=0;for(var i=0;i<ticker.length;i++)h=(Math.imul(31,h)+ticker.charCodeAt(i))|0;
@@ -3257,12 +3266,11 @@ export default function App(){
         }
       });
       setProgress({done:0,total:universe.length,msg:null});
-      var results=[],BATCH=6;
+      var results=[],BATCH=3;
       for(var i=0;i<universe.length;i+=BATCH){
         var batch=universe.slice(i,i+BATCH);
         await Promise.all(batch.map(async function(stock){
-          var pd;
-          try{pd=await fetchYahoo(stock.ticker);}catch(err){pd=genSim(stock.ticker);}
+          var pd=await fetchYahooSafe(stock.ticker);
           try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
           setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
         }));
@@ -3284,8 +3292,7 @@ export default function App(){
     try{
       var existing=stocks.find(function(s){return s.ticker===ticker;});
       if(!existing) return;
-      var pd;
-      try{pd=await fetchYahoo(ticker);}catch(e){pd=genSim(ticker);}
+      var pd=await fetchYahooSafe(ticker);
       var updated=analyzeStock(existing,pd,vix);
       setStocks(function(prev){return prev.map(function(s){return s.ticker===ticker?updated:s;});});
     }finally{
@@ -3299,12 +3306,11 @@ export default function App(){
     var universe=stocks.map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol};});
     setProgress({done:0,total:universe.length,msg:null});
     try{
-      var results=[],BATCH=6;
+      var results=[],BATCH=3;
       for(var i=0;i<universe.length;i+=BATCH){
         var batch=universe.slice(i,i+BATCH);
         await Promise.all(batch.map(async function(stock){
-          var pd;
-          try{pd=await fetchYahoo(stock.ticker);}catch(err){pd=genSim(stock.ticker);}
+          var pd=await fetchYahooSafe(stock.ticker);
           try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
           setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
         }));
