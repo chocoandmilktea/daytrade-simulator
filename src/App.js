@@ -5,6 +5,7 @@ var BADGE = {
   BUY:   { bg:"#052e16", border:"#22d3a0", text:"#22d3a0", label:"買い"   },
   WATCH: { bg:"#1c1400", border:"#fbbf24", text:"#fbbf24", label:"様子見" },
   SKIP:  { bg:"#1f0010", border:"#f43f5e", text:"#f43f5e", label:"見送り" },
+  FAILED:{ bg:"#1a1a1a", border:"#4a5568", text:"#94a3b8", label:"取得失敗" },
 };
 var MKT = {
   US: { bg:"#0a1e3a", border:"#3b82f6", text:"#93c5fd", label:"US" },
@@ -816,6 +817,12 @@ function analyzeStock(stock,pd,vixVal){
   var winRate=winRateRaw;
   var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
   var timing=sc>=58?"BUY":sc>=38?"WATCH":"SKIP";
+  // データ取得に失敗し疑似データ(genSim)で補完された場合は、本物らしい価格・判定を
+  // 表示してしまわないよう「取得失敗」扱いにする（価格欄は"―"、判定バッジも専用表示）
+  if(!pd.real){
+    dispPrice="―";
+    timing="FAILED";
+  }
 
   var aptScore=0;
   try{
@@ -880,7 +887,7 @@ function analyzeStock(stock,pd,vixVal){
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     volume:stock.volume||0,
-    price:dispPrice,rawPrice:price,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
+    price:dispPrice,rawPrice:pd.real?price:null,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,signals:signals,change:change,spark:closes.slice(-30),
     real:pd.real,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
     analystTarget:pd.analystTarget||null,earningsDate:resolveEventDate(stock.ticker,"earningsDate",pd.earningsDate||null),exRightsDate:resolveEventDate(stock.ticker,"exRightsDate",pd.exRightsDate||null),weekHigh:weekHigh,weekLow:weekLow,
@@ -1219,7 +1226,7 @@ function TickerPreviewModal(p){
         <div style={{fontSize:12,color:"#4a7090",marginBottom:8}}>{s.name}</div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:8,padding:"8px 12px",marginBottom:8}}>
           <span style={{fontSize:16,fontWeight:800,color:"#d8eeff"}}>{s.price}</span>
-          <span style={{fontSize:13,fontWeight:700,color:parseFloat(s.change)>=0?"#22d3a0":"#f43f5e"}}>{parseFloat(s.change)>=0?"▲":"▼"}{Math.abs(s.change)}%</span>
+          {s.real!==false&&<span style={{fontSize:13,fontWeight:700,color:parseFloat(s.change)>=0?"#22d3a0":"#f43f5e"}}>{parseFloat(s.change)>=0?"▲":"▼"}{Math.abs(s.change)}%</span>}
         </div>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
           <span style={{fontSize:12,color:"#4a7090"}}>スコア <span style={{color:scoreColor(s.score),fontWeight:700}}>{s.score}</span></span>
@@ -1409,6 +1416,7 @@ function StockCard(p){
       setDaily(undefined);
       fetchDaily(s.ticker).then(function(r){setDaily(r);});
     }
+    if(onRescan) onRescan(s.ticker); // 価格・判定バッジもチャートと同様に毎回最新化
   },[isSelected,expanded]);
 
   // モバイル展開パネルのチャート（1分足）はモバイルで展開された時だけ取得
@@ -1456,7 +1464,7 @@ function StockCard(p){
         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:14,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
-            <div style={{fontSize:11,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>
+            {s.real!==false&&<div style={{fontSize:11,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>}
           </div>
         </div>
       </div>
@@ -1703,6 +1711,7 @@ function StockDetailPanel(p){
   useEffect(function(){
     setIntraday(undefined);
     fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
+    if(onRescan) onRescan(s.ticker); // カードの価格・判定バッジもチャートと同様に毎回最新化
   },[s.ticker]);
 
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
@@ -1804,7 +1813,7 @@ function StockDetailPanel(p){
           {s.market==="US"&&p.usdJpy&&<div style={{fontSize:13,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>}
         </div>
         <div style={{textAlign:"right"}}>
-          <span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>
+          {s.real!==false&&<span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>}
           <div style={{marginTop:4}}><span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span></div>
         </div>
       </div>
