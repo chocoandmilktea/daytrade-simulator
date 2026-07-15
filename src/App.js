@@ -376,9 +376,9 @@ function buildAiPrompt(s){
     "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+",\"forecast\":{\"direction\":\"上昇 or 下落 or 中立\",\"confidence\":整数0〜100,\"timeframe\":\"文字列\",\"reason\":\"文字列\"}}";
 }
 // 上位N件 → claude.ai貼り付け用プロンプトを生成
-// jpLimited(既定true): 日本株限定で「売買代金」×「ボラティリティ」の合成ランキングで上位N件を選出
+// jpLimited(既定true): 日本株限定で「出来高急増率」×「ボラティリティ」の合成ランキングで上位N件を選出
 // jpLimited=falseを渡すと市場フィルタ・並べ替えをせず渡された銘柄をそのまま出力する（個別銘柄コピー用）
-var TURNOVER_WEIGHT=0.5, VOLATILITY_WEIGHT=0.5; // 売買代金/ボラティリティの重み（合計1.0）
+var SURGE_WEIGHT=0.5, VOLATILITY_WEIGHT=0.5; // 出来高急増率/ボラティリティの重み（合計1.0）
 function buildVolumeRankingPrompt(stocks,topN,jpLimited){
   var n=topN||10;
   var top;
@@ -387,14 +387,14 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
   }else{
     var pool=stocks.filter(function(s){return s.market==="JP";});
     var metrics=pool.map(function(s){
-      var turnover=(s.rawPrice||0)*(s.volume||0); // 売買代金＝株価×出来高
+      var surge=s.volSurge||1; // 出来高急増率＝直近5日出来高÷過去20日平均（自分比の"今の勢い"）
       var volatility=s.rawPrice?((s.atr||0)/s.rawPrice):0; // ATR%
-      return{s:s,turnover:turnover,volatility:volatility};
+      return{s:s,surge:surge,volatility:volatility};
     });
-    var maxTurnover=Math.max.apply(null,metrics.map(function(m){return m.turnover;}).concat([1]));
+    var maxSurge=Math.max.apply(null,metrics.map(function(m){return m.surge;}).concat([1]));
     var maxVol=Math.max.apply(null,metrics.map(function(m){return m.volatility;}).concat([1e-9]));
     metrics.forEach(function(m){
-      m.rankScore=(m.turnover/maxTurnover)*TURNOVER_WEIGHT+(m.volatility/maxVol)*VOLATILITY_WEIGHT;
+      m.rankScore=(m.surge/maxSurge)*SURGE_WEIGHT+(m.volatility/maxVol)*VOLATILITY_WEIGHT;
     });
     top=metrics.sort(function(a,b){return b.rankScore-a.rankScore;}).slice(0,n).map(function(m){return m.s;});
   }
@@ -418,7 +418,7 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
       :"";
     return(i+1)+". "+s.ticker+" ("+s.name+") ["+s.market+"]\n"+
       "  現在値: "+unit+s.price+"  前日比: "+s.change+"%\n"+
-      "  出来高: "+(s.volume||0).toLocaleString()+"\n"+
+      "  出来高: "+(s.volume||0).toLocaleString()+"（急増率: "+(s.volSurge?s.volSurge.toFixed(1)+"倍":"─")+"）\n"+
       "  総合スコア: "+s.score+"/100  トレードタイプ: "+s.tradeLabel+"\n"+
       trendLine+
       "  ATR: "+unit+s.atr+"  想定値幅: "+unit+s.atrLower+"〜"+unit+s.atrUpper+"\n"+
@@ -427,7 +427,7 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
       "  前日高値/安値: "+prevH+"〜"+prevL+"  週足高値/安値: "+wH+"〜"+wL+"\n"+
       signalsLine;
   }).join("\n\n");
-  var note=jpLimited===false?"":"（日本株限定・売買代金×ボラティリティ順）";
+  var note=jpLimited===false?"":"（日本株限定・出来高急増率×ボラティリティ順）";
   return"あなたは株式トレードのアナリストです。以下はスコア上位"+top.length+"銘柄のデータです"+note+"。\n\n"+
     lines+"\n\n"+
     "各銘柄について「買い」「売り」「見送り」のいずれかを判定し、理由を1〜2文で日本語で答えてください。\n"+
@@ -584,6 +584,7 @@ function analyzeStock(stock,pd,vixVal){
   var bollVal=calcBoll(closes)[n],stochVal=calcStoch(closes,highs,lows)[n];
   var mNow=macdArr[n],mPrev=macdArr[n-1],price=pd.currentPrice||closes[n];
   var sc=0,signals=[];
+  var breakdown=[],scChk=0; // ── スコア内訳（どの項目が何点効いたか）記録用 ──
 
   // ── ATR（値幅）算出 ─────────────────────────────────────────────────────
   var atrRaw=calcATR(closes,highs,lows,14);
@@ -602,6 +603,7 @@ function analyzeStock(stock,pd,vixVal){
     else if(price<vwap&&vwapDiff>=-1.0){sc+=10;signals.push({label:"VWAP",val:"下抜け直後",state:-1});}
     else{sc-=8;signals.push({label:"VWAP",val:"下方乖離("+vwapDiff.toFixed(1)+"%)",state:-1});}
   }
+  breakdown.push({label:"VWAP",delta:sc-scChk});scChk=sc;
 
   // ── Pivotポイント シグナル（補助・最大5点）─────────────────────────────
   if(pivot!==null){
@@ -610,11 +612,13 @@ function analyzeStock(stock,pd,vixVal){
     else if(price>=pivot.s1&&price<=pivot.pp){sc+=3;signals.push({label:"Pivot",val:"S1〜PP(中立)",state:0});}
     else{sc-=4;signals.push({label:"Pivot",val:"S1下(弱気)",state:-1});}
   }
+  breakdown.push({label:"Pivot",delta:sc-scChk});scChk=sc;
 
   // ── ATR シグナル（値幅フィルター・新規・最大10点）───────────────────────
   if(atrPct>=0.15){sc+=10;signals.push({label:"ATR",val:"値幅十分("+atrPct.toFixed(2)+"%)",state:1});}
   else if(atrPct>=0.08){sc+=5;signals.push({label:"ATR",val:"値幅やや小("+atrPct.toFixed(2)+"%)",state:0});}
   else{sc-=5;signals.push({label:"ATR",val:"値幅不足("+atrPct.toFixed(2)+"%)",state:-1});}
+  breakdown.push({label:"ATR(値幅)",delta:sc-scChk});scChk=sc;
   // ────────────────────────────────────────────────────────────────────────────
 
   var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
@@ -631,6 +635,7 @@ function analyzeStock(stock,pd,vixVal){
     else if(relStrength<=-0.5){sc-=3;signals.push({label:"対TOPIX",val:"やや市場より弱い("+relStrength.toFixed(1)+"%)",state:-1});}
     else{signals.push({label:"対TOPIX",val:"市場並み("+relStrength.toFixed(1)+"%)",state:0});}
   }
+  breakdown.push({label:"対TOPIX",delta:sc-scChk});scChk=sc;
   // ────────────────────────────────────────────────────────────────────────────
 
   var dispPrice=stock.market==="JP"?"¥"+Math.round(price).toLocaleString():"$"+price.toFixed(2);
@@ -666,12 +671,14 @@ function analyzeStock(stock,pd,vixVal){
   if(trendDirNow===1&&dir15===1){sc+=5;signals.push({label:"上位足一致(15本毎)",val:"上昇一致",state:1});}
   if(trendDirNow===-1&&dir5===-1){sc-=3;signals.push({label:"上位足一致(5本毎)",val:"下降一致",state:-1});}
   if(trendDirNow===-1&&dir15===-1){sc-=3;signals.push({label:"上位足一致(15本毎)",val:"下降一致",state:-1});}
+  breakdown.push({label:"トレンド",delta:sc-scChk});scChk=sc;
 
   // ── MACD（補助・最大4点）───────────────────────────────────────────────
   if(mNow.hist>0&&mPrev&&mPrev.hist<=0){sc+=4;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});}
   else if(mNow.hist>0){sc+=2;signals.push({label:"MACD",val:"強気ゾーン",state:1});}
   else if(mNow.hist<0&&mPrev&&mPrev.hist>=0){sc-=4;signals.push({label:"MACD",val:"デッドクロス",state:-1});}
   else{sc-=2;signals.push({label:"MACD",val:"弱気ゾーン",state:-1});}
+  breakdown.push({label:"MACD",delta:sc-scChk});scChk=sc;
 
   // ── RSI（補助・最大8点）────────────────────────────────────────────────
   var rl="RSI("+rsiVal.toFixed(1)+")";
@@ -681,6 +688,7 @@ function analyzeStock(stock,pd,vixVal){
   else if(rsiVal<60){sc+=2;signals.push({label:rl,val:"中立",state:0});}
   else if(rsiVal<70){sc+=1;signals.push({label:rl,val:"やや強め",state:0});}
   else{sc-=3;signals.push({label:rl,val:"買われすぎ",state:-1});}
+  breakdown.push({label:"RSI",delta:sc-scChk});scChk=sc;
 
   // ── BB位置（最大8点）+ BB収束ボーナス（最大7点）────────────────────────
   var bbSqueeze=false;
@@ -708,6 +716,7 @@ function analyzeStock(stock,pd,vixVal){
       else{signals.push({label:"BB収束",val:"平常("+Math.round(bwRatio*100)+"%)",state:0});}
     }
   }
+  breakdown.push({label:"BB",delta:sc-scChk});scChk=sc;
 
   // ── Stoch（補助・最大6点）──────────────────────────────────────────────
   if(stochVal!==null){
@@ -718,6 +727,7 @@ function analyzeStock(stock,pd,vixVal){
     else if(stochVal>65){sc+=2;signals.push({label:sl,val:"やや強め",state:0});}
     else{sc+=3;signals.push({label:sl,val:"中立",state:0});}
   }
+  breakdown.push({label:"Stoch",delta:sc-scChk});scChk=sc;
 
   // ── シグナル重複ボーナス（最大4点・2階層でシンプルに）────────────────
   var overlapLabels=[];
@@ -735,6 +745,7 @@ function analyzeStock(stock,pd,vixVal){
   else if(oversoldCount>=2){overlap=2;overlapLabels.push("2指標一致");}
 
   sc=sc+overlap;
+  breakdown.push({label:"重複ボーナス",delta:sc-scChk});scChk=sc;
 
   // ── 出来高・OBV（メイン・最大15点）───────────────────────────────────
   var obScore=0;
@@ -766,6 +777,7 @@ function analyzeStock(stock,pd,vixVal){
     signals.push({label:"出来高",val:"データなし",state:0});
   }
   sc=sc+obScore;
+  breakdown.push({label:"出来高/OBV",delta:sc-scChk});scChk=sc;
 
   var scoreCap=100;
   if(hasDC&&hasBearTrend){scoreCap=20;}
@@ -789,6 +801,8 @@ function analyzeStock(stock,pd,vixVal){
   // ────────────────────────────────────────────────────────────────────────────
 
   sc=Math.min(scoreCap,Math.max(0,sc));
+  if(sc-scChk!==0){breakdown.push({label:"上限抑制(下降/デッドクロス/VWAP)",delta:sc-scChk});}
+  scChk=sc;
 
   // ── VIX連動スコアキャップ（スキャル・デイトレ向け）────────────────────────
   if(vixVal!=null){
@@ -799,6 +813,8 @@ function analyzeStock(stock,pd,vixVal){
       signals.push({label:"VIX",val:"警戒("+vn.toFixed(1)+")→cap"+vixCap,state:-1});
     }
   }
+  if(sc-scChk!==0){breakdown.push({label:"VIXキャップ",delta:sc-scChk});}
+  scChk=sc;
   // ──────────────────────────────────────────────────────────────────────────
 
   var recentCloses=closes.slice(-RECENT_BARS); // 20日相当
@@ -895,9 +911,9 @@ function analyzeStock(stock,pd,vixVal){
   // ────────────────────────────────────────────────────────────────────────
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
-    volume:stock.volume||0,
+    volume:stock.volume||0,volSurge:(typeof surge!=="undefined"?surge:1),
     price:dispPrice,rawPrice:pd.real?price:null,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
-    timing:timing,signals:signals,change:change,spark:closes.slice(-30),
+    timing:timing,signals:signals,breakdown:breakdown,change:change,spark:closes.slice(-30),
     real:pd.real,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
     analystTarget:pd.analystTarget||null,earningsDate:resolveEventDate(stock.ticker,"earningsDate",pd.earningsDate||null),exRightsDate:resolveEventDate(stock.ticker,"exRightsDate",pd.exRightsDate||null),weekHigh:weekHigh,weekLow:weekLow,
     topixChange:topixChange,relStrength:relStrength,
@@ -1172,8 +1188,31 @@ function IntradayChart1m(p){
 
 // ── シグナル詳細（カードの展開パネルとチャートモーダルで共通利用）────────
 function SignalDetailList(p){
+  var bd=(p.breakdown||[]).filter(function(b){return b.delta!==0;});
+  var negatives=bd.filter(function(b){return b.delta<0;}).sort(function(a,b){return a.delta-b.delta;});
   return(
     <div>
+      {bd.length>0&&(
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🧮 スコア内訳（60点まで何が足りないか）</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {bd.map(function(b,i){
+              var c=b.delta>0?"#22d3a0":"#f43f5e";
+              return(
+                <div key={i} style={{background:"#071428",borderRadius:6,padding:"5px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
+                  <span style={{fontSize:11,color:"#4a7090"}}>{b.label}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:c}}>{b.delta>0?"+":""}{b.delta}</span>
+                </div>
+              );
+            })}
+          </div>
+          {negatives.length>0&&(
+            <div style={{fontSize:11,color:"#f87171",marginTop:6}}>
+              ⬇️ 特に足を引っ張っている要因: {negatives.slice(0,2).map(function(b){return b.label+"("+b.delta+")";}).join("、")}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
         {(p.signals||[]).filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label.startsWith("RSI");}).map(function(sig,i){
@@ -1502,7 +1541,7 @@ function StockCard(p){
           </div>
 
           {/* シグナル詳細 */}
-          <SignalDetailList signals={s.signals}/>
+          <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
 
           {showAi&&(
             <div ref={aiBoxRef} style={{background:"#040c18",border:"1px solid #22d3a040",borderRadius:10,padding:"12px"}}>
@@ -1842,7 +1881,7 @@ function StockDetailPanel(p){
       </div>
 
       {/* シグナル詳細 */}
-      <SignalDetailList signals={s.signals}/>
+      <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
 
       {showAi&&createPortal(
         <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);setAiText("");setAiEntry(null);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -2468,6 +2507,47 @@ function MarketPredictionPanel(p){
   var stocks=p.stocks,vix=p.vix,predictionResult=p.predictionResult,setPredictionResult=p.setPredictionResult,predictionLoading=p.predictionLoading,setPredictionLoading=p.setPredictionLoading;
   var lastUpdS=useState(null);var lastUpd=lastUpdS[0],setLastUpd=lastUpdS[1];
 
+  // ── スコア×AI判定 ダブルチェック（スコア上位5件・手動実行）────────────────
+  var dblTop5=stocks.slice().sort(function(a,b){return b.score-a.score;}).slice(0,5);
+  var dblLoadingS=useState(false);var dblLoading=dblLoadingS[0],setDblLoading=dblLoadingS[1];
+  var dblVerdictsS=useState({});var dblVerdicts=dblVerdictsS[0],setDblVerdicts=dblVerdictsS[1];
+  var dblUpdS=useState(null);var dblUpd=dblUpdS[0],setDblUpd=dblUpdS[1];
+  var dblErrS=useState("");var dblErr=dblErrS[0],setDblErr=dblErrS[1];
+
+  async function runDoubleCheck(){
+    if(dblLoading||dblTop5.length===0) return;
+    setDblLoading(true);setDblErr("");setDblVerdicts({});
+    try{
+      var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          prompt:buildVolumeRankingPrompt(dblTop5,dblTop5.length,false),
+          system:"必ず自分でWeb検索ツールを使って各銘柄の最新ニュースを確認してから判定してください。ユーザーに質問や確認を求めず、自律的に判定を完了してください。",
+          useWebSearch:true
+        }),signal:AbortSignal.timeout(45000)});
+      var data=await res.json();
+      if(data.error) throw new Error(typeof data.error==="string"?data.error:JSON.stringify(data.error));
+      var text=typeof data.text==="string"?data.text:"";
+      var lines=text.split("\n");
+      var map={};
+      dblTop5.forEach(function(s){
+        var key=s.ticker.replace(".T","");
+        var line=lines.find(function(l){return l.indexOf(key)!==-1;});
+        if(!line) return;
+        var vm=line.match(/(買い|売り|見送り)/);
+        if(!vm) return;
+        var reason=line.slice(line.indexOf(vm[1])+vm[1].length).replace(/^[\s—\-ー：:）)]+/,"").trim();
+        map[key]={verdict:vm[1],reason:reason};
+      });
+      setDblVerdicts(map);
+      if(Object.keys(map).length===0) setDblErr("AIの回答から判定を抽出できませんでした。");
+      else setDblUpd(new Date().toLocaleTimeString("ja-JP"));
+    }catch(e){
+      setDblErr("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));
+    }
+    setDblLoading(false);
+  }
+  // ────────────────────────────────────────────────────────────────────────
+
   async function runPrediction(){
     if(predictionLoading||stocks.length===0) return;
     setPredictionLoading(true);
@@ -2552,8 +2632,46 @@ function MarketPredictionPanel(p){
         {stocks.length===0&&<div style={{fontSize:11,color:"#f43f5e",marginTop:4}}>※ 先にスキャンを実行してください</div>}
       </div>
 
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700,color:"#e0f0ff"}}>🎯 スコア×AI判定 ダブルチェック</div>
+            <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>スコア上位5件をAIが個別に買い/売り/見送り判定</div>
+          </div>
+          <button onClick={runDoubleCheck} disabled={dblLoading||dblTop5.length===0}
+            style={{background:dblLoading?"#0a1828":"linear-gradient(135deg,#22d3a0,#059669)",border:"none",borderRadius:8,color:"#fff",padding:"10px 16px",fontSize:13,fontWeight:700,cursor:dblLoading||dblTop5.length===0?"not-allowed":"pointer",fontFamily:"monospace",flexShrink:0}}>
+            {dblLoading?"判定中...":"🎯 AI判定を実行"}
+          </button>
+        </div>
+        {dblUpd&&<div style={{fontSize:11,color:"#2a6090"}}>最終更新: {dblUpd}</div>}
+        {dblErr&&<div style={{fontSize:11,color:"#f43f5e",marginTop:4}}>{dblErr}</div>}
+        {dblTop5.length===0&&<div style={{fontSize:11,color:"#f43f5e",marginTop:4}}>※ 先にスキャンを実行してください</div>}
+        {Object.keys(dblVerdicts).length>0&&(
+          <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:6}}>
+            {dblTop5.map(function(s){
+              var key=s.ticker.replace(".T","");
+              var v=dblVerdicts[key];
+              var pass=s.score>=60&&v&&v.verdict==="買い";
+              var vColor=v?(v.verdict==="買い"?"#22d3a0":v.verdict==="売り"?"#f43f5e":"#fbbf24"):"#4a7090";
+              return(
+                <div key={s.ticker} style={{background:pass?"#052e16":"#040c18",border:"1px solid "+(pass?"#22d3a0":"#1e3050"),borderRadius:8,padding:"8px 10px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{fontSize:12,fontWeight:700,color:"#e0f0ff"}}>{key} {s.name}</span>
+                    <span style={{fontSize:11,color:scoreColor(s.score)}}>スコア{s.score}</span>
+                  </div>
+                  <div style={{fontSize:11,color:vColor,marginTop:3}}>
+                    {v?("AI判定: "+v.verdict+(v.reason?"　"+v.reason:"")):"判定なし（AI回答から抽出できず）"}
+                  </div>
+                  {pass&&<div style={{fontSize:11,fontWeight:700,color:"#22d3a0",marginTop:3}}>✅ ダブル合格（スコア60以上 かつ AI買い判定）</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:12}}>
-        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:8}}>📋 売買代金×ボラ ランキング(日本株限定) → claude.ai用プロンプト</div>
+        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:8}}>📋 出来高急増率×ボラ ランキング(日本株限定) → claude.ai用プロンプト</div>
         <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
           <span style={{fontSize:12,color:"#4a7090"}}>上位</span>
           <input type="number" min="1" max="50" value={volTopN}
