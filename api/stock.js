@@ -1,3 +1,5 @@
+import { getTargetBusinessDay, calcChangeRate } from "./ranking.js";
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -86,6 +88,15 @@ async function handleJP(ticker, res) {
       topixChange = await fetchTopixChange(apiKey);
     } catch (e) {}
 
+    // 対業種相対強弱用：この銘柄が属する業種の平均騰落率（全銘柄集計を1時間キャッシュ）
+    let sectorChange = null, sectorName = null;
+    try {
+      const codeShort = ticker.replace(".T", "");
+      const sectorData = await fetchSectorAverages(apiKey);
+      sectorName = sectorData.sectorOfCode[codeShort] || null;
+      sectorChange = sectorName != null ? (sectorData.avgBySector[sectorName] ?? null) : null;
+    } catch (e) {}
+
     // PER/PBR（財務情報のBPS・予想EPSから算出。24時間キャッシュ）
     // 権利落ち日（配当ありの銘柄のみ、次期末日の1営業日前を「予想」として概算）
     let per = null, pbr = null, exRightsDate = null;
@@ -114,6 +125,8 @@ async function handleJP(ticker, res) {
           earningsDate: earningsDate,
           exRightsDate: exRightsDate,
           topixChange: topixChange,
+          sectorChange: sectorChange,
+          sectorName: sectorName,
         }],
       },
     });
@@ -226,6 +239,61 @@ async function fetchTopixChange(apiKey) {
 
   topixCache = { change: change, ts: now };
   return change;
+}
+
+// ── 対業種相対強弱：業種別の平均騰落率（全銘柄を1回だけ集計し1時間キャッシュ）──
+// 銘柄1件ごとに毎回全銘柄集計をやり直すと重いため、初回アクセス時にまとめて
+// 計算し、以後は同じ結果を使い回す（topixCacheと同じ考え方）。
+// 対象日は ranking.js と同じ基準（getTargetBusinessDay）で揃える。
+var sectorAvgCache = { ts: 0, avgBySector: null, sectorOfCode: null };
+var SECTOR_AVG_TTL = 60 * 60 * 1000; // 1時間
+
+async function fetchSectorAverages(apiKey) {
+  const now = Date.now();
+  if (sectorAvgCache.avgBySector && now - sectorAvgCache.ts < SECTOR_AVG_TTL) {
+    return sectorAvgCache;
+  }
+
+  const dateStr = getTargetBusinessDay();
+  const dateStr8 = dateStr.replace(/-/g, "");
+
+  const [masterRes, barsRes] = await Promise.all([
+    fetch(`https://api.jquants.com/v2/equities/master?date=${dateStr8}`, {
+      headers: { "x-api-key": apiKey }, signal: AbortSignal.timeout(9000),
+    }),
+    fetch(`https://api.jquants.com/v2/equities/bars/daily?date=${dateStr}`, {
+      headers: { "x-api-key": apiKey }, signal: AbortSignal.timeout(9000),
+    }),
+  ]);
+  if (!masterRes.ok) throw new Error("master api: " + masterRes.status);
+  if (!barsRes.ok) throw new Error("bars api: " + barsRes.status);
+
+  const masterJson = await masterRes.json();
+  const sectorOfCode = {};
+  (masterJson.data || masterJson || []).forEach(function(row) {
+    const code = String(row.Code || "").replace(/0$/, "");
+    if (code && row.S33Nm) sectorOfCode[code] = row.S33Nm;
+  });
+
+  const barsJson = await barsRes.json();
+  const sums = {}, counts = {};
+  (barsJson.data || []).forEach(function(bar) {
+    if (!((bar.Vo || 0) > 0 && (bar.C || 0) > 0)) return;
+    const code = String(bar.Code || "").replace(/0$/, "");
+    const sector = sectorOfCode[code];
+    if (!sector) return;
+    const chg = calcChangeRate(bar) * 100;
+    sums[sector] = (sums[sector] || 0) + chg;
+    counts[sector] = (counts[sector] || 0) + 1;
+  });
+
+  const avgBySector = {};
+  Object.keys(sums).forEach(function(sector) {
+    avgBySector[sector] = sums[sector] / counts[sector];
+  });
+
+  sectorAvgCache = { ts: now, avgBySector: avgBySector, sectorOfCode: sectorOfCode };
+  return sectorAvgCache;
 }
 
 // ── JST日付文字列を取得（daysAgo日前、YYYYMMDD形式）────────────────────────
