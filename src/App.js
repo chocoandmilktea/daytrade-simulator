@@ -1190,25 +1190,38 @@ function IntradayChart1m(p){
 function SignalDetailList(p){
   var bd=(p.breakdown||[]).filter(function(b){return b.delta!==0;});
   var negatives=bd.filter(function(b){return b.delta<0;}).sort(function(a,b){return a.delta-b.delta;});
+  var bdOpenS=useState(false);var bdOpen=bdOpenS[0],setBdOpen=bdOpenS[1];
   return(
     <div>
       {bd.length>0&&(
         <div style={{marginBottom:14}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🧮 スコア内訳（60点まで何が足りないか）</div>
-          <div style={{display:"flex",flexDirection:"column",gap:4}}>
-            {bd.map(function(b,i){
-              var c=b.delta>0?"#22d3a0":"#f43f5e";
-              return(
-                <div key={i} style={{background:"#071428",borderRadius:6,padding:"5px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
-                  <span style={{fontSize:11,color:"#4a7090"}}>{b.label}</span>
-                  <span style={{fontSize:12,fontWeight:700,color:c}}>{b.delta>0?"+":""}{b.delta}</span>
-                </div>
-              );
-            })}
+          <div onClick={function(){setBdOpen(!bdOpen);}} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",marginBottom:bdOpen?6:0}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#4a90c0"}}>🧮 スコア内訳（60点まで何が足りないか）</div>
+            <span style={{color:"#4a7090",fontSize:12}}>{bdOpen?"▲":"▼"}</span>
           </div>
-          {negatives.length>0&&(
-            <div style={{fontSize:11,color:"#f87171",marginTop:6}}>
+          {!bdOpen&&negatives.length>0&&(
+            <div style={{fontSize:11,color:"#f87171",marginTop:4}}>
               ⬇️ 特に足を引っ張っている要因: {negatives.slice(0,2).map(function(b){return b.label+"("+b.delta+")";}).join("、")}
+            </div>
+          )}
+          {bdOpen&&(
+            <div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {bd.map(function(b,i){
+                  var c=b.delta>0?"#22d3a0":"#f43f5e";
+                  return(
+                    <div key={i} style={{background:"#071428",borderRadius:6,padding:"5px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
+                      <span style={{fontSize:11,color:"#4a7090"}}>{b.label}</span>
+                      <span style={{fontSize:12,fontWeight:700,color:c}}>{b.delta>0?"+":""}{b.delta}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {negatives.length>0&&(
+                <div style={{fontSize:11,color:"#f87171",marginTop:6}}>
+                  ⬇️ 特に足を引っ張っている要因: {negatives.slice(0,2).map(function(b){return b.label+"("+b.delta+")";}).join("、")}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -2505,14 +2518,16 @@ function TradeDetailModal(p){
 
 function MarketPredictionPanel(p){
   var stocks=p.stocks,vix=p.vix,predictionResult=p.predictionResult,setPredictionResult=p.setPredictionResult,predictionLoading=p.predictionLoading,setPredictionLoading=p.setPredictionLoading;
+  var toggleFav=p.toggleFav,favs=p.favs||[];
+  function isFavRef(t){return favs.indexOf(t)>=0;}
   var lastUpdS=useState(null);var lastUpd=lastUpdS[0],setLastUpd=lastUpdS[1];
 
-  // ── スコア×AI判定 ダブルチェック（スコア上位5件・手動実行）────────────────
+  // ── スコア×AI判定 ダブルチェック（スコア上位5件・手動実行・stateはApp側で保持しタブ切替でも保持）───
   var dblTop5=stocks.slice().sort(function(a,b){return b.score-a.score;}).slice(0,5);
-  var dblLoadingS=useState(false);var dblLoading=dblLoadingS[0],setDblLoading=dblLoadingS[1];
-  var dblVerdictsS=useState({});var dblVerdicts=dblVerdictsS[0],setDblVerdicts=dblVerdictsS[1];
-  var dblUpdS=useState(null);var dblUpd=dblUpdS[0],setDblUpd=dblUpdS[1];
-  var dblErrS=useState("");var dblErr=dblErrS[0],setDblErr=dblErrS[1];
+  var dblLoading=p.dblLoading,setDblLoading=p.setDblLoading;
+  var dblVerdicts=p.dblVerdicts,setDblVerdicts=p.setDblVerdicts;
+  var dblUpd=p.dblUpd,setDblUpd=p.setDblUpd;
+  var dblErr=p.dblErr,setDblErr=p.setDblErr;
 
   async function runDoubleCheck(){
     if(dblLoading||dblTop5.length===0) return;
@@ -2656,7 +2671,10 @@ function MarketPredictionPanel(p){
               return(
                 <div key={s.ticker} style={{background:pass?"#052e16":"#040c18",border:"1px solid "+(pass?"#22d3a0":"#1e3050"),borderRadius:8,padding:"8px 10px"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <span style={{fontSize:12,fontWeight:700,color:"#e0f0ff"}}>{key} {s.name}</span>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      {toggleFav&&<button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFavRef(s.ticker)?"#fbbf24":"#2a4060"}}>{isFavRef(s.ticker)?"★":"☆"}</button>}
+                      <span style={{fontSize:12,fontWeight:700,color:"#e0f0ff"}}>{key} {s.name}</span>
+                    </div>
                     <span style={{fontSize:11,color:scoreColor(s.score)}}>スコア{s.score}</span>
                   </div>
                   <div style={{fontSize:11,color:vColor,marginTop:3}}>
@@ -3223,6 +3241,10 @@ export default function App(){
   var usdJpyS=useState(null);var usdJpy=usdJpyS[0],setUsdJpy=usdJpyS[1];
   var predResS=useState("");var predictionResult=predResS[0],setPredictionResult=predResS[1];
   var predLoadS=useState(false);var predictionLoading=predLoadS[0],setPredictionLoading=predLoadS[1];
+  var dblLoadS=useState(false);var dblLoading=dblLoadS[0],setDblLoading=dblLoadS[1];
+  var dblVerdS=useState({});var dblVerdicts=dblVerdS[0],setDblVerdicts=dblVerdS[1];
+  var dblUpdS2=useState(null);var dblUpd=dblUpdS2[0],setDblUpd=dblUpdS2[1];
+  var dblErrS2=useState("");var dblErr=dblErrS2[0],setDblErr=dblErrS2[1];
   var selStockS=useState(null);var selectedStock=selStockS[0],setSelectedStock=selStockS[1];
   var k=useState("all");var activeTab=k[0],setActiveTab=k[1];
 
@@ -3579,7 +3601,7 @@ export default function App(){
           {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
           {activeTab==="trade"&&<TradePanel stocks={stocks} appTrades={appTrades} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler} onForceComplete={forceCompleteHandler} onRefreshTrades={refreshTradePrices} tradeRefreshing={tradeRefreshing}/>}
           {activeTab==="index"&&<IndexPanel/>}
-          {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading}/>}
+          {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading} dblLoading={dblLoading} setDblLoading={setDblLoading} dblVerdicts={dblVerdicts} setDblVerdicts={setDblVerdicts} dblUpd={dblUpd} setDblUpd={setDblUpd} dblErr={dblErr} setDblErr={setDblErr} favs={favs} toggleFav={toggleFav}/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="event"&&<EventPanel stocks={stocks}/>}
           {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} setAppTrades={setAppTrades} setPersonalTrades={setPersonalTrades} scan={scan}/>}
