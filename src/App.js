@@ -235,7 +235,7 @@ async function buildStockUniverse(manualSectors,skipAI){
 // 15分足データ取得（メイン分析用・60日分）
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange};}
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,sectorChange:cached.sectorChange,sectorName:cached.sectorName};}
   var json=await enqueueStock(async function(){
     var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(25000),cache:"no-store"});
     var body=await res.json().catch(function(){return null;});
@@ -251,10 +251,11 @@ async function fetchYahoo(ticker){
   var q=result.indicators.quote[0],meta=result.meta;
   function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
   var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null,topixChange=result.topixChange!=null?result.topixChange:null;
+  var sectorChange=result.sectorChange!=null?result.sectorChange:null,sectorName=result.sectorName||null;
   var filledClose=fill(q.close);
-  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange};
+  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,sectorChange:sectorChange,sectorName:sectorName};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,sectorChange:data.sectorChange,sectorName:data.sectorName};
 }
 
 
@@ -681,6 +682,14 @@ function analyzeStock(stock,pd,vixVal){
   breakdown.push({label:"対TOPIX",delta:sc-scChk});scChk=sc;
   // ────────────────────────────────────────────────────────────────────────────
 
+  // ── 対業種相対強弱（日本株限定・参考表示のみ、スコアには加算しない）──────
+  // 個別銘柄の当日騰落率から、その銘柄が属する業種の平均騰落率を引いた差分。
+  // 「市場全体」ではなく「同業他社」との比較で相対的な強さ・弱さを見るための補助情報。
+  var sectorChange=(stock.market==="JP"&&pd.sectorChange!=null)?pd.sectorChange:null;
+  var sectorName=stock.market==="JP"?(pd.sectorName||null):null;
+  var sectorRelStrength=sectorChange!=null?(parseFloat(change)-sectorChange):null;
+  // ────────────────────────────────────────────────────────────────────────────
+
   var dispPrice=stock.market==="JP"?"¥"+Math.round(price).toLocaleString():"$"+price.toFixed(2);
   // 52週相当: 60日分データの全体を使用
   var yearData=closes.slice(-YEAR_BARS);
@@ -960,6 +969,7 @@ function analyzeStock(stock,pd,vixVal){
     real:pd.real,failReason:pd.error||null,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
     analystTarget:pd.analystTarget||null,earningsDate:resolveEventDate(stock.ticker,"earningsDate",pd.earningsDate||null),exRightsDate:resolveEventDate(stock.ticker,"exRightsDate",pd.exRightsDate||null),weekHigh:weekHigh,weekLow:weekLow,
     topixChange:topixChange,relStrength:relStrength,
+    sectorChange:sectorChange,sectorName:sectorName,sectorRelStrength:sectorRelStrength,
     high52:high52,low52:low52,fromHigh:fromHigh,fromLow:fromLow,position52:position52,
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
@@ -1551,6 +1561,7 @@ function StockCard(p){
           {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
           {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
           {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}
+          {(function(){var si=relStrengthInfo(s.sectorRelStrength);return si&&<span style={bStyle(si.strong?"#052e16":"#1f0010","1px solid "+(si.strong?"#22d3a0":"#f43f5e"),si.strong?"#22d3a0":"#f43f5e")} title={"対"+(s.sectorName||"業種")+"相対(前日比差): "+si.label}>{si.strong?"🔥対業種":"🧊対業種"}{si.label}</span>;})()}
           {(function(){
             var aw=s.actualWinRate;
             var hasReal=aw&&aw.winRate!==null&&aw.total>=3;
@@ -1904,6 +1915,7 @@ function StockDetailPanel(p){
               {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
               {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
           {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}
+          {(function(){var si=relStrengthInfo(s.sectorRelStrength);return si&&<span style={bStyle(si.strong?"#052e16":"#1f0010","1px solid "+(si.strong?"#22d3a0":"#f43f5e"),si.strong?"#22d3a0":"#f43f5e")} title={"対"+(s.sectorName||"業種")+"相対(前日比差): "+si.label}>{si.strong?"🔥対業種":"🧊対業種"}{si.label}</span>;})()}
             </div>
             <div style={{fontSize:13,color:"#4a7090",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
           </div>
@@ -3064,6 +3076,15 @@ function GuidePanel(){
         "色の見方：緑=60%以上、黄=50〜59%、赤=50%未満"
       ]},
       {title:"📉 下値サポート目安の見方",items:["S1（20日安値）：直近20日間の最安値。短期の下値サポートライン。ここを割ると次のS2が目安","S2（60日安値）：直近60日間の最安値。中期の強いサポートライン。S1を割り込んだ場合の次の目安","ATR×1.5下限：14日間の平均値幅（ATR）×1.5を現在値から引いた価格。統計的な下値の限界目安","活用法：S1割れで警戒、S2割れで損切り検討、ATR下限は最悪ケースの想定として使用"]},
+      {title:"🔥🧊 対TOPIX／対業種バッジの見方（日本株限定）",items:[
+        "どちらも「個別銘柄の当日騰落率 − 比較対象の当日騰落率」の差分を表示する補助シグナル。市場全体（または同業他社）の値動きを差し引いた「銘柄固有の強さ・弱さ」を見るためのもの",
+        "🔥（緑）＝比較対象より強い、🧊（青緑〜赤）＝比較対象より弱い。差が±0.5%未満の場合は誤差レベルとみなし非表示",
+        "対TOPIX：比較対象は東証株価指数（TOPIX）。市場全体に対して強いか弱いかを見る。スコアにも反映され、差が大きいほど最大±6点まで加減算される",
+        "対業種：比較対象はその銘柄が属する東証33業種の当日平均騰落率（同業他社の値動き）。同じ業種の中で出遅れている／先行しているかを見る。こちらは参考表示のみでスコアには影響しない",
+        "内部の仕組み（対TOPIX）：TOPIXの日足データから前日比%を算出し、全銘柄共通の値として1時間キャッシュ",
+        "内部の仕組み（対業種）：その日の全上場銘柄の騰落率をJ-Quantsの業種コードで33業種に分類し、業種ごとの平均値を1回だけ集計。同じく1時間キャッシュして使い回す（銘柄ごとに毎回集計し直すと重いため）",
+        "どちらも前日比ベースの参考値であり、将来の値動きを保証するものではない"
+      ]},
       {title:"🔘 銘柄詳細のアイコン行",items:[
         "📋：AI判定用のプロンプトをクリップボードにコピー（claude.aiなどに貼り付けて使う用）",
         "🔄：この銘柄だけを最新データで再スキャン",
