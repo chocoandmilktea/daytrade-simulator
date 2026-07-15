@@ -102,6 +102,36 @@ function enqueueIntraday(fn){
   });
 }
 
+// ── メイン株価取得（/api/stock）用の直列キュー ──────────────────────────
+// 分足キューと同じ考え方：J-Quantsの60件/分制限を守るため、スキャン時も
+// 同時並行ではなく一定間隔で1件ずつ順番に呼び出す。429を検知したら
+// キュー全体を一時停止し、レート制限が収まってから再開する。
+var STOCK_QUEUE=[], STOCK_TIMER=null, STOCK_LAST_DISPATCH=0;
+var STOCK_MIN_INTERVAL=1500; // 分足キューと同じ約1.5秒に1件ペース
+var STOCK_PAUSED_UNTIL=0;
+function scheduleStockQueue(){
+  if(STOCK_TIMER||STOCK_QUEUE.length===0) return;
+  var now=Date.now();
+  var wait=Math.max(0,STOCK_MIN_INTERVAL-(now-STOCK_LAST_DISPATCH),STOCK_PAUSED_UNTIL-now);
+  STOCK_TIMER=setTimeout(function(){
+    STOCK_TIMER=null;
+    var job=STOCK_QUEUE.shift();
+    STOCK_LAST_DISPATCH=Date.now();
+    if(job) job();
+    scheduleStockQueue();
+  },wait);
+}
+function enqueueStock(fn){
+  return new Promise(function(resolve,reject){
+    STOCK_QUEUE.push(function(){fn().then(resolve,reject);});
+    scheduleStockQueue();
+  });
+}
+// エラーメッセージがJ-Quantsのレート制限（429）由来かどうかの判定
+function isRateLimitError(msg){
+  return !!msg&&(msg.indexOf("429")>=0||msg.toLowerCase().indexOf("rate limit")>=0);
+}
+
 // レスポンス形式: { m1:{closes,times}, date }（チャートモーダル用の1分足）
 //
 // INTRADAY_INFLIGHT: 同じ銘柄への呼び出しがほぼ同時に複数箇所（モバイルの展開
@@ -206,9 +236,16 @@ async function buildStockUniverse(manualSectors,skipAI){
 async function fetchYahoo(ticker){
   var now=Date.now();
   if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange};}
-  var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(25000),cache:"no-store"});
-  var json=await res.json().catch(function(){return null;});
-  if(!res.ok) throw new Error(json&&json.error?json.error:("HTTP "+res.status)); // サーバー側のエラー詳細をそのまま伝える
+  var json=await enqueueStock(async function(){
+    var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(25000),cache:"no-store"});
+    var body=await res.json().catch(function(){return null;});
+    if(!res.ok){
+      var msg=body&&body.error?body.error:("HTTP "+res.status); // サーバー側のエラー詳細をそのまま伝える
+      if(isRateLimitError(msg)) STOCK_PAUSED_UNTIL=Date.now()+90*1000; // レート制限検知：90秒キューを止めて様子を見る
+      throw new Error(msg);
+    }
+    return body;
+  });
   var result=json&&json.chart&&json.chart.result&&json.chart.result[0];
   if(!result) throw new Error("empty response");
   var q=result.indicators.quote[0],meta=result.meta;
@@ -227,6 +264,7 @@ async function fetchYahooSafe(ticker){
   try{return await fetchYahoo(ticker);}
   catch(err){
     console.warn("[fetchYahoo] "+ticker+" 1回目失敗: "+err.message);
+    if(isRateLimitError(err.message)) await new Promise(function(r){setTimeout(r,5000);}); // レート制限時は5秒待ってから再試行
     try{return await fetchYahoo(ticker);}
     catch(err2){
       console.error("[fetchYahoo] "+ticker+" 2回目も失敗→シミュレーションデータで代替: "+err2.message);
@@ -3415,16 +3453,14 @@ export default function App(){
         }
       });
       setProgress({done:0,total:universe.length,msg:null});
-      var results=[],BATCH=3;
-      for(var i=0;i<universe.length;i+=BATCH){
-        var batch=universe.slice(i,i+BATCH);
-        await Promise.all(batch.map(async function(stock){
-          var pd=await fetchYahooSafe(stock.ticker);
-          try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
-          setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
-        }));
-        if(i+BATCH<universe.length)await new Promise(function(r){setTimeout(r,300);});
-      }
+      // 実際の同時実行制御はSTOCK_QUEUE（直列キュー）側で行うため、ここでは
+      // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
+      var results=[];
+      await Promise.all(universe.map(async function(stock){
+        var pd=await fetchYahooSafe(stock.ticker);
+        try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+        setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+      }));
       results.sort(function(x,y){return y.score-x.score;});
       setStocks(results);
       setTs(new Date().toLocaleTimeString("ja-JP"));
@@ -3455,16 +3491,14 @@ export default function App(){
     var universe=stocks.map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol};});
     setProgress({done:0,total:universe.length,msg:null});
     try{
-      var results=[],BATCH=3;
-      for(var i=0;i<universe.length;i+=BATCH){
-        var batch=universe.slice(i,i+BATCH);
-        await Promise.all(batch.map(async function(stock){
-          var pd=await fetchYahooSafe(stock.ticker);
-          try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
-          setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
-        }));
-        if(i+BATCH<universe.length)await new Promise(function(r){setTimeout(r,300);});
-      }
+      // 実際の同時実行制御はSTOCK_QUEUE（直列キュー）側で行うため、ここでは
+      // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
+      var results=[];
+      await Promise.all(universe.map(async function(stock){
+        var pd=await fetchYahooSafe(stock.ticker);
+        try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+        setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+      }));
       results.sort(function(x,y){return y.score-x.score;});
       setStocks(results);
       setTs(new Date().toLocaleTimeString("ja-JP"));
