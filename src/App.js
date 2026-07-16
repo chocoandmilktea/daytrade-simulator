@@ -393,6 +393,17 @@ function applyPricesToTrades(kind,priceMap){
 
 // ── AI分析 共通ユーティリティ ────────────────────────────────────────────────
 var AI_API_URL="https://daytrade-simulator.vercel.app/api/ai";
+// 対象銘柄の各シグナルについて、スキャン銘柄全体での過去的中率をAIへの参考情報として整形
+// （サンプル10件未満のシグナルは参考にならないため含めない）
+function buildAccuracyPart(signals){
+  var stats=getUniverseSignalStats();
+  var lines=[];
+  (signals||[]).forEach(function(sig){
+    var s=stats[baseSigLabel(sig.label)+"#"+sig.state];
+    if(s&&s.t>=10) lines.push("  "+sig.label+": 過去的中率"+Math.round(s.w/s.t*100)+"%("+s.t+"件, 翌営業日上昇率)");
+  });
+  return lines.length?("過去のシグナル的中率(参考・スキャン銘柄全体集計):\n"+lines.join("\n")+"\n"):"";
+}
 function buildAiPrompt(s){
   var isJP=s.market==="JP";
   var relPart=(isJP&&s.relStrength!=null)?("対TOPIX相対: "+(s.relStrength>=0?"+":"")+s.relStrength.toFixed(1)+"%（個別銘柄騰落率−TOPIX騰落率。市場全体を除いた銘柄固有の強さの目安）\n"):"";
@@ -407,6 +418,7 @@ function buildAiPrompt(s){
       "スコアトレンド: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"\n"+
       "ATRトレンド: "+(atrTrend>0?"↑拡大中(ボラ増)":"↓縮小中(ボラ減)")+"\n";
   }
+  var accPart=buildAccuracyPart(s.signals);
   return "あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
     "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
     "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
@@ -415,6 +427,7 @@ function buildAiPrompt(s){
     "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
     relPart+
     histPart+
+    accPart+
     "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
     "以下のトレード判断を数値で答えてください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n5. 🔮 今後の見通し: 必ずWeb検索でこの銘柄の最新ニュース・決算・材料を調べた上で、今後数日〜1週間程度で上昇/下落/中立のどれに向かいやすいかを予想し、確信度と根拠を1〜2文で述べてください\n\n"+
     "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+",\"forecast\":{\"direction\":\"上昇 or 下落 or 中立\",\"confidence\":整数0〜100,\"timeframe\":\"文字列\",\"reason\":\"文字列\"}}";
@@ -596,6 +609,58 @@ function calcSignalAccuracy(tickers){
 function calcFavSignalAccuracy(){
   var favList=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]");}catch(e){return[];}})();
   return calcSignalAccuracy(favList);
+}
+
+// ── スキャン対象銘柄全体での的中率集計（スコア重み調整・AI判定材料用）─────
+// お気に入りは個人の好みで選ばれ銘柄構成に偏りが出るため、重み調整やAIへの
+// 参考情報にはスキャンした銘柄全体（sh_*キー全部）を対象にする
+var UNIVERSE_STATS_CACHE=null,UNIVERSE_STATS_TS=0,UNIVERSE_STATS_TTL=15*60*1000;
+function getUniverseSignalStats(){
+  var now=Date.now();
+  if(UNIVERSE_STATS_CACHE&&now-UNIVERSE_STATS_TS<UNIVERSE_STATS_TTL) return UNIVERSE_STATS_CACHE;
+  var stats={};
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_")!==0) return;
+      var hist=JSON.parse(localStorage.getItem(k)||"[]");
+      accumulateSignalStats(hist,1,stats);
+    });
+  }catch(e){}
+  UNIVERSE_STATS_CACHE=stats;UNIVERSE_STATS_TS=now;
+  return stats;
+}
+// シグナル1件分の重み係数（1.0=調整なし）。
+// サンプル10件未満は調整なし／10〜19件は最大±10%／20件以上は最大±20%
+function getSignalWeight(sigKey){
+  var s=getUniverseSignalStats()[sigKey];
+  if(!s||s.t<10) return 1;
+  var maxAdjust=s.t>=20?0.2:0.1;
+  var state=parseInt(sigKey.split("#")[1],10);
+  var winRate=s.w/s.t;
+  var quality=state===-1?(1-winRate):winRate; // 弱気シグナルは「上がらなかった率」が精度の目安
+  var mult=1+(quality-0.5)*2*maxAdjust;
+  return Math.max(1-maxAdjust,Math.min(1+maxAdjust,mult));
+}
+// breakdown表示名 → 実際に積み上がるシグナルラベル群のマッピング（重み適用用）
+var CATEGORY_SIGNAL_MAP={
+  "VWAP":["VWAP"],"Pivot":["Pivot"],"ATR(値幅)":["ATR"],"対TOPIX":["対TOPIX"],
+  "トレンド":["トレンド","上位足一致(5本毎)","上位足一致(15本毎)"],
+  "MACD":["MACD"],"RSI":["RSI"],"BB":["BB","BB収束"],"Stoch":["Stoch"],
+  "出来高/OBV":["OBV","出来高"]
+};
+// 過去の的中率に基づき、breakdownカテゴリごとの点数を補正する
+function applySignalWeights(sc,signals,breakdown){
+  var adjust=0;
+  breakdown.forEach(function(b){
+    var labels=CATEGORY_SIGNAL_MAP[b.label];
+    if(!labels||!b.delta) return;
+    var fired=signals.filter(function(sig){return labels.indexOf(baseSigLabel(sig.label))>=0;});
+    if(!fired.length) return;
+    var mults=fired.map(function(sig){return getSignalWeight(baseSigLabel(sig.label)+"#"+sig.state);});
+    var avgMult=mults.reduce(function(a,b){return a+b;},0)/mults.length;
+    adjust+=b.delta*(avgMult-1);
+  });
+  return sc+adjust;
 }
 // ブラウザのコンソールから確認できるように公開（例: getSignalAccuracy()）
 if(typeof window!=="undefined"){
@@ -830,6 +895,11 @@ function analyzeStock(stock,pd,vixVal){
   }
   sc=sc+obScore;
   breakdown.push({label:"出来高/OBV",delta:sc-scChk});scChk=sc;
+
+  // ── 過去の的中率に基づく重み調整（サンプル10件未満のシグナルは調整なし）──
+  sc=applySignalWeights(sc,signals,breakdown);
+  if(sc-scChk!==0){breakdown.push({label:"実績反映調整",delta:sc-scChk});}
+  scChk=sc;
 
   var scoreCap=100;
   if(hasDC&&hasBearTrend){scoreCap=20;}
