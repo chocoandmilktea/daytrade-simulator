@@ -2166,22 +2166,6 @@ function StockDetailPanel(p){
           </div>
         </div>
       ,document.body)}
-      {s.support&&(
-        <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#fbbf24",marginBottom:6}}>📉 下値サポート目安</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-            {[["🟡 S1 20日",s.support.s1,"#fbbf24"],["🔴 S2 60日",s.support.s2,"#f43f5e"],["⚡ ATR×1.5",s.support.atrFloor,"#a78bfa"]].map(function(row){
-              return(
-                <div key={row[0]} style={{background:"#040c18",border:"1px solid #1e3050",borderRadius:6,padding:"5px 8px"}}>
-                  <div style={{fontSize:10,color:row[2],marginBottom:2}}>{row[0]}</div>
-                  <div style={{fontSize:14,fontWeight:800,color:row[2]}}>{s.market==="JP"?"¥"+row[1].toLocaleString():"$"+row[1]}</div>
-                </div>
-              );
-            })}
-          </div>
-          <div style={{fontSize:11,color:"#2a5070",marginTop:5}}>S1割れ→S2、S2割れ→ATR下限が次の下値目安</div>
-        </div>
-      )}
       {showSim&&createPortal((function(){
         var bp=parseFloat(simBuy)||0;var sh=parseFloat(simShares)||0;
         var isJP=s.market==="JP";
