@@ -643,11 +643,11 @@ function getSignalWeight(sigKey){
 }
 // breakdown表示名 → 実際に積み上がるシグナルラベル群のマッピング（重み適用用）
 var CATEGORY_SIGNAL_MAP={
-  "VWAP":["VWAP"],"VWAP傾き":["VWAP傾き"],"Pivot":["Pivot"],"ATR(値幅)":["ATR"],"対TOPIX":["対TOPIX"],
+  "VWAP":["VWAP"],"VWAP傾き":["VWAP傾き"],"Pivot":["Pivot"],"ATR(値幅)":["ATR"],"ATR消化率":["ATR消化率"],"対TOPIX":["対TOPIX"],
   "トレンド":["トレンド","上位足一致(5本毎)","上位足一致(15本毎)"],"EMA整列":["EMA整列"],
   "MACD":["MACD"],"RSI":["RSI"],"BB":["BB","BB収束"],"Stoch":["Stoch"],
   "出来高/OBV":["OBV","出来高"],
-  "ギャップ":["ギャップ"],"当日ブレイク":["当日ブレイク"]
+  "ギャップ":["ギャップ"],"当日ブレイク":["当日ブレイク"],"寄り付きレンジ":["寄り付きレンジ"],"コンフルエンス":["コンフルエンス"]
 };
 // 過去の的中率に基づき、breakdownカテゴリごとの点数を補正する
 function applySignalWeights(sc,signals,breakdown){
@@ -755,6 +755,23 @@ function analyzeStock(stock,pd,vixVal){
   else{sc-=5;signals.push({label:"ATR",val:"値幅不足("+atrPct.toFixed(2)+"%)",state:-1});}
   breakdown.push({label:"ATR(値幅)",delta:sc-scChk});scChk=sc;
   // ────────────────────────────────────────────────────────────────────────────
+
+  // ── ATR消化率（補助・最大-8点）───────────────────────────────────────────
+  // 本日の値幅(高値-安値)がATR(14)の何%に達しているかを見る。既に値幅の大部分を
+  // 使い切っている場合、その日のうちにさらに同方向へ伸びる余地は乏しく、
+  // 高値掴み・追いかけ買いのリスクが高いと判断してスコアを抑える（ボーナスは付けない）
+  if(todayStart!==null&&atr>0){
+    var tHighsAtr=highs.slice(todayStart,n+1),tLowsAtr=lows.slice(todayStart,n+1);
+    if(tHighsAtr.length>0){
+      var todayRange=Math.max.apply(null,tHighsAtr)-Math.min.apply(null,tLowsAtr);
+      var atrUsedPct=todayRange/atr*100;
+      if(atrUsedPct>=130){sc-=8;signals.push({label:"ATR消化率",val:"消化"+atrUsedPct.toFixed(0)+"%(過熱・追随危険)",state:-1});}
+      else if(atrUsedPct>=90){sc-=4;signals.push({label:"ATR消化率",val:"消化"+atrUsedPct.toFixed(0)+"%(値幅使い切り注意)",state:-1});}
+      else if(atrUsedPct>=50){signals.push({label:"ATR消化率",val:"消化"+atrUsedPct.toFixed(0)+"%(順調)",state:0});}
+      else{signals.push({label:"ATR消化率",val:"消化"+atrUsedPct.toFixed(0)+"%(値幅余地あり)",state:0});}
+    }
+  }
+  breakdown.push({label:"ATR消化率",delta:sc-scChk});scChk=sc;
 
   var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
 
@@ -971,6 +988,39 @@ function analyzeStock(stock,pd,vixVal){
     }
   }
   breakdown.push({label:"当日ブレイク",delta:sc-scChk});scChk=sc;
+
+  // ── 寄り付きレンジブレイク Opening Range Break（補助・最大±8点）─────────
+  // 寄り付き最初の2本(15分足×2=30分)の高安を「寄り付きレンジ」とし、その後の
+  // 値動きがレンジを上下どちらに抜けたかを見る。日本株デイトレで定番の手法
+  var OR_BARS=2; // 寄り付きから30分
+  if(todayStart!==null&&n-todayStart>=OR_BARS){
+    var orHighs=highs.slice(todayStart,todayStart+OR_BARS),orLows=lows.slice(todayStart,todayStart+OR_BARS);
+    var orHigh=Math.max.apply(null,orHighs),orLow=Math.min.apply(null,orLows);
+    if(price>orHigh){sc+=8;signals.push({label:"寄り付きレンジ",val:"レンジ上抜け(ORB買い)",state:1});}
+    else if(price<orLow){sc-=8;signals.push({label:"寄り付きレンジ",val:"レンジ下抜け(ORB売り)",state:-1});}
+    else{signals.push({label:"寄り付きレンジ",val:"レンジ内(様子見)",state:0});}
+  }
+  breakdown.push({label:"寄り付きレンジ",delta:sc-scChk});scChk=sc;
+
+  // ── コンフルエンスボーナス（複合・最大±15点）─────────────────────────────
+  // 個別シグナルは単独では精度が低くても、値動き・出来高・トレンドなど異なる系統が
+  // 同時に同じ方向を向いている場面は期待値が高い、という考え方に基づくボーナス。
+  // 主要8シグナルのうち、同方向(state)がいくつ揃っているかで加減点する
+  var CONFLUENCE_LABELS=["VWAP","VWAP傾き","EMA整列","トレンド","出来高","当日ブレイク","寄り付きレンジ","ギャップ"];
+  var bullCount=0,bearCount=0;
+  CONFLUENCE_LABELS.forEach(function(lbl){
+    var hit=signals.find(function(sig){return sig.label===lbl;});
+    if(hit&&hit.state===1) bullCount++;
+    if(hit&&hit.state===-1) bearCount++;
+  });
+  if(bullCount>=6){sc+=15;signals.push({label:"コンフルエンス",val:"強気シグナル多数一致("+bullCount+"/8)",state:1});}
+  else if(bullCount>=4){sc+=8;signals.push({label:"コンフルエンス",val:"強気シグナル一致("+bullCount+"/8)",state:1});}
+  else if(bullCount>=3){sc+=4;signals.push({label:"コンフルエンス",val:"強気シグナルやや一致("+bullCount+"/8)",state:1});}
+  else if(bearCount>=6){sc-=15;signals.push({label:"コンフルエンス",val:"弱気シグナル多数一致("+bearCount+"/8)",state:-1});}
+  else if(bearCount>=4){sc-=8;signals.push({label:"コンフルエンス",val:"弱気シグナル一致("+bearCount+"/8)",state:-1});}
+  else if(bearCount>=3){sc-=4;signals.push({label:"コンフルエンス",val:"弱気シグナルやや一致("+bearCount+"/8)",state:-1});}
+  else{signals.push({label:"コンフルエンス",val:"シグナル分散(一致なし)",state:0});}
+  breakdown.push({label:"コンフルエンス",delta:sc-scChk});scChk=sc;
 
   // ── 過去の的中率に基づく重み調整（サンプル10件未満のシグナルは調整なし）──
   sc=applySignalWeights(sc,signals,breakdown);
@@ -1414,7 +1464,7 @@ function SignalDetailList(p){
       )}
       <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
-        {(p.signals||[]).filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label.startsWith("RSI");}).map(function(sig,i){
+        {(p.signals||[]).filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");}).map(function(sig,i){
           return(
             <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
               <span style={{fontSize:12,color:"#4a7090"}}>{sig.label}</span>
