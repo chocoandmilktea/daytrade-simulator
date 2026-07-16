@@ -235,7 +235,7 @@ async function buildStockUniverse(manualSectors,skipAI){
 // 15分足データ取得（メイン分析用・約20営業日分。実際の取得期間はapi/stock.js側で固定）
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,sectorChange:cached.sectorChange,sectorName:cached.sectorName};}
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],opens:cached.opens?cached.opens.slice():[],dates:cached.dates?cached.dates.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,sectorChange:cached.sectorChange,sectorName:cached.sectorName};}
   var json=await enqueueStock(async function(){
     var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(25000),cache:"no-store"});
     var body=await res.json().catch(function(){return null;});
@@ -253,9 +253,9 @@ async function fetchYahoo(ticker){
   var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null,topixChange=result.topixChange!=null?result.topixChange:null;
   var sectorChange=result.sectorChange!=null?result.sectorChange:null,sectorName=result.sectorName||null;
   var filledClose=fill(q.close);
-  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,sectorChange:sectorChange,sectorName:sectorName};
+  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,sectorChange:sectorChange,sectorName:sectorName};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,sectorChange:data.sectorChange,sectorName:data.sectorName};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),opens:data.opens.slice(),dates:data.dates.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,sectorChange:data.sectorChange,sectorName:data.sectorName};
 }
 
 
@@ -643,10 +643,11 @@ function getSignalWeight(sigKey){
 }
 // breakdown表示名 → 実際に積み上がるシグナルラベル群のマッピング（重み適用用）
 var CATEGORY_SIGNAL_MAP={
-  "VWAP":["VWAP"],"Pivot":["Pivot"],"ATR(値幅)":["ATR"],"対TOPIX":["対TOPIX"],
-  "トレンド":["トレンド","上位足一致(5本毎)","上位足一致(15本毎)"],
+  "VWAP":["VWAP"],"VWAP傾き":["VWAP傾き"],"Pivot":["Pivot"],"ATR(値幅)":["ATR"],"対TOPIX":["対TOPIX"],
+  "トレンド":["トレンド","上位足一致(5本毎)","上位足一致(15本毎)"],"EMA整列":["EMA整列"],
   "MACD":["MACD"],"RSI":["RSI"],"BB":["BB","BB収束"],"Stoch":["Stoch"],
-  "出来高/OBV":["OBV","出来高"]
+  "出来高/OBV":["OBV","出来高"],
+  "ギャップ":["ギャップ"],"当日ブレイク":["当日ブレイク"]
 };
 // 過去の的中率に基づき、breakdownカテゴリごとの点数を補正する
 function applySignalWeights(sc,signals,breakdown){
@@ -695,6 +696,19 @@ function analyzeStock(stock,pd,vixVal){
   var atr=atrRaw!=null?Math.round(atrRaw):Math.round(price*0.02);
   var atrPct=price>0?(atr/price*100):0;
 
+  // ── 当日データの切り出し（dates配列から本日分の開始インデックスを特定）────
+  // 取引時間中は当日のバーがまだ26本(DAY_BARS)に満たないため、日付一致で
+  // 厳密に「本日分」だけを取り出す（固定本数での近似だと前日分が混入するため）
+  // ギャップ・当日ブレイク・VWAP傾きの各シグナルで共通して使う
+  var todayStart=null;
+  if(pd.dates&&pd.dates.length===closes.length){
+    var lastD=pd.dates[pd.dates.length-1];
+    for(var di2=pd.dates.length-1;di2>=0;di2--){
+      if(pd.dates[di2]!==lastD){todayStart=di2+1;break;}
+    }
+    if(todayStart===null) todayStart=0; // 全データが同一日（データ不足時のフォールバック）
+  }
+
   // ── VWAP・ピボット計算 ─────────────────────────────────────────────────────
   var vwap=volumes.length>0?calcVWAP(closes,highs,lows,volumes):null;
   var pivot=calcPivot(closes,highs,lows);
@@ -708,6 +722,23 @@ function analyzeStock(stock,pd,vixVal){
     else{sc-=8;signals.push({label:"VWAP",val:"下方乖離("+vwapDiff.toFixed(1)+"%)",state:-1});}
   }
   breakdown.push({label:"VWAP",delta:sc-scChk});scChk=sc;
+
+  // ── VWAP傾き（補助・最大6点）────────────────────────────────────────────
+  // 「本日分」のバーだけを使って直近4本(約1時間)前のVWAPと比較する。
+  // 全期間累積のVWAPだと1日分の傾きはほぼ動かないため、本日データに限定する。
+  // 価格がVWAPより上でも、VWAP自体が下降中なら勢いは弱いとみなし加点を抑える。
+  var VWAP_SLOPE_LOOKBACK=4;
+  if(todayStart!==null&&vwap!==null&&n-todayStart>=VWAP_SLOPE_LOOKBACK){
+    var vwapPrev=calcVWAP(closes.slice(todayStart,n+1-VWAP_SLOPE_LOOKBACK),highs.slice(todayStart,n+1-VWAP_SLOPE_LOOKBACK),lows.slice(todayStart,n+1-VWAP_SLOPE_LOOKBACK),volumes.slice(todayStart,n+1-VWAP_SLOPE_LOOKBACK));
+    if(vwapPrev!==null&&vwapPrev>0){
+      var vwapSlopePct=(vwap-vwapPrev)/vwapPrev*100;
+      var aboveVwap=price>vwap;
+      if(vwapSlopePct>=0.15){sc+=aboveVwap?6:2;signals.push({label:"VWAP傾き",val:"上昇中(+"+vwapSlopePct.toFixed(2)+"%)",state:1});}
+      else if(vwapSlopePct<=-0.15){sc-=aboveVwap?4:2;signals.push({label:"VWAP傾き",val:"下降中("+vwapSlopePct.toFixed(2)+"%)",state:-1});}
+      else{signals.push({label:"VWAP傾き",val:"横ばい",state:0});}
+    }
+  }
+  breakdown.push({label:"VWAP傾き",delta:sc-scChk});scChk=sc;
 
   // ── Pivotポイント シグナル（補助・最大5点）─────────────────────────────
   if(pivot!==null){
@@ -783,6 +814,17 @@ function analyzeStock(stock,pd,vixVal){
   if(trendDirNow===-1&&dir5===-1){sc-=3;signals.push({label:"上位足一致(5本毎)",val:"下降一致",state:-1});}
   if(trendDirNow===-1&&dir15===-1){sc-=3;signals.push({label:"上位足一致(15本毎)",val:"下降一致",state:-1});}
   breakdown.push({label:"トレンド",delta:sc-scChk});scChk=sc;
+
+  // ── EMA多重整列（補助・最大8点）─────────────────────────────────────────
+  // EMA5・EMA20・EMA60の並び順を見る。短期>中期>長期の順に並んでいれば
+  // 「押し目待ちの上昇トレンド」として信頼度が高い。逆順は下降の継続を示唆
+  var emaMid20=calcEMA(closes,20),emaSlow60=calcEMA(closes,60);
+  var e5v=emaFast5[n],e20v=emaMid20[n],e60v=emaSlow60[n];
+  if(e5v>e20v&&e20v>e60v){sc+=8;signals.push({label:"EMA整列",val:"完全上昇整列(5>20>60)",state:1});}
+  else if(e5v<e20v&&e20v<e60v){sc-=6;signals.push({label:"EMA整列",val:"完全下降整列(5<20<60)",state:-1});}
+  else{signals.push({label:"EMA整列",val:"整列なし(もつれ)",state:0});}
+  breakdown.push({label:"EMA整列",delta:sc-scChk});scChk=sc;
+
 
   // ── MACD（補助・最大4点）───────────────────────────────────────────────
   if(mNow.hist>0&&mPrev&&mPrev.hist<=0){sc+=4;signals.push({label:"MACD",val:"ゴールデンクロス",state:1});}
@@ -889,6 +931,46 @@ function analyzeStock(stock,pd,vixVal){
   }
   sc=sc+obScore;
   breakdown.push({label:"出来高/OBV",delta:sc-scChk});scChk=sc;
+
+  // ── 寄り付きギャップ（補助・最大5点）───────────────────────────────────
+  // 当日始値が前日終値からどれだけ離れて始まったか。さらに「ギャップを維持
+  // しているか(モメンタム継続)／埋めに来ているか(反転警戒)」も合わせて判定
+  if(todayStart!==null&&pd.opens&&pd.opens[todayStart]>0){
+    var todayOpen=pd.opens[todayStart];
+    var gapPct=pd.previousClose?((todayOpen-pd.previousClose)/pd.previousClose*100):0;
+    var holdPct=todayOpen?((price-todayOpen)/todayOpen*100):0;
+    if(gapPct>=1.5){
+      if(holdPct>=-0.3){sc+=5;signals.push({label:"ギャップ",val:"上ギャップ維持(+"+gapPct.toFixed(1)+"%)",state:1});}
+      else{sc-=3;signals.push({label:"ギャップ",val:"上ギャップ失速(埋め警戒)",state:-1});}
+    }else if(gapPct<=-1.5){
+      if(holdPct<=0.3){sc-=5;signals.push({label:"ギャップ",val:"下ギャップ継続("+gapPct.toFixed(1)+"%)",state:-1});}
+      else{sc+=3;signals.push({label:"ギャップ",val:"下ギャップ埋め戻し",state:1});}
+    }else{
+      signals.push({label:"ギャップ",val:"ギャップなし",state:0});
+    }
+  }
+  breakdown.push({label:"ギャップ",delta:sc-scChk});scChk=sc;
+
+  // ── 当日高安ブレイク（補助・最大8点）───────────────────────────────────
+  // 現在値が「本日これまでの高値/安値」を更新したか。出来高急増を伴う場合は
+  // 信頼度の高いブレイクとみなし加点を強める
+  if(todayStart!==null&&todayStart<n){
+    var tHighs=highs.slice(todayStart,n),tLows=lows.slice(todayStart,n); // 現在足を除く本日の値幅
+    if(tHighs.length>0){
+      var tHigh=Math.max.apply(null,tHighs),tLow=Math.min.apply(null,tLows);
+      var hasVolSurge=signals.find(function(sig){return sig.label==="出来高"&&sig.state===1;});
+      if(price>tHigh){
+        sc+=hasVolSurge?8:4;
+        signals.push({label:"当日ブレイク",val:"高値更新"+(hasVolSurge?"(出来高伴う)":""),state:1});
+      }else if(price<tLow){
+        sc-=hasVolSurge?8:4;
+        signals.push({label:"当日ブレイク",val:"安値更新"+(hasVolSurge?"(出来高伴う)":""),state:-1});
+      }else{
+        signals.push({label:"当日ブレイク",val:"レンジ内",state:0});
+      }
+    }
+  }
+  breakdown.push({label:"当日ブレイク",delta:sc-scChk});scChk=sc;
 
   // ── 過去の的中率に基づく重み調整（サンプル10件未満のシグナルは調整なし）──
   sc=applySignalWeights(sc,signals,breakdown);
@@ -1332,7 +1414,7 @@ function SignalDetailList(p){
       )}
       <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
-        {(p.signals||[]).filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label.startsWith("RSI");}).map(function(sig,i){
+        {(p.signals||[]).filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label.startsWith("RSI");}).map(function(sig,i){
           return(
             <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
               <span style={{fontSize:12,color:"#4a7090"}}>{sig.label}</span>
