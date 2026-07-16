@@ -232,12 +232,12 @@ async function buildStockUniverse(manualSectors,skipAI){
   return{stocks:out,sectors:sectors};
 }
 
-// 15分足データ取得（メイン分析用・60日分）
+// 15分足データ取得（メイン分析用・約20営業日分。実際の取得期間はapi/stock.js側で固定）
 async function fetchYahoo(ticker){
   var now=Date.now();
   if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,sectorChange:cached.sectorChange,sectorName:cached.sectorName};}
   var json=await enqueueStock(async function(){
-    var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker)+"&range=60d",{signal:AbortSignal.timeout(25000),cache:"no-store"});
+    var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(25000),cache:"no-store"});
     var body=await res.json().catch(function(){return null;});
     if(!res.ok){
       var msg=body&&body.error?body.error:("HTTP "+res.status); // サーバー側のエラー詳細をそのまま伝える
@@ -673,20 +673,15 @@ function analyzeStock(stock,pd,vixVal){
   var volumes=pd.volumes?pd.volumes.slice():[];
   var n=closes.length-1;
   // ── 足種別パラメータ切替 ──────────────────────────────────────────────────
-  // JP: J-Quants 1分足・30営業日（1日≒390本 東証9:00-15:30）
-  //     20日相当=390×20=7800本だが取得は30日≒11700本
-  //     実用上はバー数上限に合わせて縮小定義
-  // US: Yahoo Finance 15分足（1日≒26本）・60日分≒1560本
   var isJP=stock.market==="JP";
-  // JP:1分足/20日(1日≒390本) / US:5分足/30日(1日≒78本)
-  var DAY_BARS   =isJP?390 :78;    // 1日あたりのバー数
-  var RSI_P      =isJP?5460:1092;  // JP:14日相当 / US:14日相当
-  var BB_P       =isJP?7800:1560;  // JP:20日 / US:20日
-  var STOCH_P    =isJP?5460:1092;  // JP:14日相当 / US:14日相当
-  var RECENT_BARS=isJP?7800:1560;  // JP:20日 / US:20日
-  var BB_LOOKBACK_S=isJP?1950:390; // short: 約5日相当
-  var BB_LOOKBACK_M=isJP?3900:780; // mid:   約10日相当
-  var BB_LOOKBACK_L=isJP?7800:1560;// stable: 約20日相当
+  // デイトレ対応：JP/US共に15分足に統一（取引時間が約6.5時間で揃うため1日≒26本で共通化）
+  // JP: J-Quantsの1分足をサーバー側(api/stock.js)で15分足に集計 / US: Yahoo Financeから15分足を直接取得
+  var DAY_BARS   =26;   // 1日あたりのバー数
+  var BB_P       =520;  // 20日相当(26本×20日)
+  var RECENT_BARS=520;  // 20日相当
+  var BB_LOOKBACK_S=130;// short: 約5日相当
+  var BB_LOOKBACK_M=260;// mid:   約10日相当
+  var BB_LOOKBACK_L=520;// stable: 約20日相当
   var YEAR_BARS=closes.length;     // 取得全期間を52週相当として使用
   // ───────────────────────────────────────────────────────────────────────
   var macdArr=calcMACD(closes),rsiVal=calcRSI(closes)[n];
@@ -764,18 +759,17 @@ function analyzeStock(stock,pd,vixVal){
   var fromLow=low52>0?((price-low52)/low52*100):0;
   var range52=high52-low52||1;
   var position52=((price-low52)/range52*100);
+  var yearRange=high52>0?(high52-low52)/low52*100:0; // 52週高安レンジ(%)。ボラティリティ種別判定に使用
+  var absChange=Math.abs(parseFloat(change)); // 前日比(%)の絶対値。同上
 
-  // ── トレードタイプ先行判定（BB収束本数に使用）──────────────────────────
-  var yearData0=closes.slice(-YEAR_BARS);
-  var high52_0=yearData0.length>0?Math.max.apply(null,yearData0):price;
-  var low52_0=yearData0.length>0?Math.min.apply(null,yearData0):price;
-  var yearRange0=high52_0>0?(high52_0-low52_0)/low52_0*100:0;
-  var recentC0=closes.slice(-RECENT_BARS);
-  var avgDC0=0;
-  if(recentC0.length>1){var tc0=0;for(var di=1;di<recentC0.length;di++)tc0+=Math.abs((recentC0[di]-recentC0[di-1])/recentC0[di-1]*100);avgDC0=tc0/(recentC0.length-1);}
-  var absChg0=Math.abs(pd.previousClose?((price-pd.previousClose)/pd.previousClose*100):0);
-  var tradeType0=yearRange0>=60||avgDC0>=2||absChg0>=5?"short":yearRange0>=25||avgDC0>=1||absChg0>=2?"mid":"stable";
-  var bbLookback=tradeType0==="short"?BB_LOOKBACK_S:tradeType0==="mid"?BB_LOOKBACK_M:BB_LOOKBACK_L;
+  // ── ボラティリティ種別判定（BB収束lookback選択・トレードタイプ表示ラベルの両方で使用）──
+  // デイトレ対応：avgBarChangeは足の粒度に依存するため15分足基準に再調整（旧: short>=2% mid>=1%）
+  // yearRange・absChangeは日次/期間ベースの指標のため足種変更の影響を受けず、閾値はそのまま
+  var recentC=closes.slice(-RECENT_BARS);
+  var avgBarChange=0;
+  if(recentC.length>1){var tc=0;for(var di=1;di<recentC.length;di++)tc+=Math.abs((recentC[di]-recentC[di-1])/recentC[di-1]*100);avgBarChange=tc/(recentC.length-1);}
+  var volType=yearRange>=60||avgBarChange>=1.0||absChange>=5?"short":yearRange>=25||avgBarChange>=0.5||absChange>=2?"mid":"stable";
+  var bbLookback=volType==="short"?BB_LOOKBACK_S:volType==="mid"?BB_LOOKBACK_M:BB_LOOKBACK_L;
 
   // ── トレンド（メイン・最大18点）：直近の勢い(8点)＋上位足一致(10点)────
   var emaFast5=calcEMA(closes,5),emaFast13=calcEMA(closes,13);
@@ -939,25 +933,12 @@ function analyzeStock(stock,pd,vixVal){
   scChk=sc;
   // ──────────────────────────────────────────────────────────────────────────
 
-  var recentCloses=closes.slice(-RECENT_BARS); // 20日相当
-  var avgDailyChange=0;
-  if(recentCloses.length>1){
-    var totalChange=0;
-    for(var dc=1;dc<recentCloses.length;dc++){
-      totalChange+=Math.abs((recentCloses[dc]-recentCloses[dc-1])/recentCloses[dc-1]*100);
-    }
-    avgDailyChange=totalChange/(recentCloses.length-1);
-  }
-  var yearRange=high52>0?(high52-low52)/low52*100:0;
-  var absChange=Math.abs(parseFloat(change));
-  var tradeType,tradeLabel,tradeColor;
-  if(yearRange>=60||avgDailyChange>=2||absChange>=5){
-    tradeType="short";tradeLabel="⚡スキャル";tradeColor="#f43f5e";
-  }else if(yearRange>=25||avgDailyChange>=1||absChange>=2){
-    tradeType="mid";tradeLabel="📈デイトレ";tradeColor="#fbbf24";
-  }else{
-    tradeType="stable";tradeLabel="🌊スイング";tradeColor="#22d3a0";
-  }
+  // トレードタイプ表示ラベル：BB収束lookback選択で使ったvolType（yearRange/avgBarChange/absChangeは
+  // 冒頭で算出済み・足種変更の影響を受けないabsChange/yearRangeとavgBarChangeを流用するため再計算不要
+  var tradeType=volType,tradeLabel,tradeColor;
+  if(tradeType==="short"){tradeLabel="⚡スキャル";tradeColor="#f43f5e";}
+  else if(tradeType==="mid"){tradeLabel="📈デイトレ";tradeColor="#fbbf24";}
+  else{tradeLabel="🌊スイング";tradeColor="#22d3a0";}
 
   var winRateRaw=Math.min(88,Math.max(15,sc*0.72));
   // 実績winRateは後でactualWinRateが揃ってから上書き（表示用は暫定値）
@@ -3127,7 +3108,7 @@ function GuidePanel(){
   var CATS=[
     {key:"all",icon:"📋",label:"全銘柄",sections:[
       {title:null,items:["銘柄カードをタップ → 詳細シグナル表示"]},
-      {title:"📊 データ取得の方法",items:["米国株：Yahoo Finance・15分足（直近60日）","日本株：J-Quants・1分足（直近10営業日）","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
+      {title:"📊 データ取得の方法",items:["米国株：Yahoo Finance・15分足（直近60日）","日本株：J-Quants・1分足を15分足に集計（直近20営業日）","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
       {title:"📖 指標の見方（RSI・BB・BB収束・OBV・出来高）",items:[
         "【確認用】RSI（相対力指数）：30以下で売られすぎ・反発狙いの補助確認。70以上で買われすぎ・過熱感の補助確認。BBのシグナルと合わせて判断する",
         "【メイン判断】BB（ボリンジャーバンド）：バンドの収縮＝エネルギー蓄積→ブレイクアウト狙いの買い準備。バンドの拡大＝トレンド発生中。下限タッチで反発買い候補、上限タッチで過熱感・利確検討",
