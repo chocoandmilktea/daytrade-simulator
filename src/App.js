@@ -3128,13 +3128,13 @@ function SyncPanel(p){
     try{
       var res=await fetch(syncApi+"?userId="+id);
       var data=await res.json();
-      if(!data.favs)throw new Error("invalid");
+      if(!data.found)throw new Error("not found");
       applySyncedData(data,id);
       setSyncStatus("ok");
       setTimeout(function(){setSyncStatus(null);scan();},1500);
     }catch(e){setSyncStatus("error");setTimeout(function(){setSyncStatus(null);},2500);}
   }
-  // 合言葉＋PINでログイン（初めての組み合わせなら新規登録扱い）
+  // 合言葉＋PINでログイン（初めての組み合わせなら、今の端末データをそのまま新規登録する）
   async function loginWithPassphrase(){
     if(!word.trim()||!pin.trim())return;
     setLoginStatus("loading");
@@ -3142,7 +3142,15 @@ function SyncPanel(p){
       var id=await deriveUserId(word,pin);
       var res=await fetch(syncApi+"?userId="+id);
       var data=await res.json();
-      applySyncedData(data,id);
+      if(data.found){
+        // 既にこの合言葉で登録済み→サーバーのデータで復元
+        applySyncedData(data,id);
+      }else{
+        // 初めての合言葉＋PIN→端末データは消さず、そのままこのIDで新規登録
+        try{localStorage.setItem("daytrade_uid",id);}catch(e){}
+        if(setUserId)setUserId(id);
+        if(p.syncToServer)p.syncToServer(p.favs,p.favGroups,p.groupNames,p.appTrades,p.personalTrades,id);
+      }
       setLoginStatus("ok");
       setTimeout(function(){setLoginStatus(null);scan();},1500);
     }catch(e){setLoginStatus("error");setTimeout(function(){setLoginStatus(null);},2500);}
@@ -3473,8 +3481,8 @@ export default function App(){
   var fgS=useState(function(){try{var v=localStorage.getItem("fav_groups");return v?JSON.parse(v):{};}catch(e){return{};}});var favGroups=fgS[0],setFavGroups=fgS[1];
   var gnS=useState(function(){try{var v=localStorage.getItem("group_names");return v?Object.assign({},DEFAULT_GROUP_NAMES,JSON.parse(v)):Object.assign({},DEFAULT_GROUP_NAMES);}catch(e){return Object.assign({},DEFAULT_GROUP_NAMES);}});var groupNames=gnS[0],setGroupNames=gnS[1];
   var NOTIFY_API="https://daytrade-simulator.vercel.app/api/notify";
-  function syncToServer(nextFavs,nextGroups,nextGroupNames,nextAppTrades,nextPersonalTrades){
-    fetch(SYNC_API+"?userId="+userId,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+  function syncToServer(nextFavs,nextGroups,nextGroupNames,nextAppTrades,nextPersonalTrades,targetId){
+    fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       favs:nextFavs,
       scoreHist:getAllScoreHist(),
       groups:nextGroups,
@@ -3801,7 +3809,7 @@ export default function App(){
           {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading} favs={favs} toggleFav={toggleFav}/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="event"&&<EventPanel stocks={stocks}/>}
-          {activeTab==="sync"&&<SyncPanel userId={userId} setUserId={setUserId} syncApi={SYNC_API} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} setAppTrades={setAppTrades} setPersonalTrades={setPersonalTrades} scan={scan}/>}
+          {activeTab==="sync"&&<SyncPanel userId={userId} setUserId={setUserId} syncApi={SYNC_API} favs={favs} favGroups={favGroups} groupNames={groupNames} appTrades={appTrades} personalTrades={personalTrades} syncToServer={syncToServer} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} setAppTrades={setAppTrades} setPersonalTrades={setPersonalTrades} scan={scan}/>}
           {activeTab==="guide"&&<GuidePanel/>}
         </div>
       </div>
