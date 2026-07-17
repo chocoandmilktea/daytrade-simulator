@@ -34,7 +34,8 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     const data = await redis.get(key);
     if (!data) {
-      return res.status(200).json({ favs: [], scoreHist: {}, groups: {}, groupNames: {}, appTrades: [], personalTrades: [] });
+      // found:false → このIDでは一度も保存されたことがない（新規登録扱い）
+      return res.status(200).json({ found: false, favs: [], scoreHist: {}, groups: {}, groupNames: {}, appTrades: [], personalTrades: [] });
     }
 
     // GETのたびにTTLを90日リセット
@@ -42,6 +43,7 @@ export default async function handler(req, res) {
 
     const parsed = typeof data === 'string' ? JSON.parse(data) : data;
     return res.status(200).json({
+      found: true,
       favs: parsed.favs || [],
       scoreHist: parsed.scoreHist || {},
       groups: parsed.groups || {},
