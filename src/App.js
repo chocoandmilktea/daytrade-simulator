@@ -3090,14 +3090,37 @@ function IndexPanel(){
   );
 }
 
+// 合言葉＋PINから、常に同じデバイスIDを作り出す（サーバーには合言葉自体を送らない）
+async function deriveUserId(word,pin){
+  var text=(word||"").trim()+":"+(pin||"").trim();
+  var buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text));
+  var hex=Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,"0");}).join("");
+  return "u_"+hex.slice(0,16);
+}
+
 function SyncPanel(p){
-  var userId=p.userId,syncApi=p.syncApi,setFavs=p.setFavs,setFavGroups=p.setFavGroups,setGroupNames=p.setGroupNames,scan=p.scan;
+  var userId=p.userId,syncApi=p.syncApi,setUserId=p.setUserId,setFavs=p.setFavs,setFavGroups=p.setFavGroups,setGroupNames=p.setGroupNames,scan=p.scan;
   var copyStatusS=useState(null);var copyStatus=copyStatusS[0],setCopyStatus=copyStatusS[1];
   var inputS=useState("");var input=inputS[0],setInput=inputS[1];
   var syncStatusS=useState(null);var syncStatus=syncStatusS[0],setSyncStatus=syncStatusS[1];
+  var wordS=useState("");var word=wordS[0],setWord=wordS[1];
+  var pinS=useState("");var pin=pinS[0],setPin=pinS[1];
+  var loginStatusS=useState(null);var loginStatus=loginStatusS[0],setLoginStatus=loginStatusS[1];
   function copyId(){
     if(navigator.clipboard){navigator.clipboard.writeText(userId).then(function(){setCopyStatus("ok");setTimeout(function(){setCopyStatus(null);},2000);});}
     else{prompt("ユーザーID",userId);}
+  }
+  // サーバーから取得したデータを画面とlocalStorageに反映する共通処理
+  function applySyncedData(data,id){
+    setFavs(data.favs?data.favs.slice():[]);
+    try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs||[]));}catch(e){}
+    if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
+    if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
+    if(data.appTrades){saveTrades("app",data.appTrades);p.setAppTrades(data.appTrades);}
+    if(data.personalTrades){saveTrades("personal",data.personalTrades);p.setPersonalTrades(data.personalTrades);}
+    if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(t){localStorage.setItem("sh_"+t,JSON.stringify(data.scoreHist[t]));});}catch(e){}}
+    try{localStorage.setItem("daytrade_uid",id);}catch(e){}
+    if(setUserId)setUserId(id);
   }
   async function syncById(){
     var id=input.trim();if(!id)return;
@@ -3106,23 +3129,41 @@ function SyncPanel(p){
       var res=await fetch(syncApi+"?userId="+id);
       var data=await res.json();
       if(!data.favs)throw new Error("invalid");
-      setFavs(data.favs.slice());
-      try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}
-      if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
-      if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
-      if(data.appTrades){saveTrades("app",data.appTrades);p.setAppTrades(data.appTrades);}
-      if(data.personalTrades){saveTrades("personal",data.personalTrades);p.setPersonalTrades(data.personalTrades);}
-      try{localStorage.setItem("daytrade_uid",id);}catch(e){}
+      applySyncedData(data,id);
       setSyncStatus("ok");
       setTimeout(function(){setSyncStatus(null);scan();},1500);
     }catch(e){setSyncStatus("error");setTimeout(function(){setSyncStatus(null);},2500);}
   }
+  // 合言葉＋PINでログイン（初めての組み合わせなら新規登録扱い）
+  async function loginWithPassphrase(){
+    if(!word.trim()||!pin.trim())return;
+    setLoginStatus("loading");
+    try{
+      var id=await deriveUserId(word,pin);
+      var res=await fetch(syncApi+"?userId="+id);
+      var data=await res.json();
+      applySyncedData(data,id);
+      setLoginStatus("ok");
+      setTimeout(function(){setLoginStatus(null);scan();},1500);
+    }catch(e){setLoginStatus("error");setTimeout(function(){setLoginStatus(null);},2500);}
+  }
   var favCount=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]").length;}catch(e){return 0;}})();
   var tradeCount=(function(){try{return loadTrades("app").length+loadTrades("personal").length;}catch(e){return 0;}})();
+  var loginReady=word.trim()&&pin.trim();
   return(
     <div>
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
-        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:10}}>🔗 デバイス間同期</div>
+        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:10}}>🔐 合言葉でログイン</div>
+        <div style={{fontSize:12,color:"#4a7090",marginBottom:10}}>合言葉とPINを覚えておけば、キャッシュを消した後や別端末でも同じデータに戻せます</div>
+        <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:14,width:"100%",boxSizing:"border-box",marginBottom:8}} value={word} placeholder="合言葉（例：さくら）" onChange={function(e){setWord(e.target.value);}}/>
+        <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:14,width:"100%",boxSizing:"border-box",marginBottom:10}} value={pin} placeholder="PIN（例：1234）" inputMode="numeric" onChange={function(e){setPin(e.target.value);}}/>
+        <button onClick={loginWithPassphrase} disabled={!loginReady||loginStatus==="loading"} style={{width:"100%",background:loginReady?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:14,fontWeight:700,cursor:loginReady?"pointer":"not-allowed"}}>
+          {loginStatus==="loading"?"ログイン中...":loginStatus==="ok"?"✅ ログイン完了！":loginStatus==="error"?"❌ 失敗しました":"ログイン / 新規登録"}
+        </button>
+        <div style={{fontSize:11,color:"#2a6060",marginTop:8}}>※ 初めて使う合言葉＋PINの組み合わせなら、新規データとして自動的に登録されます</div>
+      </div>
+      <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
+        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:10}}>🔗 デバイスID（上級者向け）</div>
         <div style={{display:"flex",gap:12,marginBottom:14}}>
           <div style={{background:"#050e1c",borderRadius:8,padding:"10px 16px"}}><div style={{fontSize:11,color:"#2a6090"}}>お気に入り</div><div style={{fontSize:18,fontWeight:800,color:"#fbbf24"}}>{favCount}銘柄</div></div>
           <div style={{background:"#050e1c",borderRadius:8,padding:"10px 16px"}}><div style={{fontSize:11,color:"#2a6090"}}>トレード</div><div style={{fontSize:18,fontWeight:800,color:"#0ea5e9"}}>{tradeCount}件</div></div>
@@ -3146,7 +3187,7 @@ function SyncPanel(p){
       </div>
       <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#4a90c0",marginBottom:10}}>使い方</div>
-        {[["1","iPadで「IDをコピー」をタップ"],["2","iPhoneのDaySimulatorを開く"],["3","🔗タブ → IDを貼り付けて「同期」"],["4","お気に入り・トレードが反映される"]].map(function(row){
+        {[["1","🔐で合言葉＋PINを決めてログイン"],["2","別端末でも同じ合言葉＋PINでログイン"],["3","キャッシュを消してしまっても、同じ合言葉＋PINで元に戻せる"]].map(function(row){
           return(<div key={row[0]} style={{display:"flex",gap:10,marginBottom:8,alignItems:"flex-start"}}>
             <span style={{background:"#0ea5e9",color:"#fff",borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0}}>{row[0]}</span>
             <span style={{fontSize:13,color:"#b8cce0"}}>{row[1]}</span>
@@ -3424,7 +3465,7 @@ export default function App(){
     scan(last);
   }
 
-  var userIdS=useState(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}});var userId=userIdS[0];
+  var userIdS=useState(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}});var userId=userIdS[0],setUserId=userIdS[1];
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
   function getAllScoreHist(){var result={};try{Object.keys(localStorage).forEach(function(k){if(k.startsWith("sh_"))result[k.slice(3)]=JSON.parse(localStorage.getItem(k)||"[]");});}catch(e){}return result;}
   var fvS=useState(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}});var favs=fvS[0],setFavs=fvS[1];
@@ -3760,7 +3801,7 @@ export default function App(){
           {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading} favs={favs} toggleFav={toggleFav}/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="event"&&<EventPanel stocks={stocks}/>}
-          {activeTab==="sync"&&<SyncPanel userId={userId} syncApi={SYNC_API} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} setAppTrades={setAppTrades} setPersonalTrades={setPersonalTrades} scan={scan}/>}
+          {activeTab==="sync"&&<SyncPanel userId={userId} setUserId={setUserId} syncApi={SYNC_API} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} setAppTrades={setAppTrades} setPersonalTrades={setPersonalTrades} scan={scan}/>}
           {activeTab==="guide"&&<GuidePanel/>}
         </div>
       </div>
