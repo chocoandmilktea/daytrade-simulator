@@ -1100,6 +1100,14 @@ function analyzeStock(stock,pd,vixVal){
   // ── 本日の想定値幅（atrはスコア計算冒頭で算出済みのものを再利用）──────────
   var atrUpper=Math.round(price+atr);
   var atrLower=Math.round(price-atr);
+  // ── 利確/損切りライン（堅実パターン：利確ATR×1／損切りATR×0.5）──────────
+  var isJPmkt=stock.market==="JP";
+  var profitTargetV=price+atr*1;
+  var stopLossV=price-atr*0.5;
+  var profitLoss={
+    target:isJPmkt?Math.round(profitTargetV):parseFloat(profitTargetV.toFixed(2)),
+    stop:isJPmkt?Math.round(stopLossV):parseFloat(stopLossV.toFixed(2))
+  };
   // ── 週足高安値（直近5営業日相当）──────────────────────────────────────────
   var weekBars=Math.min(DAY_BARS*5,closes.length);
   var weekHighsArr=highs.slice(-weekBars),weekLowsArr=lows.slice(-weekBars);
@@ -1157,7 +1165,7 @@ function analyzeStock(stock,pd,vixVal){
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
     aptScore:aptScore,
-    atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,
+    atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,profitLoss:profitLoss,
     scoreHist:scoreHist,
     actualWinRate:calcActualWinRate(scoreHist),
     vwap:vwap?parseFloat(vwap.toFixed(stock.market==="JP"?0:2)):null,
@@ -1839,6 +1847,23 @@ function StockCard(p){
               {!aiLoading&&aiText&&(
                 <button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>
               )}
+            </div>
+          )}
+
+          {s.profitLoss&&(
+            <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン（堅実型）</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}>
+                  <div style={{fontSize:9,color:"#22d3a0",marginBottom:2}}>💰 利確目標(ATR×1)</div>
+                  <div style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}</div>
+                </div>
+                <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"5px 8px"}}>
+                  <div style={{fontSize:9,color:"#f43f5e",marginBottom:2}}>🛑 損切り(ATR×0.5)</div>
+                  <div style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}</div>
+                </div>
+              </div>
+              <div style={{fontSize:10,color:"#2a5070",marginTop:5}}>現在値からの目安値幅（小さめの値幅で早めに利確・損切りする堅実型）</div>
             </div>
           )}
 
