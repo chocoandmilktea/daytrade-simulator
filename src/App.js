@@ -2591,9 +2591,10 @@ function TradePanel(p){
   var totalPnl=doneList.reduce(function(a,t){return a+(t.pnl||0);},0);
   // 勝率：完了トレードのうち損益がプラスだった割合
   var winRate=doneList.length?Math.round(doneList.filter(function(t){return(t.pnl||0)>0;}).length/doneList.length*100):null;
-  // 的中率の集計対象：アプリ予想で登録した銘柄のみ（お気に入りタブの集計とは分離）。個人予想では的中率自体を出さない
-  var appTradeTickers=sub==="app"?Array.from(new Set(p.appTrades.map(function(t){return t.ticker;}))):[];
-  var showAccuracy=sub==="app";
+  // 的中率の集計対象：現在選択中のタブ（アプリ予想／個人予想）に登録した銘柄のみ（お気に入りタブの集計とは分離）
+  var tradeTickers=Array.from(new Set(list.map(function(t){return t.ticker;})));
+  var showAccuracy=true;
+  var predLabel=sub==="app"?"アプリ予想":"個人予想";
   var selTrade=selId?list.find(function(t){return t.id===selId;}):null;
   var selStock=selTrade?stocks.find(function(x){return x.ticker===selTrade.ticker;}):null;
 
@@ -2649,13 +2650,13 @@ function TradePanel(p){
 
         {!isMobile&&showAccuracy&&(
           <div style={{flex:1,position:"sticky",top:0,background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:16,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-            <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:10}}>📊 シグナル的中率（アプリ予想銘柄）</div>
-            <SignalAccuracyContent tickers={appTradeTickers}/>
+            <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:10}}>{"📊 シグナル的中率（"+predLabel+"銘柄）"}</div>
+            <SignalAccuracyContent tickers={tradeTickers} label={predLabel}/>
           </div>
         )}
       </div>
 
-      {showAcc&&createPortal(<SignalAccuracyModal tickers={appTradeTickers} onClose={function(){setShowAcc(false);}}/>,document.body)}
+      {showAcc&&createPortal(<SignalAccuracyModal tickers={tradeTickers} label={predLabel} onClose={function(){setShowAcc(false);}}/>,document.body)}
 
       {selTrade&&createPortal(
         <TradeDetailModal t={selTrade} s={selStock} kind={sub} stocks={stocks} toggleFav={toggleFav} isFav={isFavRef}
@@ -3246,11 +3247,12 @@ function formatSigKeyLabel(key){
 // tickers省略時はお気に入り銘柄で集計。指定時はそのtickerだけで集計（トレードタブ用・お気に入りとは分離）
 function SignalAccuracyContent(p){
   var tickers=p&&p.tickers;
+  var label=(p&&p.label)||"アプリ予想";
   var data=tickers?calcSignalAccuracy(tickers):calcFavSignalAccuracy();
-  var emptyLabel=tickers?"アプリ予想の登録銘柄":"お気に入り銘柄";
+  var emptyLabel=tickers?(label+"の登録銘柄"):"お気に入り銘柄";
   return(
     <div>
-      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?"アプリ予想で登録した銘柄":"お気に入り登録銘柄")+"の過去データを集計。各シグナルが出た翌営業日に株価が上がった割合です"}</div>
+      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルが出た翌営業日に株価が上がった割合です"}</div>
       {data.length===0?(
         <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだデータがありません。{emptyLabel}を毎日スキャンすると溜まっていきます。</div>
       ):(
@@ -3289,7 +3291,7 @@ function SignalAccuracyModal(p){
           <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>📊 シグナル的中率</div>
           <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:14,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
         </div>
-        <SignalAccuracyContent tickers={p.tickers}/>
+        <SignalAccuracyContent tickers={p.tickers} label={p.label}/>
       </div>
     </div>
   );
@@ -3354,7 +3356,7 @@ function GuidePanel(){
         "「👤個人予想」：アプリの判断とは別に、自分自身の判断を検証するためのタブ",
         "価格が指定値に到達すると自動で「待機中→進行中→完了」に遷移（判定は🔄価格更新ボタンで反映）",
         "完了したトレードの合計損益・勝率を集計表示",
-        "「📊的中率」でアプリ予想に登録した銘柄のシグナル的中率を確認（個人予想では非表示）",
+        "「📊的中率」でアプリ予想／個人予想それぞれに登録した銘柄のシグナル的中率を確認",
         "詳細モーダルの📱iSPEEDボタンで銘柄コードをコピーし、iSPEEDアプリへ遷移（日本株のみ）"
       ]},
     ]},
