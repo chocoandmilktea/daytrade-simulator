@@ -246,7 +246,7 @@ function parseXlsxToMap(buf) {
   var map = {};
   wb.SheetNames.forEach(function (sheetName) {
     var sheet = wb.Sheets[sheetName];
-    var rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
+    var rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
     if (rows.length === 0) return;
 
     // ヘッダー行を探す（コード列・予定日列の両方のキーワードが含まれる行）
@@ -292,10 +292,19 @@ function parseXlsxToMap(buf) {
 
 // セル値（Dateオブジェクト or "2026/7/25" 等の文字列）を "YYYY-MM-DD" に正規化
 function normalizeDate(v) {
-  var d = (v instanceof Date) ? v : new Date(String(v).replace(/\//g, "-"));
+  if (v instanceof Date) {
+    var pad = function (n) { return String(n).padStart(2, "0"); };
+    return v.getFullYear() + "-" + pad(v.getMonth() + 1) + "-" + pad(v.getDate());
+  }
+  var s = String(v).trim();
+  // 「2026年8月5日」のような日本語表記に対応
+  var jp = s.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  if (jp) s = jp[1] + "-" + jp[2] + "-" + jp[3];
+  else s = s.replace(/\//g, "-");
+  var d = new Date(s);
   if (isNaN(d.getTime())) return null;
-  var pad = function (n) { return String(n).padStart(2, "0"); };
-  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  var pad2 = function (n) { return String(n).padStart(2, "0"); };
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
 }
 
 async function fetchJPEarningsMap() {
@@ -321,7 +330,11 @@ async function fetchJPEarningsMap() {
     }
   }
 
-  if (Object.keys(map).length === 0) throw new Error("jpx-earnings: 全ファイルの解析に失敗しました");
+  const mapSize = Object.keys(map).length;
+  if (mapSize === 0) throw new Error("jpx-earnings: 全ファイルの解析に失敗しました");
+  var sample = Object.entries(map).slice(0, 5);
+  console.log("[jpx-earnings] 合計件数:", mapSize, " サンプル:", JSON.stringify(sample));
+  console.log("[jpx-earnings] 7203の照合結果:", map["7203"] || "(該当なし)");
 
   earningsCache = { map: map, ts: now };
   return map;
