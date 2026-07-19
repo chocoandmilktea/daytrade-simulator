@@ -1,3 +1,5 @@
+import XLSX from "xlsx";
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -102,12 +104,12 @@ async function handleJP(ticker, res) {
       }
     } catch (e) {}
 
-    // 決算発表予定日（翌営業日カレンダーをキャッシュして照合。対象外ならnull）
+    // 決算発表予定日（東証公式Excelをキャッシュして照合。対象外ならnull）
     let earningsDate = null;
     try {
-      const emap = await fetchJPEarningsMap(apiKey);
+      const emap = await fetchJPEarningsMap();
       earningsDate = emap[code] || null;
-    } catch (e) {}
+    } catch (e) { console.log("[jpx-earnings] 取得エラー:", e.message); }
 
     // 対TOPIX相対強弱用：直近のTOPIX騰落率（全銘柄共通の値なので1時間キャッシュ）
     let topixChange = null;
@@ -202,25 +204,124 @@ async function fetchJPFinancials(apiKey, code) {
   return result;
 }
 
-// ── 決算発表予定（翌営業日）キャッシュ ──────────────────────────────────
-// J-Quants /v2/equities/earnings-calendar は日付単位でその日の全社リストを返す仕様
-// （codeで絞り込めないため、1回取得してコード→日付のマップにしてから照合する）
+// ── 決算発表予定日キャッシュ ──────────────────────────────────────────
+// 東証公式「決算発表予定日」ページ(無料・毎営業日17時頃更新)のExcelを直接解析する。
+// https://www.jpx.co.jp/listing/event-schedules/financial-announcement/index.html
+// ページ内に決算期末の月ごとの.xlsxリンクが複数掲載されているので、全部拾って合算する。
+// J-Quantsと違い認証キー不要（誰でも取得できる公開データ）。
+//
+// 【要npmパッケージ】xlsx (SheetJS) を package.json の dependencies に追加してください。
+//   npm install xlsx
+//
+// 【注意】Excelの列見出しは東証側の仕様変更で変わる可能性があるため、
+// 列名に含まれるキーワードで探す作りにしてある。もし emap が空になる場合は、
+// COLUMN_KEYWORDS を実際のExcelの見出しに合わせて調整してください
+// （Vercelのログに [jpx-earnings] 検出列 という行が出るので、そこで見出し名を確認できます）。
 var earningsCache = { map: null, ts: 0 };
-var EARNINGS_TTL = 60 * 60 * 1000; // 1時間
+var EARNINGS_TTL = 6 * 60 * 60 * 1000; // 6時間（元データが1日1回・17時頃更新のため）
 
-async function fetchJPEarningsMap(apiKey) {
+var JPX_PAGE_URL = "https://www.jpx.co.jp/listing/event-schedules/financial-announcement/index.html";
+var CODE_KEYWORDS = ["コード"];
+var DATE_KEYWORDS = ["決算発表予定日", "発表予定日", "予定日"];
+
+// ページHTMLから .xlsx へのリンクをすべて抜き出す（正規表現。軽量化のためHTMLパーサーは使わない）
+function extractXlsxLinks(html) {
+  var links = [];
+  var re = /href="([^"]+\.xlsx)"/g;
+  var m;
+  while ((m = re.exec(html)) !== null) {
+    var url = m[1];
+    if (url.indexOf("http") !== 0) {
+      // 相対URLの場合はJPXのドメインを補う
+      url = "https://www.jpx.co.jp" + (url.indexOf("/") === 0 ? "" : "/") + url;
+    }
+    links.push(url);
+  }
+  return links;
+}
+
+// 1つのExcelファイルから {code: "YYYY-MM-DD"} のマップを作る
+function parseXlsxToMap(buf) {
+  var wb = XLSX.read(buf, { type: "buffer", cellDates: true });
+  var map = {};
+  wb.SheetNames.forEach(function (sheetName) {
+    var sheet = wb.Sheets[sheetName];
+    var rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" });
+    if (rows.length === 0) return;
+
+    // ヘッダー行を探す（コード列・予定日列の両方のキーワードが含まれる行）
+    var headerRowIdx = -1, codeColIdx = -1, dateColIdx = -1;
+    for (var r = 0; r < Math.min(rows.length, 10); r++) {
+      var row = rows[r];
+      var cIdx = row.findIndex(function (cell) {
+        return CODE_KEYWORDS.some(function (kw) { return String(cell).indexOf(kw) !== -1; });
+      });
+      var dIdx = row.findIndex(function (cell) {
+        return DATE_KEYWORDS.some(function (kw) { return String(cell).indexOf(kw) !== -1; });
+      });
+      if (cIdx !== -1 && dIdx !== -1) {
+        headerRowIdx = r; codeColIdx = cIdx; dateColIdx = dIdx;
+        break;
+      }
+    }
+    if (headerRowIdx === -1) {
+      console.log("[jpx-earnings] シート「" + sheetName + "」でヘッダー行が見つかりませんでした。先頭行:", rows[0]);
+      return;
+    }
+    console.log("[jpx-earnings] 検出列: シート=" + sheetName + " コード列=" + codeColIdx + " 予定日列=" + dateColIdx + " (ヘッダー行:" + JSON.stringify(rows[headerRowIdx]) + ")");
+
+    for (var i = headerRowIdx + 1; i < rows.length; i++) {
+      var dataRow = rows[i];
+      var codeRaw = String(dataRow[codeColIdx] || "").trim();
+      var dateRaw = dataRow[dateColIdx];
+      if (!codeRaw || !dateRaw) continue;
+
+      // コードは4桁数字部分だけ抜き出す（末尾0付きの5桁で来る場合に対応）
+      var codeMatch = codeRaw.match(/\d{4}/);
+      if (!codeMatch) continue;
+      var code = codeMatch[0];
+
+      var dateStr = normalizeDate(dateRaw);
+      if (!dateStr) continue;
+
+      map[code] = dateStr;
+    }
+  });
+  return map;
+}
+
+// セル値（Dateオブジェクト or "2026/7/25" 等の文字列）を "YYYY-MM-DD" に正規化
+function normalizeDate(v) {
+  var d = (v instanceof Date) ? v : new Date(String(v).replace(/\//g, "-"));
+  if (isNaN(d.getTime())) return null;
+  var pad = function (n) { return String(n).padStart(2, "0"); };
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+}
+
+async function fetchJPEarningsMap() {
   const now = Date.now();
   if (earningsCache.map && now - earningsCache.ts < EARNINGS_TTL) return earningsCache.map;
 
-  const res = await fetch("https://api.jquants.com/v2/equities/earnings-calendar", {
-    headers: { "x-api-key": apiKey },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error("earnings-calendar " + res.status);
-  const json = await res.json();
-  const rows = json.data || [];
-  const map = {};
-  rows.forEach(function(row) { if (row.Code) map[row.Code] = row.Date; });
+  const pageRes = await fetch(JPX_PAGE_URL, { signal: AbortSignal.timeout(8000) });
+  if (!pageRes.ok) throw new Error("jpx page " + pageRes.status);
+  const html = await pageRes.text();
+  const xlsxUrls = extractXlsxLinks(html);
+  if (xlsxUrls.length === 0) throw new Error("jpx page: xlsxリンクが見つかりませんでした");
+
+  var map = {};
+  for (var i = 0; i < xlsxUrls.length; i++) {
+    try {
+      const fileRes = await fetch(xlsxUrls[i], { signal: AbortSignal.timeout(10000) });
+      if (!fileRes.ok) { console.log("[jpx-earnings] ダウンロード失敗:", xlsxUrls[i], fileRes.status); continue; }
+      const buf = Buffer.from(await fileRes.arrayBuffer());
+      const partial = parseXlsxToMap(buf);
+      Object.assign(map, partial);
+    } catch (e) {
+      console.log("[jpx-earnings] 解析失敗:", xlsxUrls[i], e.message);
+    }
+  }
+
+  if (Object.keys(map).length === 0) throw new Error("jpx-earnings: 全ファイルの解析に失敗しました");
 
   earningsCache = { map: map, ts: now };
   return map;
