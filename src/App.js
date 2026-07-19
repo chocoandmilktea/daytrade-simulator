@@ -70,6 +70,8 @@ var SECTOR_API="https://daytrade-simulator.vercel.app/api/sector";
 var CORRELATION_API="https://daytrade-simulator.vercel.app/api/correlation";
 var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
 var DAILY_API="https://daytrade-simulator.vercel.app/api/daily";
+var TACHIBANA_WATCH_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-watch";
+var TACHIBANA_QUOTE_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-quote";
 
 // ── 当日5分足（カード常時ミニ表示用）─────────────────────────────────────
 // J-Quantsの1分足をサーバー側(api/intraday.js)で5分足に集約して返す想定
@@ -1993,7 +1995,63 @@ function StockCard(p){
   );
 }
 
-// ── StockDetailPanel ─────────────────────────────────────────────────────────
+// 立花証券e支店APIのリアルタイム株価・板情報（選択中の1銘柄のみ）
+// tachibana-server(VPS)が裏でRedisに書き込んだ値を、数秒おきにポーリングして表示する
+function TachibanaBoard(p){
+  var code=p.ticker.replace(".T","");
+  var quoteS=useState(null);var quote=quoteS[0],setQuote=quoteS[1];
+  var errS=useState(false);var err=errS[0],setErr=errS[1];
+
+  useEffect(function(){
+    setQuote(null);setErr(false);
+    var stopped=false;
+
+    function notifyWatch(){
+      fetch(TACHIBANA_WATCH_API,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ticker:code}),signal:AbortSignal.timeout(8000)}).catch(function(){});
+    }
+    function pollQuote(){
+      fetch(TACHIBANA_QUOTE_API+"&ticker="+encodeURIComponent(code),{signal:AbortSignal.timeout(8000)})
+        .then(function(r){return r.json();})
+        .then(function(json){
+          if(stopped) return;
+          if(json&&json.found) setQuote(json); else setErr(true);
+        })
+        .catch(function(){if(!stopped) setErr(true);});
+    }
+
+    notifyWatch();
+    pollQuote();
+    var watchTimer=setInterval(notifyWatch,60*1000); // 監視継続を伝え続ける（5分でタイムアウトするため）
+    var quoteTimer=setInterval(pollQuote,7*1000);     // 実用的な範囲として7秒おきに取得
+
+    return function(){
+      stopped=true;
+      clearInterval(watchTimer);
+      clearInterval(quoteTimer);
+    };
+  },[code]);
+
+  if(!quote){
+    return(
+      <div style={{background:"#071428",borderRadius:8,padding:"8px 10px",fontSize:12,color:"#4a7090"}}>
+        📡 立花証券リアルタイム: {err?"接続待ち（tachibana-serverの稼働状況を確認してください）":"取得中…"}
+      </div>
+    );
+  }
+  var ageSec=Math.round((Date.now()-quote.updatedAt)/1000);
+  return(
+    <div style={{background:"#071428",borderRadius:8,padding:"8px 10px",display:"flex",flexDirection:"column",gap:4}}>
+      <div style={{fontSize:11,color:"#4a7090"}}>📡 立花証券リアルタイム（{ageSec}秒前）</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:"4px 12px"}}>
+        {Object.keys(quote.fields||{}).map(function(k){
+          return(<span key={k} style={{fontSize:12,color:"#a8c4e0"}}>{k}: <b style={{color:"#d8eeff"}}>{quote.fields[k]}</b></span>);
+        })}
+      </div>
+    </div>
+  );
+}
+
 function StockDetailPanel(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   if(!s){
@@ -2126,6 +2184,8 @@ function StockDetailPanel(p){
           <div style={{marginTop:4}}><span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span></div>
         </div>
       </div>
+
+      {s.market==="JP"&&<TachibanaBoard ticker={s.ticker}/>}
 
       <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",gap:4}}>
