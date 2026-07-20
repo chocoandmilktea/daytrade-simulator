@@ -12,6 +12,7 @@ import {
   calcChangeRate,
   getTargetBusinessDay,
   fetchNameMap,
+  fetchDailyBarsWithFallback,
 } from "./ranking.js";
 
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24時間
@@ -152,15 +153,17 @@ async function getSectorRanking(req, sectors) {
   const dateStr = getTargetBusinessDay();
   const sectorNames = sectors.map(function(s) { return s.name; });
 
-  const [names, master, barsJson] = await Promise.all([
+  // 日足は祝日等でその日のデータが空のことがあるため、ranking.js側の
+  // 「空なら前営業日へ自動フォールバック」ロジックを共有して使う
+  const [names, master, barsResult] = await Promise.all([
     fetchNameMap(req),
     fetchJQuantsMaster(apiKey, dateStr.replace(/-/g, "")),
-    fetchDailyBars(apiKey, dateStr),
+    fetchDailyBarsWithFallback(apiKey, dateStr),
   ]);
 
-  const bars = (barsJson.data || []).filter(function(bar) {
+  const bars = barsResult.bars.filter(function(bar) {
     const code = String(bar.Code || "").replace(/0$/, "");
-    return (bar.Vo || 0) > 0 && (bar.C || 0) > 0 && sectorNames.includes(master.sectorMap[code]);
+    return sectorNames.includes(master.sectorMap[code]);
   });
 
   if (!bars.length) return [];
@@ -180,13 +183,6 @@ async function getSectorRanking(req, sectors) {
     .map(function(bar) { return mapJPBar(bar, names, master.nameMap); });
 
   return mergeHybrid(byVolume, byChange);
-}
-
-async function fetchDailyBars(apiKey, dateStr) {
-  const url = `https://api.jquants.com/v2/equities/bars/daily?date=${dateStr}`;
-  const res = await fetch(url, { headers: { "x-api-key": apiKey }, signal: AbortSignal.timeout(9000) });
-  if (!res.ok) throw new Error("J-Quants bars: " + res.status);
-  return res.json();
 }
 
 // ── フォールバック：AIが有効なセクターを返せなかった場合の通常ランキング ─────
