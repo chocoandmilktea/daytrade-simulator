@@ -1438,44 +1438,8 @@ function IntradayChart1m(p){
 
 // ── シグナル詳細（カードの展開パネルとチャートモーダルで共通利用）────────
 function SignalDetailList(p){
-  var bd=(p.breakdown||[]).filter(function(b){return b.delta!==0;});
-  var negatives=bd.filter(function(b){return b.delta<0;}).sort(function(a,b){return a.delta-b.delta;});
-  var bdOpenS=useState(false);var bdOpen=bdOpenS[0],setBdOpen=bdOpenS[1];
   return(
     <div>
-      {bd.length>0&&(
-        <div style={{marginBottom:14}}>
-          <div onClick={function(){setBdOpen(!bdOpen);}} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",marginBottom:bdOpen?6:0}}>
-            <div style={{fontSize:12,fontWeight:700,color:"#4a90c0"}}>🧮 スコア内訳（60点まで何が足りないか）</div>
-            <span style={{color:"#4a7090",fontSize:12}}>{bdOpen?"▲":"▼"}</span>
-          </div>
-          {!bdOpen&&negatives.length>0&&(
-            <div style={{fontSize:11,color:"#f87171",marginTop:4}}>
-              ⬇️ 特に足を引っ張っている要因: {negatives.slice(0,2).map(function(b){return b.label+"("+b.delta+")";}).join("、")}
-            </div>
-          )}
-          {bdOpen&&(
-            <div>
-              <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                {bd.map(function(b,i){
-                  var c=b.delta>0?"#22d3a0":"#f43f5e";
-                  return(
-                    <div key={i} style={{background:"#071428",borderRadius:6,padding:"5px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
-                      <span style={{fontSize:11,color:"#4a7090"}}>{b.label}</span>
-                      <span style={{fontSize:12,fontWeight:700,color:c}}>{b.delta>0?"+":""}{b.delta}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              {negatives.length>0&&(
-                <div style={{fontSize:11,color:"#f87171",marginTop:6}}>
-                  ⬇️ 特に足を引っ張っている要因: {negatives.slice(0,2).map(function(b){return b.label+"("+b.delta+")";}).join("、")}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
       <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
         {(p.signals||[]).filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");}).map(function(sig,i){
