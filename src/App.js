@@ -1374,6 +1374,10 @@ function IntradayChart1m(p){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
   }
   var fullCloses=data.m1.closes,fullTimes=data.m1.times||[];
+  if(p.liveTick&&p.liveTick.price!=null){ // 立花証券リアルタイム値を直近の1点として継ぎ足す
+    fullCloses=fullCloses.concat([p.liveTick.price]);
+    fullTimes=fullTimes.concat([p.liveTick.time||""]);
+  }
   var dateLabel=formatChartDateLabel(data.date);
   // MAは全期間のデータで計算してから、表示だけ直近2時間（1分足120本）に絞る。
   // 表示範囲の先頭でも正しいMA値になるよう、計算は絞り込み前の配列に対して行う。
@@ -2015,7 +2019,7 @@ function TachibanaBoard(p){
         .then(function(r){return r.json();})
         .then(function(json){
           if(stopped) return;
-          if(json&&json.found) setQuote(json); else setErr(true);
+          if(json&&json.found){setQuote(json);if(p.onQuote)p.onQuote(json);} else setErr(true);
         })
         .catch(function(){if(!stopped) setErr(true);});
     }
@@ -2074,8 +2078,10 @@ function StockDetailPanel(p){
   // チャート（1分足＋25期・75期の短期MA）：この銘柄が選択された時に取得
   // intraday: undefined=読込中, null=データなし, オブジェクト=取得済み
   var intradayS=useState(undefined);var intraday=intradayS[0],setIntraday=intradayS[1];
+  var liveTickS=useState(null);var liveTick=liveTickS[0],setLiveTick=liveTickS[1]; // 立花証券リアルタイム値をチャートにも反映
   useEffect(function(){
     setIntraday(undefined);
+    setLiveTick(null);
     fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
     if(onRescan) onRescan(s.ticker); // カードの価格・判定バッジもチャートと同様に毎回最新化
   },[s.ticker]);
@@ -2185,7 +2191,10 @@ function StockDetailPanel(p){
         </div>
       </div>
 
-      {s.market==="JP"&&<TachibanaBoard ticker={s.ticker}/>}
+      {s.market==="JP"&&<TachibanaBoard ticker={s.ticker} onQuote={function(q){
+        var f=q.fields||{};
+        if(f["p_1_DPP"]!=null) setLiveTick({price:parseFloat(f["p_1_DPP"]),time:f["p_1_DPP:T"]||""});
+      }}/>}
 
       <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",gap:4}}>
@@ -2204,7 +2213,7 @@ function StockDetailPanel(p){
 
       {/* チャート（1分足＋週足MA） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
-        <IntradayChart1m data={intraday}/>
+        <IntradayChart1m data={intraday} liveTick={liveTick}/>
       </div>
 
       {/* シグナル詳細 */}
