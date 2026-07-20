@@ -1,4 +1,7 @@
 import XLSX from "xlsx";
+import { Redis } from "@upstash/redis";
+
+const redis = Redis.fromEnv();
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -218,7 +221,9 @@ async function fetchJPFinancials(apiKey, code) {
 // COLUMN_KEYWORDS を実際のExcelの見出しに合わせて調整してください
 // （Vercelのログに [jpx-earnings] 検出列 という行が出るので、そこで見出し名を確認できます）。
 var earningsCache = { map: null, ts: 0 };
-var EARNINGS_TTL = 6 * 60 * 60 * 1000; // 6時間（元データが1日1回・17時頃更新のため）
+var EARNINGS_TTL = 6 * 60 * 60 * 1000; // メモリキャッシュ6時間（同一コンテナ内の高速化用）
+var EARNINGS_REDIS_KEY = "jpx:earnings-map";
+var EARNINGS_REDIS_TTL = 24 * 60 * 60; // Redisキャッシュ24時間（秒）。東証の更新頻度(1日1回)に合わせる
 
 var JPX_PAGE_URL = "https://www.jpx.co.jp/listing/event-schedules/financial-announcement/index.html";
 var CODE_KEYWORDS = ["コード"];
@@ -311,6 +316,20 @@ async function fetchJPEarningsMap() {
   const now = Date.now();
   if (earningsCache.map && now - earningsCache.ts < EARNINGS_TTL) return earningsCache.map;
 
+  // Redisに保存済みならそれを使う（コンテナが変わっても共有されるため、東証への
+  // 重いアクセス（xlsxダウンロード・解析）を毎リクエストやり直さずに済む）
+  try {
+    const cached = await redis.get(EARNINGS_REDIS_KEY);
+    if (cached) {
+      const map = typeof cached === "string" ? JSON.parse(cached) : cached;
+      console.log("[jpx-earnings] Redisキャッシュ使用。件数:", Object.keys(map).length);
+      earningsCache = { map: map, ts: now };
+      return map;
+    }
+  } catch (e) {
+    console.log("[jpx-earnings] Redis読み込み失敗（東証から直接取得します）:", e.message);
+  }
+
   const pageRes = await fetch(JPX_PAGE_URL, { signal: AbortSignal.timeout(8000) });
   if (!pageRes.ok) throw new Error("jpx page " + pageRes.status);
   const html = await pageRes.text();
@@ -333,8 +352,14 @@ async function fetchJPEarningsMap() {
   const mapSize = Object.keys(map).length;
   if (mapSize === 0) throw new Error("jpx-earnings: 全ファイルの解析に失敗しました");
   var sample = Object.entries(map).slice(0, 5);
-  console.log("[jpx-earnings] 合計件数:", mapSize, " サンプル:", JSON.stringify(sample));
+  console.log("[jpx-earnings] 東証から新規取得。合計件数:", mapSize, " サンプル:", JSON.stringify(sample));
   console.log("[jpx-earnings] 7203の照合結果:", map["7203"] || "(該当なし)");
+
+  try {
+    await redis.set(EARNINGS_REDIS_KEY, JSON.stringify(map), { ex: EARNINGS_REDIS_TTL });
+  } catch (e) {
+    console.log("[jpx-earnings] Redis書き込み失敗:", e.message);
+  }
 
   earningsCache = { map: map, ts: now };
   return map;
