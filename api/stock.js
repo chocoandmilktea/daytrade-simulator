@@ -108,10 +108,12 @@ async function handleJP(ticker, res) {
     } catch (e) {}
 
     // 決算発表予定日（東証公式Excelをキャッシュして照合。対象外ならnull）
+    // ※J-Quants用のcode（5桁・末尾0付き）とは異なり、東証Excel側は4桁コードのため別変数で照合する
+    const code4 = ticker.replace(".T", "");
     let earningsDate = null;
     try {
       const emap = await fetchJPEarningsMap();
-      earningsDate = emap[code] || null;
+      earningsDate = emap[code4] || null;
     } catch (e) { console.log("[jpx-earnings] 取得エラー:", e.message); }
 
     // 対TOPIX相対強弱用：直近のTOPIX騰落率（全銘柄共通の値なので1時間キャッシュ）
@@ -315,7 +317,7 @@ function normalizeDate(v) {
 async function fetchJPEarningsMap() {
   const now = Date.now();
   if (earningsCache.map && now - earningsCache.ts < EARNINGS_TTL) {
-    console.log("[jpx-earnings] メモリキャッシュ使用。件数:", Object.keys(earningsCache.map).length);
+    console.log("[jpx-earnings] メモリキャッシュ使用。件数:", Object.keys(earningsCache.map).length, " 7203:", earningsCache.map["7203"] || "(該当なし)");
     return earningsCache.map;
   }
 
@@ -325,7 +327,7 @@ async function fetchJPEarningsMap() {
     const cached = await redis.get(EARNINGS_REDIS_KEY);
     if (cached) {
       const map = typeof cached === "string" ? JSON.parse(cached) : cached;
-      console.log("[jpx-earnings] Redisキャッシュ使用。件数:", Object.keys(map).length);
+      console.log("[jpx-earnings] Redisキャッシュ使用。件数:", Object.keys(map).length, " 7203:", map["7203"] || "(該当なし)");
       earningsCache = { map: map, ts: now };
       return map;
     }
