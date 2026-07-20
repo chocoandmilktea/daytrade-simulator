@@ -1436,15 +1436,27 @@ function IntradayChart1m(p){
   );
 }
 
+// シグナル詳細の表示順（重い項目が上）。RSIは末尾に実際の数値が付くため前方一致で判定する
+var SIGNAL_WEIGHT_ORDER=["コンフルエンス","出来高","OBV","EMA整列","BB","寄り付きレンジ","当日ブレイク","RSI","BB収束","ATR消化率","VWAP傾き","ギャップ"];
+function signalWeightRank(label){
+  var idx=SIGNAL_WEIGHT_ORDER.findIndex(function(o){return label===o||(o==="RSI"&&label.indexOf("RSI")===0);});
+  return idx===-1?SIGNAL_WEIGHT_ORDER.length:idx;
+}
+
 // ── シグナル詳細（カードの展開パネルとチャートモーダルで共通利用）────────
 function SignalDetailList(p){
+  var weightOpenS=useState(false);var weightOpen=weightOpenS[0],setWeightOpen=weightOpenS[1];
+  var sortedSignals=(p.signals||[])
+    .filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");})
+    .slice()
+    .sort(function(a,b){return signalWeightRank(a.label)-signalWeightRank(b.label);});
   return(
     <div>
       <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
-        {(p.signals||[]).filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");}).map(function(sig,i){
+        {sortedSignals.map(function(sig,i){
           return(
-            <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
+            <div key={i} onClick={function(){setWeightOpen(true);}} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040",cursor:"pointer"}}>
               <span style={{fontSize:12,color:"#4a7090"}}>{sig.label}</span>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                 <span style={{fontSize:12,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
@@ -1453,6 +1465,40 @@ function SignalDetailList(p){
             </div>
           );
         })}
+      </div>
+      <SignalWeightModal open={weightOpen} onClose={function(){setWeightOpen(false);}}/>
+    </div>
+  );
+}
+
+// シグナル詳細タップ時に表示する、配点の重み説明モーダル（画面左側に表示）
+function SignalWeightModal(p){
+  if(!p.open) return null;
+  return(
+    <div onClick={p.onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center"}}>
+      <div onClick={function(e){e.stopPropagation();}} style={{background:"#0a1628",border:"1px solid #2a4060",borderRadius:10,maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",padding:"16px 18px",margin:"0 0 0 12px",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>📊 シグナルの重み付けについて</div>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",padding:0}}>✕</button>
+        </div>
+        <div style={{fontSize:12,color:"#a8c4e0",lineHeight:1.7}}>
+          <div style={{fontWeight:700,color:"#f87171",marginTop:6,marginBottom:4}}>特に重い項目（±15点前後）</div>
+          <div>・<b>コンフルエンス</b>：他の複数シグナルが同じ方向を向いているかをまとめた「シグナルの一致度」。8個中6個以上一致で±15点と、単独では一番配点が大きい項目です。「強気シグナル多数一致」と出ていれば、個別シグナルより信頼度が高いと見なせます</div>
+
+          <div style={{fontWeight:700,color:"#fbbf24",marginTop:14,marginBottom:4}}>次に重い項目（±6〜10点）</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            <div>・<b>EMA整列</b>：短期・中期・長期の移動平均が順番通りに並んでいるか＝トレンドの方向感</div>
+            <div>・<b>BB（ボリンジャーバンド）</b>：下限で反発なら押し目買い、上限突破は過熱のサイン</div>
+            <div>・<b>OBV／出来高</b>：値動きに出来高が伴っているか。「価格は動いたが出来高が伴わない」は騙しになりやすいので、出来高とセットで見る価値があります</div>
+            <div>・<b>寄り付きレンジ（ORB）</b>：寄り付き後のレンジを上抜け/下抜けした、というデイトレの定番エントリーサイン</div>
+          </div>
+
+          <div style={{fontWeight:700,color:"#94a3b8",marginTop:14,marginBottom:4}}>補助的な項目（±3〜7点）</div>
+          <div>・BB収束（値幅が狭まっている＝この後の値動き拡大の予兆）、ATR消化率（すでに値幅を使い切っていないか＝追いかけ買いの危険度）、Pivot、VWAP傾きなど</div>
+
+          <div style={{fontWeight:700,color:"#22d3a0",marginTop:14,marginBottom:4}}>実際の見方の目安</div>
+          <div>1つの指標だけで判断せず、「コンフルエンスが強気/弱気で一致 → EMA整列やBBの方向も同じ → 出来高も伴っている」という3つが揃ったときが、このアプリの設計上いちばん重視されている状況です。逆に出来高が「低調」なのに他が強気、というときは騙しの可能性を疑う、という使い方が理にかなっています。</div>
+        </div>
       </div>
     </div>
   );
