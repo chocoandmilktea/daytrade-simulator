@@ -314,7 +314,10 @@ function normalizeDate(v) {
 
 async function fetchJPEarningsMap() {
   const now = Date.now();
-  if (earningsCache.map && now - earningsCache.ts < EARNINGS_TTL) return earningsCache.map;
+  if (earningsCache.map && now - earningsCache.ts < EARNINGS_TTL) {
+    console.log("[jpx-earnings] メモリキャッシュ使用。件数:", Object.keys(earningsCache.map).length);
+    return earningsCache.map;
+  }
 
   // Redisに保存済みならそれを使う（コンテナが変わっても共有されるため、東証への
   // 重いアクセス（xlsxダウンロード・解析）を毎リクエストやり直さずに済む）
@@ -337,23 +340,33 @@ async function fetchJPEarningsMap() {
   if (xlsxUrls.length === 0) throw new Error("jpx page: xlsxリンクが見つかりませんでした");
 
   var map = {};
+  var failCount = 0;
   for (var i = 0; i < xlsxUrls.length; i++) {
     try {
       const fileRes = await fetch(xlsxUrls[i], { signal: AbortSignal.timeout(10000) });
-      if (!fileRes.ok) { console.log("[jpx-earnings] ダウンロード失敗:", xlsxUrls[i], fileRes.status); continue; }
+      if (!fileRes.ok) { console.log("[jpx-earnings] ダウンロード失敗:", xlsxUrls[i], fileRes.status); failCount++; continue; }
       const buf = Buffer.from(await fileRes.arrayBuffer());
       const partial = parseXlsxToMap(buf);
       Object.assign(map, partial);
     } catch (e) {
       console.log("[jpx-earnings] 解析失敗:", xlsxUrls[i], e.message);
+      failCount++;
     }
   }
 
   const mapSize = Object.keys(map).length;
   if (mapSize === 0) throw new Error("jpx-earnings: 全ファイルの解析に失敗しました");
   var sample = Object.entries(map).slice(0, 5);
-  console.log("[jpx-earnings] 東証から新規取得。合計件数:", mapSize, " サンプル:", JSON.stringify(sample));
+  console.log("[jpx-earnings] 東証から新規取得。合計件数:", mapSize, "/対象ファイル数:", xlsxUrls.length, "/失敗:", failCount, " サンプル:", JSON.stringify(sample));
   console.log("[jpx-earnings] 7203の照合結果:", map["7203"] || "(該当なし)");
+
+  if (failCount > 0) {
+    // 一部ファイルの取得に失敗している＝不完全なデータの可能性が高いため、
+    // 他のコンテナや以後24時間分を巻き添えにしないよう、今回はキャッシュに保存しない
+    // （このリクエストの応答にはそのまま使うが、次回また取得し直しになる）
+    console.log("[jpx-earnings] 一部ファイル取得に失敗したため、キャッシュ保存はスキップします");
+    return map;
+  }
 
   try {
     await redis.set(EARNINGS_REDIS_KEY, JSON.stringify(map), { ex: EARNINGS_REDIS_TTL });
