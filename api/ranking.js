@@ -195,6 +195,55 @@ export function mapJPBar(bar, names, jqNames) {
   };
 }
 
+// 指定日の1つ前の営業日（土日のみ除外）を返す。祝日そのものの判定はしないが、
+// 祝日で対象日のデータが空だった場合はこの関数で1日ずつ遡ってリトライする
+function getPreviousBusinessDay(dateStr) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) {
+    d.setUTCDate(d.getUTCDate() - 1);
+  }
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+async function fetchDailyBars(apiKey, dateStr) {
+  const url = `https://api.jquants.com/v2/equities/bars/daily?date=${dateStr}`;
+  const res = await fetch(url, {
+    headers: { "x-api-key": apiKey },
+    signal: AbortSignal.timeout(9000),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error("J-Quants error: " + res.status + " " + errText);
+  }
+  return res.json();
+}
+
+// getTargetBusinessDay()は土日しか除外しないため、祝日（東証休場日）だと
+// データが空で返ってくる。その場合は前営業日へ最大5回まで遡ってリトライする
+// （祝日カレンダーを保守する代わりに「データが無ければ前day」で自動対応する）
+export async function fetchDailyBarsWithFallback(apiKey, dateStr) {
+  let currentDate = dateStr;
+  let lastError = null;
+  for (let i = 0; i < 5; i++) {
+    try {
+      const json = await fetchDailyBars(apiKey, currentDate);
+      const bars = (json?.data || []).filter(function(bar) {
+        return (bar.Vo || 0) > 0 && (bar.C || 0) > 0;
+      });
+      if (bars.length > 0) return { bars: bars, dateUsed: currentDate };
+      lastError = new Error("No JP bar data for " + currentDate + "（祝日等の可能性）");
+    } catch (e) {
+      lastError = e;
+    }
+    currentDate = getPreviousBusinessDay(currentDate);
+  }
+  throw lastError || new Error("No JP bar data");
+}
+
 async function getJPRanking(req) {
   const apiKey = process.env.JQUANTS_API_KEY;
   if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
@@ -204,26 +253,13 @@ async function getJPRanking(req) {
   const [nameMap, jqNameMap, barsResult] = await Promise.allSettled([
     fetchNameMap(req),
     fetchJQuantsNameMap(apiKey, dateStr.replace(/-/g, "")),
-    (async () => {
-      const url = `https://api.jquants.com/v2/equities/bars/daily?date=${dateStr}`;
-      const res = await fetch(url, {
-        headers: { "x-api-key": apiKey },
-        signal: AbortSignal.timeout(9000),
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error("J-Quants error: " + res.status + " " + errText);
-      }
-      return res.json();
-    })(),
+    fetchDailyBarsWithFallback(apiKey, dateStr),
   ]);
 
   const names = nameMap.status === "fulfilled" ? nameMap.value : {};
   const jqNames = jqNameMap.status === "fulfilled" ? jqNameMap.value : {};
   if (barsResult.status === "rejected") throw barsResult.reason;
-  const bars = (barsResult.value?.data || []).filter(function(bar) {
-    return (bar.Vo || 0) > 0 && (bar.C || 0) > 0;
-  });
+  const bars = barsResult.value.bars;
 
   if (!bars.length) throw new Error("No JP bar data");
 
