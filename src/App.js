@@ -1475,7 +1475,7 @@ function SignalDetailList(p){
 function SignalWeightModal(p){
   if(!p.open) return null;
   return(
-    <div onClick={p.onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center"}}>
+    <div onClick={p.onClose} style={{position:"fixed",top:0,left:50,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center"}}>
       <div onClick={function(e){e.stopPropagation();}} style={{background:"#0a1628",border:"1px solid #2a4060",borderRadius:10,maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",padding:"16px 18px",margin:"0 0 0 12px",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>📊 シグナルの重み付けについて</div>
@@ -2430,8 +2430,10 @@ function MarketBar(){
         return(
           <div key={idx.key} style={{background:vixAlert?"#1f0010":"#050e1c",borderRadius:8,padding:"10px 12px",border:vixAlert?"1px solid #f43f5e50":"1px solid transparent",gridColumn:(!isWide&&isVix)?"1 / -1":undefined}}>
             <div style={{fontSize:13,color:vixAlert?"#f43f5e":"#4a7090",fontWeight:700,marginBottom:4}}>{idx.label}{vixAlert?" ⚠ 警戒":""}</div>
-            <div style={{fontSize:20,fontWeight:800,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
-            <div style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e",marginTop:2}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
+            <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+              <div style={{fontSize:20,fontWeight:800,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
+              <div style={{fontSize:14,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
+            </div>
           </div>
         );
       })}
