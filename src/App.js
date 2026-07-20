@@ -1475,8 +1475,8 @@ function SignalDetailList(p){
 function SignalWeightModal(p){
   if(!p.open) return null;
   return(
-    <div onClick={p.onClose} style={{position:"fixed",top:0,left:50,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center"}}>
-      <div onClick={function(e){e.stopPropagation();}} style={{background:"#0a1628",border:"1px solid #2a4060",borderRadius:10,maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",padding:"16px 18px",margin:"0 0 0 12px",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
+    <div onClick={p.onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div onClick={function(e){e.stopPropagation();}} style={{background:"#0a1628",border:"1px solid #2a4060",borderRadius:10,maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",padding:"16px 18px",marginRight:100,boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>📊 シグナルの重み付けについて</div>
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",padding:0}}>✕</button>
