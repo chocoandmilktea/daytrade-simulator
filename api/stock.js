@@ -82,20 +82,18 @@ async function handleJP(ticker, res) {
       topixChange = await fetchTopixChange();
     } catch (e) {}
 
-    // PER/PBR（財務情報のBPS・予想EPSから算出。24時間キャッシュ）
-    // 権利落ち日（配当ありの銘柄のみ、次期末日の1営業日前を「予想」として概算）
-    // ※JQUANTS_API_KEYが無い場合はこの部分だけスキップ（分足取得はもう依存していないため）
-    let per = null, pbr = null, exRightsDate = null;
-    const apiKey = process.env.JQUANTS_API_KEY;
-    if (apiKey) {
-      try {
-        const code = ticker.replace(".T", "") + "0";
-        const fin = await fetchJPFinancials(apiKey, code);
-        if (fin.bps > 0) pbr = currentPrice / fin.bps;
-        if (fin.feps > 0) per = currentPrice / fin.feps;
-        if (fin.hasDividend && fin.fyEnd) exRightsDate = subtractBusinessDays(fin.fyEnd, 1);
-      } catch (e) {}
-    }
+    // PER/PBR/EPS/BPS/配当利回り（立花証券API経由。取得・1時間キャッシュはtachibana-server側）
+    // 権利落ち日も立花証券の実績値をそのまま使用（従来は決算期末日からの概算値だった）
+    let per = null, pbr = null, eps = null, bps = null, dividendYield = null, exRightsDate = null;
+    try {
+      const detail = await fetchTachibanaIssueDetail(code4);
+      per = detail.per;
+      pbr = detail.pbr;
+      eps = detail.eps;
+      bps = detail.bps;
+      dividendYield = detail.dividendYield;
+      exRightsDate = detail.exRightsDate;
+    } catch (e) {}
     if (pbr && (!isFinite(pbr) || pbr <= 0 || pbr > 1000)) pbr = null;
     if (per && (!isFinite(per) || per <= 0 || per > 10000)) per = null;
 
@@ -111,7 +109,8 @@ async function handleJP(ticker, res) {
           indicators: {
             quote: [{ close: closes, high: highs, low: lows, volume: volumes }],
           },
-          per: per, pbr: pbr, analystTarget: null, sector: null,
+          per: per, pbr: pbr, eps: eps, bps: bps, dividendYield: dividendYield,
+          analystTarget: null, sector: null,
           earningsDate: earningsDate,
           exRightsDate: exRightsDate,
           topixChange: topixChange,
@@ -368,6 +367,31 @@ async function fetchTopixChange() {
 
   topixCache = { change: json.change, ts: now };
   return json.change;
+}
+
+// ── PER/PBR/EPS/BPS/配当利回り ────────────────────────────────────────
+// 立花証券API経由（tachibana-serverの/issue-detailエンドポイントを呼ぶだけ）。
+// 実際の取得・1時間キャッシュはtachibana-server側（webapi.js）で行っている。
+var issueDetailCache = {}; // code4 -> { data, ts }
+var ISSUE_DETAIL_TTL = 60 * 60 * 1000; // 1時間
+
+async function fetchTachibanaIssueDetail(code4) {
+  const now = Date.now();
+  const cached = issueDetailCache[code4];
+  if (cached && now - cached.ts < ISSUE_DETAIL_TTL) return cached.data;
+
+  const apiUrl = process.env.TACHIBANA_ISSUE_DETAIL_API;
+  if (!apiUrl) throw new Error("TACHIBANA_ISSUE_DETAIL_API not set");
+
+  const headers = {};
+  if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
+
+  const res = await fetch(`${apiUrl}?code=${code4}`, { headers, signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error("issue-detail " + res.status);
+  const data = await res.json();
+
+  issueDetailCache[code4] = { data: data, ts: now };
+  return data;
 }
 
 // ── JST日付文字列を取得（daysAgo日前、YYYYMMDD形式）────────────────────────
