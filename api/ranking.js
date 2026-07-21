@@ -1,6 +1,6 @@
 // api/ranking.js
 // ハイブリッド方式：出来高上位 + 値上がり率上位20（出来高フィルター付き）
-// JP: 出来高上位40 / US: 出来高上位50（US: Yahoo Finance, JP: J-Quants）
+// JP: 出来高上位40 / US: 出来高上位50（US: Yahoo Finance, JP: 立花証券API経由）
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -127,31 +127,9 @@ export async function fetchNameMap(req) {
   }
 }
 
-// J-Quants /v2/equities/master：指定日時点の全上場銘柄マスタ（会社名を含む）を取得
-// dateStr8: "YYYYMMDD"形式（ハイフン無し）
-async function fetchJQuantsNameMap(apiKey, dateStr8) {
-  try {
-    const url = `https://api.jquants.com/v2/equities/master?date=${dateStr8}`;
-    const res = await fetch(url, {
-      headers: { "x-api-key": apiKey },
-      signal: AbortSignal.timeout(9000),
-    });
-    if (!res.ok) throw new Error("master api: " + res.status);
-    const json = await res.json();
-    const rows = json?.data || json || [];
-    const map = {};
-    rows.forEach(function(row) {
-      const code = String(row.Code || "").replace(/0$/, "");
-      if (code && row.CoName) map[code] = row.CoName;
-    });
-    return map;
-  } catch (e) {
-    return {};
-  }
-}
-
 // 対象営業日を判定（15:30の取引終了前や土日はひとつ前の営業日にフォールバック）
-// sector.js でも同じ基準で日付を揃えるため export
+// ※立花証券のランキング用データは常に最新値を返すため、この戻り値自体は
+// fetchDailyBarsWithFallback内部では使わなくなったが、sector.js側の互換のため関数は残す
 export function getTargetBusinessDay() {
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -171,18 +149,21 @@ export function getTargetBusinessDay() {
   return `${y}-${m}-${day}`;
 }
 
-// J-Quants bars/daily には前日終値(PC)フィールドが存在しないため、
-// 変化率は当日始値(O)比で計算する（API仕様上これが最善）
+// 変化率の算出：立花証券からは前日終値(PrevC)が取れるため、それを優先して使う
+// （以前のJ-Quantsは前日終値が取れず、当日始値比で代用していたための名残でO/Cのフォールバックも残す）
 export function calcChangeRate(bar) {
+  if (bar.PrevC && bar.PrevC > 0) {
+    return (bar.C - bar.PrevC) / bar.PrevC;
+  }
   const open = bar.O || 0;
   const close = bar.C || 0;
   return open > 0 ? (close - open) / open : 0;
 }
 
-// 会社名の優先順位：IPO専用API > J-Quants銘柄マスタ > ハードコード一覧 > コードそのまま
+// 会社名の優先順位：IPO専用API > 立花証券の銘柄マスタ名 > ハードコード一覧 > コードそのまま
 export function mapJPBar(bar, names, jqNames) {
-  const code = String(bar.Code || "").replace(/0$/, "");
-  const name = names[code] || jqNames[code] || JP_NAMES_FALLBACK[code] || code;
+  const code = String(bar.Code || "");
+  const name = names[code] || bar.Name || (jqNames && jqNames[code]) || JP_NAMES_FALLBACK[code] || code;
   return {
     ticker: code + ".T",
     name: name,
@@ -195,69 +176,53 @@ export function mapJPBar(bar, names, jqNames) {
   };
 }
 
-// 指定日の1つ前の営業日（土日のみ除外）を返す。祝日そのものの判定はしないが、
-// 祝日で対象日のデータが空だった場合はこの関数で1日ずつ遡ってリトライする
-function getPreviousBusinessDay(dateStr) {
-  const d = new Date(dateStr + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() - 1);
-  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) {
-    d.setUTCDate(d.getUTCDate() - 1);
-  }
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+// ── 立花証券APIから市場全体の出来高・現在値・名前・業種を取得 ──────────────
+// 実際の取得（銘柄マスタ・出来高一括取得・並列バッチ処理）はtachibana-server側
+// （webapi.js の /ranking-data）で行っている。ranking.js側はそれを1回呼ぶだけ。
+async function fetchTachibanaRankingData() {
+  const apiUrl = process.env.TACHIBANA_RANKING_API;
+  if (!apiUrl) throw new Error("TACHIBANA_RANKING_API not set");
+
+  const headers = {};
+  if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
+
+  const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error("ranking-data " + res.status);
+  const json = await res.json();
+  return json.rows || [];
 }
 
-async function fetchDailyBars(apiKey, dateStr) {
-  const url = `https://api.jquants.com/v2/equities/bars/daily?date=${dateStr}`;
-  const res = await fetch(url, {
-    headers: { "x-api-key": apiKey },
-    signal: AbortSignal.timeout(9000),
-  });
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error("J-Quants error: " + res.status + " " + errText);
-  }
-  return res.json();
+// 立花証券の行データ（code/name/sector/price/prevClose/volume）を
+// 既存コードが扱ってきたbar形状（Code/Vo/C/PrevC等）に変換する
+function toBarShape(row) {
+  return {
+    Code: row.code,
+    Name: row.name,
+    Sector: row.sector,
+    Vo: row.volume,
+    C: row.price,
+    PrevC: row.prevClose,
+  };
 }
 
-// getTargetBusinessDay()は土日しか除外しないため、祝日（東証休場日）だと
-// データが空で返ってくる。その場合は前営業日へ最大5回まで遡ってリトライする
-// （祝日カレンダーを保守する代わりに「データが無ければ前day」で自動対応する）
+// dateStrの引数は既存コード（sector.js）との互換のために残しているが、
+// 立花証券のランキング用データは常に最新値のため実質的には未使用
 export async function fetchDailyBarsWithFallback(apiKey, dateStr) {
-  let currentDate = dateStr;
-  let lastError = null;
-  for (let i = 0; i < 5; i++) {
-    try {
-      const json = await fetchDailyBars(apiKey, currentDate);
-      const bars = (json?.data || []).filter(function(bar) {
-        return (bar.Vo || 0) > 0 && (bar.C || 0) > 0;
-      });
-      if (bars.length > 0) return { bars: bars, dateUsed: currentDate };
-      lastError = new Error("No JP bar data for " + currentDate + "（祝日等の可能性）");
-    } catch (e) {
-      lastError = e;
-    }
-    currentDate = getPreviousBusinessDay(currentDate);
-  }
-  throw lastError || new Error("No JP bar data");
+  const rows = await fetchTachibanaRankingData();
+  if (!rows.length) throw new Error("No JP ranking data");
+  const bars = rows.map(toBarShape);
+  return { bars: bars, dateUsed: dateStr };
 }
 
 async function getJPRanking(req) {
-  const apiKey = process.env.JQUANTS_API_KEY;
-  if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
-
   const dateStr = getTargetBusinessDay();
 
-  const [nameMap, jqNameMap, barsResult] = await Promise.allSettled([
+  const [nameMap, barsResult] = await Promise.allSettled([
     fetchNameMap(req),
-    fetchJQuantsNameMap(apiKey, dateStr.replace(/-/g, "")),
-    fetchDailyBarsWithFallback(apiKey, dateStr),
+    fetchDailyBarsWithFallback(null, dateStr),
   ]);
 
   const names = nameMap.status === "fulfilled" ? nameMap.value : {};
-  const jqNames = jqNameMap.status === "fulfilled" ? jqNameMap.value : {};
   if (barsResult.status === "rejected") throw barsResult.reason;
   const bars = barsResult.value.bars;
 
@@ -268,10 +233,10 @@ async function getJPRanking(req) {
     .slice()
     .sort(function(a, b) { return (b.Vo || 0) - (a.Vo || 0); })
     .slice(0, 40)
-    .map(function(bar) { return mapJPBar(bar, names, jqNames); });
+    .map(function(bar) { return mapJPBar(bar, names, {}); });
 
   // 値上がり率上位：出来高フィルター通過後20件
-  // avgVolumeが取れない場合は当日全銘柄の中央値で代替
+  // 立花証券からは銘柄別の平均出来高が取れないため、当日全銘柄の出来高の中央値で代替
   const allVols = bars.map(function(b) { return b.Vo || 0; }).sort(function(a, b) { return a - b; });
   const medianVol = allVols[Math.floor(allVols.length / 2)] || 0;
 
@@ -283,7 +248,7 @@ async function getJPRanking(req) {
       return isVolumeAboveAvg(bar.Vo || 0, avg);
     })
     .slice(0, 20)
-    .map(function(bar) { return mapJPBar(bar, names, jqNames); });
+    .map(function(bar) { return mapJPBar(bar, names, {}); });
 
   return mergeHybrid(byVolume, byChange);
 }
