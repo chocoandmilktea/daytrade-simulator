@@ -2014,11 +2014,8 @@ function StockCard(p){
 // tachibana-server(VPS)が裏でRedisに書き込んだ値を、数秒おきにポーリングして表示する
 function TachibanaBoard(p){
   var code=p.ticker.replace(".T","");
-  var quoteS=useState(null);var quote=quoteS[0],setQuote=quoteS[1];
-  var errS=useState(false);var err=errS[0],setErr=errS[1];
 
   useEffect(function(){
-    setQuote(null);setErr(false);
     var stopped=false;
 
     function notifyWatch(){
@@ -2030,9 +2027,9 @@ function TachibanaBoard(p){
         .then(function(r){return r.json();})
         .then(function(json){
           if(stopped) return;
-          if(json&&json.found){setQuote(json);if(p.onQuote)p.onQuote(json);} else setErr(true);
+          if(json&&json.found&&p.onQuote) p.onQuote(json);
         })
-        .catch(function(){if(!stopped) setErr(true);});
+        .catch(function(){});
     }
 
     notifyWatch();
@@ -2047,21 +2044,33 @@ function TachibanaBoard(p){
     };
   },[code]);
 
-  if(!quote){
-    return(
-      <div style={{background:"#071428",borderRadius:8,padding:"8px 10px",fontSize:12,color:"#4a7090"}}>
-        📡 立花証券リアルタイム: {err?"接続待ち（tachibana-serverの稼働状況を確認してください）":"取得中…"}
-      </div>
-    );
-  }
-  var ageSec=Math.round((Date.now()-quote.updatedAt)/1000);
+  return null; // 画面には出さず、株価タップ時のTachibanaQuoteModalでのみ表示する（チャート等のガタつき防止）
+}
+
+// ── 立花証券リアルタイム詳細モーダル：株価タップで開く ─────────────────────
+function TachibanaQuoteModal(p){
+  var quote=p.quote;
+  var ageSec=quote?Math.round((Date.now()-quote.updatedAt)/1000):null;
   return(
-    <div style={{background:"#071428",borderRadius:8,padding:"8px 10px",display:"flex",flexDirection:"column",gap:4}}>
-      <div style={{fontSize:11,color:"#4a7090"}}>📡 立花証券リアルタイム（{ageSec}秒前）</div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:"4px 12px"}}>
-        {Object.keys(quote.fields||{}).map(function(k){
-          return(<span key={k} style={{fontSize:12,color:"#a8c4e0"}}>{k}: <b style={{color:"#d8eeff"}}>{quote.fields[k]}</b></span>);
-        })}
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#040c18",border:"1px solid #22d3a050",borderRadius:16,padding:16,width:"100%",maxWidth:420,maxHeight:"80vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#22d3a0"}}>📡 立花証券リアルタイム{ageSec!=null?"（"+ageSec+"秒前）":""}</div>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+        </div>
+        {!quote?(
+          <div style={{fontSize:12,color:"#4a7090"}}>取得中…</div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {Object.keys(quote.fields||{}).map(function(k){
+              return(
+                <div key={k} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#a8c4e0",borderBottom:"1px solid #0e2038",paddingBottom:4}}>
+                  <span>{k}</span><b style={{color:"#d8eeff"}}>{quote.fields[k]}</b>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2090,9 +2099,12 @@ function StockDetailPanel(p){
   // intraday: undefined=読込中, null=データなし, オブジェクト=取得済み
   var intradayS=useState(undefined);var intraday=intradayS[0],setIntraday=intradayS[1];
   var liveTickS=useState(null);var liveTick=liveTickS[0],setLiveTick=liveTickS[1]; // 立花証券リアルタイム値をチャートにも反映
+  var tachibanaQuoteS=useState(null);var tachibanaQuote=tachibanaQuoteS[0],setTachibanaQuote=tachibanaQuoteS[1]; // 株価タップ時のモーダル表示用の生データ
+  var showTachibanaS=useState(false);var showTachibana=showTachibanaS[0],setShowTachibana=showTachibanaS[1];
   useEffect(function(){
     setIntraday(undefined);
     setLiveTick(null);
+    setTachibanaQuote(null);
     fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
     if(onRescan) onRescan(s.ticker); // カードの価格・判定バッジもチャートと同様に毎回最新化
   },[s.ticker]);
@@ -2192,9 +2204,10 @@ function StockDetailPanel(p){
         </div>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:8,padding:"10px 14px"}}>
-        <div>
+        <div onClick={function(){if(s.market==="JP") setShowTachibana(true);}} style={s.market==="JP"?{cursor:"pointer"}:null}>
           <span style={{fontSize:18,fontWeight:800,color:"#d8eeff"}}>{liveTick&&liveTick.price!=null?fmtMoney(liveTick.price,true):s.price}</span>
           {liveTick&&liveTick.price!=null&&<span style={{fontSize:9,fontWeight:700,color:"#22d3a0",marginLeft:6}}>● LIVE</span>}
+          {s.market==="JP"&&<span style={{fontSize:9,color:"#4a7090",marginLeft:6}}>📡詳細</span>}
           {s.market==="US"&&p.usdJpy&&<div style={{fontSize:13,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>}
         </div>
         <div style={{textAlign:"right"}}>
@@ -2208,6 +2221,7 @@ function StockDetailPanel(p){
       </div>
 
       {s.market==="JP"&&<TachibanaBoard ticker={s.ticker} onQuote={function(q){
+        setTachibanaQuote(q);
         var f=q.fields||{};
         if(f["p_1_DPP"]!=null) setLiveTick({
           price:parseFloat(f["p_1_DPP"]),
@@ -2383,6 +2397,8 @@ function StockDetailPanel(p){
         </div>,document.body)}
 
       {previewStock&&createPortal(<TickerPreviewModal stock={previewStock} onClose={function(){setPreviewStock(null);}}/>,document.body)}
+
+      {showTachibana&&createPortal(<TachibanaQuoteModal quote={tachibanaQuote} onClose={function(){setShowTachibana(false);}}/>,document.body)}
     </div>
   );
 }
