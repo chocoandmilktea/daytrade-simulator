@@ -42,73 +42,33 @@ function aggregateBars(bars, intervalMinutes) {
   return order.map(function (k) { return map[k]; });
 }
 
-// ── JP: J-Quants 1分足を15分足に集計（20営業日 / バッファ込み30日）────────
+// ── JP: Yahoo Finance 15分足 / 30日（USと同じ取得方法に統一）─────────────
 async function handleJP(ticker, res) {
   try {
-    const apiKey = process.env.JQUANTS_API_KEY;
-    if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
-
-    const code = ticker.replace(".T", "") + "0";
-
-    const today = getJSTDate(0);
-    const from  = getJSTDate(30); // 土日祝込みで約20営業日カバー
-
-    const url = `https://api.jquants.com/v2/equities/bars/minute?code=${code}&from=${from}&to=${today}`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=15m&range=30d`;
     const r = await fetch(url, {
-      headers: { "x-api-key": apiKey },
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+      },
       signal: AbortSignal.timeout(9000),
     });
-    if (!r.ok) {
-      const errText = await r.text();
-      throw new Error(`J-Quants ${r.status}: ${errText}`);
-    }
-    const json = await r.json();
-    const allBars = json.data || [];
+    if (!r.ok) throw new Error(`Yahoo Finance returned ${r.status}`);
+    const data = await r.json();
 
-    if (!allBars.length) throw new Error("no JP minute data");
+    const result = data?.chart?.result?.[0];
+    if (!result) throw new Error("no JP minute data");
 
-    allBars.sort(function(a, b) {
-      const ka = a.Date + a.Time;
-      const kb = b.Date + b.Time;
-      return ka < kb ? -1 : ka > kb ? 1 : 0;
-    });
+    const closes  = result.indicators?.quote?.[0]?.close  || [];
+    const highs   = result.indicators?.quote?.[0]?.high   || [];
+    const lows    = result.indicators?.quote?.[0]?.low    || [];
+    const volumes = result.indicators?.quote?.[0]?.volume || [];
+    const meta = result.meta || {};
 
-    // currentPrice/previousCloseの判定は1分足の生データのまま行う（当日境界の精度を落とさないため）
-    let currentPrice = allBars[allBars.length - 1].C || 0;
-
-    const todayDate = allBars[allBars.length - 1]?.Date;
-    let previousClose = currentPrice;
-    for (let i = allBars.length - 1; i >= 0; i--) {
-      if (allBars[i].Date !== todayDate) {
-        previousClose = allBars[i].C || currentPrice;
-        break;
-      }
-    }
-
-    // 分析用の系列は15分足に集計（デイトレ想定：ノイズの多い1分足そのままは使わない）
-    const aggBars = aggregateBars(allBars, 15);
-    const closes  = aggBars.map(function(b) { return b.C  || 0; });
-    const highs   = aggBars.map(function(b) { return b.H  || 0; });
-    const lows    = aggBars.map(function(b) { return b.L  || 0; });
-    const volumes = aggBars.map(function(b) { return b.Vo || 0; });
-
-    // Yahoo Financeで現在値のみ上書き（15〜20分遅延、失敗時はJ-Quants値のまま）
-    try {
-      const yRes = await fetch(
-        `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1m&range=1d`,
-        { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }, signal: AbortSignal.timeout(5000) }
-      );
-      if (yRes.ok) {
-        const yMeta = (await yRes.json())?.chart?.result?.[0]?.meta;
-        if (yMeta?.regularMarketPrice) {
-          currentPrice = yMeta.regularMarketPrice;
-          previousClose = yMeta.chartPreviousClose || yMeta.previousClose || previousClose;
-        }
-      }
-    } catch (e) {}
+    const currentPrice = meta.regularMarketPrice || 0;
+    const previousClose = meta.chartPreviousClose || meta.regularMarketPreviousClose || 0;
 
     // 決算発表予定日（東証公式Excelをキャッシュして照合。対象外ならnull）
-    // ※J-Quants用のcode（5桁・末尾0付き）とは異なり、東証Excel側は4桁コードのため別変数で照合する
     const code4 = ticker.replace(".T", "");
     let earningsDate = null;
     try {
@@ -124,13 +84,18 @@ async function handleJP(ticker, res) {
 
     // PER/PBR（財務情報のBPS・予想EPSから算出。24時間キャッシュ）
     // 権利落ち日（配当ありの銘柄のみ、次期末日の1営業日前を「予想」として概算）
+    // ※JQUANTS_API_KEYが無い場合はこの部分だけスキップ（分足取得はもう依存していないため）
     let per = null, pbr = null, exRightsDate = null;
-    try {
-      const fin = await fetchJPFinancials(apiKey, code);
-      if (fin.bps > 0) pbr = currentPrice / fin.bps;
-      if (fin.feps > 0) per = currentPrice / fin.feps;
-      if (fin.hasDividend && fin.fyEnd) exRightsDate = subtractBusinessDays(fin.fyEnd, 1);
-    } catch (e) {}
+    const apiKey = process.env.JQUANTS_API_KEY;
+    if (apiKey) {
+      try {
+        const code = ticker.replace(".T", "") + "0";
+        const fin = await fetchJPFinancials(apiKey, code);
+        if (fin.bps > 0) pbr = currentPrice / fin.bps;
+        if (fin.feps > 0) per = currentPrice / fin.feps;
+        if (fin.hasDividend && fin.fyEnd) exRightsDate = subtractBusinessDays(fin.fyEnd, 1);
+      } catch (e) {}
+    }
     if (pbr && (!isFinite(pbr) || pbr <= 0 || pbr > 1000)) pbr = null;
     if (per && (!isFinite(per) || per <= 0 || per > 10000)) per = null;
 
@@ -141,7 +106,7 @@ async function handleJP(ticker, res) {
             regularMarketPrice: currentPrice,
             chartPreviousClose: previousClose,
             dataInterval: "15m",
-            dataRange: "20d",
+            dataRange: "30d",
           },
           indicators: {
             quote: [{ close: closes, high: highs, low: lows, volume: volumes }],
