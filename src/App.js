@@ -2052,8 +2052,8 @@ function TachibanaQuoteModal(p){
   var quote=p.quote;
   var ageSec=quote?Math.round((Date.now()-quote.updatedAt)/1000):null;
   return(
-    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{background:"#040c18",border:"1px solid #22d3a050",borderRadius:16,padding:16,width:"100%",maxWidth:420,maxHeight:"80vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",inset:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div onClick={function(e){e.stopPropagation();}} style={{background:"#040c18",border:"1px solid #22d3a050",borderRadius:10,padding:"16px 18px",maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",marginRight:100,boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div style={{fontSize:13,fontWeight:700,color:"#22d3a0"}}>📡 立花証券リアルタイム{ageSec!=null?"（"+ageSec+"秒前）":""}</div>
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
