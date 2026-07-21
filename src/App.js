@@ -2193,18 +2193,27 @@ function StockDetailPanel(p){
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:8,padding:"10px 14px"}}>
         <div>
-          <span style={{fontSize:18,fontWeight:800,color:"#d8eeff"}}>{s.price}</span>
+          <span style={{fontSize:18,fontWeight:800,color:"#d8eeff"}}>{liveTick&&liveTick.price!=null?fmtMoney(liveTick.price,true):s.price}</span>
+          {liveTick&&liveTick.price!=null&&<span style={{fontSize:9,fontWeight:700,color:"#22d3a0",marginLeft:6}}>● LIVE</span>}
           {s.market==="US"&&p.usdJpy&&<div style={{fontSize:13,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>}
         </div>
         <div style={{textAlign:"right"}}>
-          {s.real!==false&&<span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>}
+          {s.real!==false&&(function(){
+            var pct=liveTick&&liveTick.changePct!=null?liveTick.changePct:parseFloat(s.change);
+            var up=pct>=0;
+            return <span style={{fontSize:15,fontWeight:700,color:up?"#22d3a0":"#f43f5e"}}>{up?"▲":"▼"}{Math.abs(pct).toFixed(2)}%</span>;
+          })()}
           <div style={{marginTop:4}}><span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span></div>
         </div>
       </div>
 
       {s.market==="JP"&&<TachibanaBoard ticker={s.ticker} onQuote={function(q){
         var f=q.fields||{};
-        if(f["p_1_DPP"]!=null) setLiveTick({price:parseFloat(f["p_1_DPP"]),time:f["p_1_DPP:T"]||""});
+        if(f["p_1_DPP"]!=null) setLiveTick({
+          price:parseFloat(f["p_1_DPP"]),
+          time:f["p_1_DPP:T"]||"",
+          changePct:f["p_1_DYRP"]!=null?parseFloat(f["p_1_DYRP"]):null,
+        });
       }}/>}
 
       <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"space-between"}}>
