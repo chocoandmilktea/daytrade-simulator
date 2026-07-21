@@ -2,8 +2,11 @@
 // AIが「今後上がりそうな業種」をweb_search付きで選定し、その業種内だけで
 // ranking.jsと同じ出来高・値上がり率ハイブリッドロジックを適用する（日本株のみ）
 //
-// 流れ：①AIがセクター選定（鮮度チェック付き）→②J-Quants業種マスタで絞り込み→③ランキング化
+// 流れ：①AIがセクター選定（鮮度チェック付き）→②業種コードで絞り込み→③ランキング化
 // AIの選定結果は24時間キャッシュ。有効なセクターが1つもない場合は通常ランキングにフォールバック
+//
+// ※業種コードでの絞り込みは、ranking.js経由で取得する立花証券の銘柄マスタ
+//   （東証33業種分類）をそのまま利用している。J-Quantsへの依存はなくなった。
 
 import {
   isVolumeAboveAvg,
@@ -115,55 +118,21 @@ function getJSTDateLabel() {
   return `${d.getUTCFullYear()}年${d.getUTCMonth() + 1}月${d.getUTCDate()}日`;
 }
 
-// ── ②J-Quants業種マスタ（コード→会社名・業種名）。24時間キャッシュ ──────────
-// ※ 実際のJ-Quantsレスポンスで確認済み：33業種名はS33Nm（Vercelログで確認: 2026-07-14）
-
-let masterCache = { ts: 0, nameMap: null, sectorMap: null };
-
-async function fetchJQuantsMaster(apiKey, dateStr8) {
-  const now = Date.now();
-  if (masterCache.nameMap && now - masterCache.ts < CACHE_TTL) {
-    return masterCache;
-  }
-  const url = `https://api.jquants.com/v2/equities/master?date=${dateStr8}`;
-  const res = await fetch(url, { headers: { "x-api-key": apiKey }, signal: AbortSignal.timeout(9000) });
-  if (!res.ok) throw new Error("master api: " + res.status);
-  const json = await res.json();
-  const rows = json?.data || json || [];
-
-  const nameMap = {};
-  const sectorMap = {};
-  rows.forEach(function(row) {
-    const code = String(row.Code || "").replace(/0$/, "");
-    if (!code) return;
-    if (row.CoName) nameMap[code] = row.CoName;
-    if (row.S33Nm) sectorMap[code] = row.S33Nm;
-  });
-
-  masterCache = { ts: now, nameMap, sectorMap };
-  return masterCache;
-}
-
-// ── ③業種内で出来高・値上がり率ハイブリッドランキングを生成 ─────────────────
+// ── ②③業種内で出来高・値上がり率ハイブリッドランキングを生成 ────────────────
+// 業種名はranking.js経由で取得する立花証券の銘柄マスタ（bar.Sector）にそのまま
+// 入っているため、以前のような専用マスタ取得は不要になった
 
 async function getSectorRanking(req, sectors) {
-  const apiKey = process.env.JQUANTS_API_KEY;
-  if (!apiKey) throw new Error("JQUANTS_API_KEY not set");
-
   const dateStr = getTargetBusinessDay();
   const sectorNames = sectors.map(function(s) { return s.name; });
 
-  // 日足は祝日等でその日のデータが空のことがあるため、ranking.js側の
-  // 「空なら前営業日へ自動フォールバック」ロジックを共有して使う
-  const [names, master, barsResult] = await Promise.all([
+  const [names, barsResult] = await Promise.all([
     fetchNameMap(req),
-    fetchJQuantsMaster(apiKey, dateStr.replace(/-/g, "")),
-    fetchDailyBarsWithFallback(apiKey, dateStr),
+    fetchDailyBarsWithFallback(null, dateStr),
   ]);
 
   const bars = barsResult.bars.filter(function(bar) {
-    const code = String(bar.Code || "").replace(/0$/, "");
-    return sectorNames.includes(master.sectorMap[code]);
+    return sectorNames.includes(bar.Sector);
   });
 
   if (!bars.length) return [];
@@ -171,7 +140,7 @@ async function getSectorRanking(req, sectors) {
   const byVolume = bars.slice()
     .sort(function(a, b) { return (b.Vo || 0) - (a.Vo || 0); })
     .slice(0, 50)
-    .map(function(bar) { return mapJPBar(bar, names, master.nameMap); });
+    .map(function(bar) { return mapJPBar(bar, names, {}); });
 
   const allVols = bars.map(function(b) { return b.Vo || 0; }).sort(function(a, b) { return a - b; });
   const medianVol = allVols[Math.floor(allVols.length / 2)] || 0;
@@ -180,7 +149,7 @@ async function getSectorRanking(req, sectors) {
     .sort(function(a, b) { return calcChangeRate(b) - calcChangeRate(a); })
     .filter(function(bar) { return isVolumeAboveAvg(bar.Vo || 0, bar.AvgVo || medianVol); })
     .slice(0, 20)
-    .map(function(bar) { return mapJPBar(bar, names, master.nameMap); });
+    .map(function(bar) { return mapJPBar(bar, names, {}); });
 
   return mergeHybrid(byVolume, byChange);
 }
