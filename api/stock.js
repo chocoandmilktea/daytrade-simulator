@@ -119,7 +119,7 @@ async function handleJP(ticker, res) {
     // 対TOPIX相対強弱用：直近のTOPIX騰落率（全銘柄共通の値なので1時間キャッシュ）
     let topixChange = null;
     try {
-      topixChange = await fetchTopixChange(apiKey);
+      topixChange = await fetchTopixChange();
     } catch (e) {}
 
     // PER/PBR（財務情報のBPS・予想EPSから算出。24時間キャッシュ）
@@ -380,35 +380,29 @@ async function fetchJPEarningsMap() {
   return map;
 }
 
-// ── 対TOPIX相対強弱：直近のTOPIX騰落率（全銘柄で共通の値のため1時間キャッシュ）──
-// J-Quants /v2/indices/bars/daily/topix は日次更新（O/H/L/Cの四本値）のため、
-// 直近10日分を取得して末尾2本（最新・その前日）から前日比%を算出する
+// ── 対TOPIX相対強弱：直近のTOPIX騰落率 ──────────────────────────────────
+// 立花証券API経由（tachibana-serverの/topixエンドポイントを呼ぶだけ）。
+// 実際のTOPIX取得・1時間キャッシュはtachibana-server側（webapi.js）で行っている。
 var topixCache = { change: null, ts: 0 };
-var TOPIX_TTL = 60 * 60 * 1000; // 1時間
+var TOPIX_TTL = 60 * 60 * 1000; // 1時間（tachibana-server側キャッシュに加え、こちらでも軽くキャッシュ）
 
-async function fetchTopixChange(apiKey) {
+async function fetchTopixChange() {
   const now = Date.now();
   if (topixCache.change !== null && now - topixCache.ts < TOPIX_TTL) return topixCache.change;
 
-  const to = getJSTDate(0);
-  const from = getJSTDate(10); // 休場日を挟んでも確実に2本以上取れる余裕を持たせる
+  const apiUrl = process.env.TACHIBANA_TOPIX_API;
+  if (!apiUrl) throw new Error("TACHIBANA_TOPIX_API not set");
 
-  const res = await fetch(`https://api.jquants.com/v2/indices/bars/daily/topix?from=${from}&to=${to}`, {
-    headers: { "x-api-key": apiKey },
-    signal: AbortSignal.timeout(8000),
-  });
+  const headers = {};
+  if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
+
+  const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error("topix " + res.status);
   const json = await res.json();
-  const rows = (json.data || []).slice().sort(function(a, b) {
-    return a.Date < b.Date ? -1 : a.Date > b.Date ? 1 : 0;
-  });
-  if (rows.length < 2) throw new Error("insufficient topix data");
+  if (json.change == null) throw new Error("topix: change値がありません");
 
-  const last = rows[rows.length - 1], prev = rows[rows.length - 2];
-  const change = (last.C - prev.C) / prev.C * 100;
-
-  topixCache = { change: change, ts: now };
-  return change;
+  topixCache = { change: json.change, ts: now };
+  return json.change;
 }
 
 // ── JST日付文字列を取得（daysAgo日前、YYYYMMDD形式）────────────────────────
