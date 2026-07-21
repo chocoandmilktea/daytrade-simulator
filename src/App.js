@@ -1374,10 +1374,6 @@ function IntradayChart1m(p){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
   }
   var fullCloses=data.m1.closes,fullTimes=data.m1.times||[];
-  if(p.liveTick&&p.liveTick.price!=null){ // 立花証券リアルタイム値を直近の1点として継ぎ足す
-    fullCloses=fullCloses.concat([p.liveTick.price]);
-    fullTimes=fullTimes.concat([p.liveTick.time||""]);
-  }
   var dateLabel=formatChartDateLabel(data.date);
   // MAは全期間のデータで計算してから、表示だけ直近2時間（1分足120本）に絞る。
   // 表示範囲の先頭でも正しいMA値になるよう、計算は絞り込み前の配列に対して行う。
@@ -1436,27 +1432,51 @@ function IntradayChart1m(p){
   );
 }
 
-// シグナル詳細の表示順（重い項目が上）。RSIは末尾に実際の数値が付くため前方一致で判定する
-var SIGNAL_WEIGHT_ORDER=["コンフルエンス","出来高","OBV","EMA整列","BB","寄り付きレンジ","当日ブレイク","RSI","BB収束","ATR消化率","VWAP傾き","ギャップ"];
-function signalWeightRank(label){
-  var idx=SIGNAL_WEIGHT_ORDER.findIndex(function(o){return label===o||(o==="RSI"&&label.indexOf("RSI")===0);});
-  return idx===-1?SIGNAL_WEIGHT_ORDER.length:idx;
-}
-
 // ── シグナル詳細（カードの展開パネルとチャートモーダルで共通利用）────────
 function SignalDetailList(p){
-  var weightOpenS=useState(false);var weightOpen=weightOpenS[0],setWeightOpen=weightOpenS[1];
-  var sortedSignals=(p.signals||[])
-    .filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");})
-    .slice()
-    .sort(function(a,b){return signalWeightRank(a.label)-signalWeightRank(b.label);});
+  var bd=(p.breakdown||[]).filter(function(b){return b.delta!==0;});
+  var negatives=bd.filter(function(b){return b.delta<0;}).sort(function(a,b){return a.delta-b.delta;});
+  var bdOpenS=useState(false);var bdOpen=bdOpenS[0],setBdOpen=bdOpenS[1];
   return(
     <div>
+      {bd.length>0&&(
+        <div style={{marginBottom:14}}>
+          <div onClick={function(){setBdOpen(!bdOpen);}} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",marginBottom:bdOpen?6:0}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#4a90c0"}}>🧮 スコア内訳（60点まで何が足りないか）</div>
+            <span style={{color:"#4a7090",fontSize:12}}>{bdOpen?"▲":"▼"}</span>
+          </div>
+          {!bdOpen&&negatives.length>0&&(
+            <div style={{fontSize:11,color:"#f87171",marginTop:4}}>
+              ⬇️ 特に足を引っ張っている要因: {negatives.slice(0,2).map(function(b){return b.label+"("+b.delta+")";}).join("、")}
+            </div>
+          )}
+          {bdOpen&&(
+            <div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {bd.map(function(b,i){
+                  var c=b.delta>0?"#22d3a0":"#f43f5e";
+                  return(
+                    <div key={i} style={{background:"#071428",borderRadius:6,padding:"5px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
+                      <span style={{fontSize:11,color:"#4a7090"}}>{b.label}</span>
+                      <span style={{fontSize:12,fontWeight:700,color:c}}>{b.delta>0?"+":""}{b.delta}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {negatives.length>0&&(
+                <div style={{fontSize:11,color:"#f87171",marginTop:6}}>
+                  ⬇️ 特に足を引っ張っている要因: {negatives.slice(0,2).map(function(b){return b.label+"("+b.delta+")";}).join("、")}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
-        {sortedSignals.map(function(sig,i){
+        {(p.signals||[]).filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");}).map(function(sig,i){
           return(
-            <div key={i} onClick={function(){setWeightOpen(true);}} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040",cursor:"pointer"}}>
+            <div key={i} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
               <span style={{fontSize:12,color:"#4a7090"}}>{sig.label}</span>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                 <span style={{fontSize:12,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
@@ -1465,41 +1485,6 @@ function SignalDetailList(p){
             </div>
           );
         })}
-      </div>
-      <SignalWeightModal open={weightOpen} onClose={function(){setWeightOpen(false);}}/>
-    </div>
-  );
-}
-
-// シグナル詳細タップ時に表示する、配点の重み説明モーダル（画面左側に表示）
-function SignalWeightModal(p){
-  if(!p.open) return null;
-  return(
-    <div onClick={p.onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div onClick={function(e){e.stopPropagation();}} style={{background:"#0a1628",border:"1px solid #2a4060",borderRadius:10,maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",padding:"16px 18px",marginRight:100,boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-          <div style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>📊 シグナルの重み付けについて</div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",padding:0}}>✕</button>
-        </div>
-        <div style={{fontSize:12,color:"#a8c4e0",lineHeight:1.7}}>
-          <div style={{fontWeight:700,color:"#f87171",marginTop:6,marginBottom:4}}>特に重い項目（±15点前後）</div>
-          <div>・<b>コンフルエンス</b>：他の複数シグナルが同じ方向を向いているかをまとめた「シグナルの一致度」。8個中6個以上一致で±15点と、単独では一番配点が大きい項目です。「強気シグナル多数一致」と出ていれば、個別シグナルより信頼度が高いと見なせます</div>
-
-          <div style={{fontWeight:700,color:"#fbbf24",marginTop:14,marginBottom:4}}>次に重い項目（±6〜10点）</div>
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            <div>・<b>EMA整列</b>：短期・中期・長期の移動平均が順番通りに並んでいるか＝トレンドの方向感</div>
-            <div>・<b>BB（ボリンジャーバンド）</b>：下限で反発なら押し目買い、上限突破は過熱のサイン</div>
-            <div>・<b>OBV／出来高</b>：値動きに出来高が伴っているか。「価格は動いたが出来高が伴わない」は騙しになりやすいので、出来高とセットで見る価値があります</div>
-            <div>・<b>寄り付きレンジ（ORB）</b>：寄り付き後のレンジを上抜け/下抜けした、というデイトレの定番エントリーサイン</div>
-            <div>・<b>RSI</b>：買われすぎ・売られすぎを見る指標。30以下は「売られすぎ」で反発を期待して加点、70以上は「買われすぎ」で過熱感として減点</div>
-          </div>
-
-          <div style={{fontWeight:700,color:"#94a3b8",marginTop:14,marginBottom:4}}>補助的な項目（±3〜7点）</div>
-          <div>・BB収束（値幅が狭まっている＝この後の値動き拡大の予兆）、ATR消化率（すでに値幅を使い切っていないか＝追いかけ買いの危険度）、Pivot、VWAP傾きなど</div>
-
-          <div style={{fontWeight:700,color:"#22d3a0",marginTop:14,marginBottom:4}}>実際の見方の目安</div>
-          <div>1つの指標だけで判断せず、「コンフルエンスが強気/弱気で一致 → EMA整列やBBの方向も同じ → 出来高も伴っている」という3つが揃ったときが、このアプリの設計上いちばん重視されている状況です。逆に出来高が「低調」なのに他が強気、というときは騙しの可能性を疑う、という使い方が理にかなっています。</div>
-        </div>
       </div>
     </div>
   );
@@ -2012,13 +1997,15 @@ function StockCard(p){
 
 // 立花証券e支店APIのリアルタイム株価・板情報（選択中の1銘柄のみ）
 // tachibana-server(VPS)が裏でRedisに書き込んだ値を、数秒おきにポーリングして表示する
-function TachibanaBoard(p){
-  var code=p.ticker.replace(".T","");
+// 立花証券のリアルタイムデータを取得する共通フック（メイン価格表示・詳細パネル両方から使う）
+function useTachibanaQuote(ticker){
   var quoteS=useState(null);var quote=quoteS[0],setQuote=quoteS[1];
   var errS=useState(false);var err=errS[0],setErr=errS[1];
 
   useEffect(function(){
     setQuote(null);setErr(false);
+    if(!ticker) return;
+    var code=ticker.replace(".T","");
     var stopped=false;
 
     function notifyWatch(){
@@ -2030,7 +2017,7 @@ function TachibanaBoard(p){
         .then(function(r){return r.json();})
         .then(function(json){
           if(stopped) return;
-          if(json&&json.found){setQuote(json);if(p.onQuote)p.onQuote(json);} else setErr(true);
+          if(json&&json.found) setQuote(json); else setErr(true);
         })
         .catch(function(){if(!stopped) setErr(true);});
     }
@@ -2045,7 +2032,14 @@ function TachibanaBoard(p){
       clearInterval(watchTimer);
       clearInterval(quoteTimer);
     };
-  },[code]);
+  },[ticker]);
+
+  return {quote:quote, err:err};
+}
+
+// 立花証券リアルタイム株価・板情報（選択中の1銘柄のみ）の詳細表示。データ取得はしない（表示専用）
+function TachibanaBoard(p){
+  var quote=p.quote,err=p.err;
 
   if(!quote){
     return(
@@ -2078,6 +2072,15 @@ function StockDetailPanel(p){
     );
   }
   var isUp=parseFloat(s.change)>=0;
+
+  // 立花証券リアルタイム（JP銘柄のみ）。取れていればメイン価格表示もこちらを優先する
+  var tq=useTachibanaQuote(s.market==="JP"?s.ticker:null);
+  var liveFields=tq.quote&&tq.quote.fields;
+  var liveDPP=liveFields&&liveFields.p_1_DPP!=null?parseFloat(liveFields.p_1_DPP):null;
+  var liveChangePct=liveFields&&liveFields.p_1_DYRP!=null?parseFloat(liveFields.p_1_DYRP):null;
+  var displayPrice=liveDPP!=null&&!isNaN(liveDPP)?fmtMoney(liveDPP,true):s.price;
+  var displayChangePct=liveChangePct!=null&&!isNaN(liveChangePct)?liveChangePct:parseFloat(s.change);
+  var displayIsUp=displayChangePct>=0;
   var mc=MKT[s.market]||MKT["US"];
   var bc=BADGE[s.timing];
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
@@ -2089,10 +2092,8 @@ function StockDetailPanel(p){
   // チャート（1分足＋25期・75期の短期MA）：この銘柄が選択された時に取得
   // intraday: undefined=読込中, null=データなし, オブジェクト=取得済み
   var intradayS=useState(undefined);var intraday=intradayS[0],setIntraday=intradayS[1];
-  var liveTickS=useState(null);var liveTick=liveTickS[0],setLiveTick=liveTickS[1]; // 立花証券リアルタイム値をチャートにも反映
   useEffect(function(){
     setIntraday(undefined);
-    setLiveTick(null);
     fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
     if(onRescan) onRescan(s.ticker); // カードの価格・判定バッジもチャートと同様に毎回最新化
   },[s.ticker]);
@@ -2193,19 +2194,17 @@ function StockDetailPanel(p){
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:8,padding:"10px 14px"}}>
         <div>
-          <span style={{fontSize:18,fontWeight:800,color:"#d8eeff"}}>{s.price}</span>
+          <span style={{fontSize:18,fontWeight:800,color:"#d8eeff"}}>{displayPrice}</span>
+          {liveDPP!=null&&<span style={{fontSize:9,fontWeight:700,color:"#22d3a0",marginLeft:6}}>● LIVE</span>}
           {s.market==="US"&&p.usdJpy&&<div style={{fontSize:13,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>}
         </div>
         <div style={{textAlign:"right"}}>
-          {s.real!==false&&<span style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</span>}
+          {s.real!==false&&<span style={{fontSize:15,fontWeight:700,color:displayIsUp?"#22d3a0":"#f43f5e"}}>{displayIsUp?"▲":"▼"}{Math.abs(displayChangePct).toFixed(2)}%</span>}
           <div style={{marginTop:4}}><span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span></div>
         </div>
       </div>
 
-      {s.market==="JP"&&<TachibanaBoard ticker={s.ticker} onQuote={function(q){
-        var f=q.fields||{};
-        if(f["p_1_DPP"]!=null) setLiveTick({price:parseFloat(f["p_1_DPP"]),time:f["p_1_DPP:T"]||""});
-      }}/>}
+      {s.market==="JP"&&<TachibanaBoard quote={tq.quote} err={tq.err}/>}
 
       <div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",gap:4}}>
@@ -2224,7 +2223,7 @@ function StockDetailPanel(p){
 
       {/* チャート（1分足＋週足MA） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
-        <IntradayChart1m data={intraday} liveTick={liveTick}/>
+        <IntradayChart1m data={intraday}/>
       </div>
 
       {/* シグナル詳細 */}
@@ -2431,10 +2430,8 @@ function MarketBar(){
         return(
           <div key={idx.key} style={{background:vixAlert?"#1f0010":"#050e1c",borderRadius:8,padding:"10px 12px",border:vixAlert?"1px solid #f43f5e50":"1px solid transparent",gridColumn:(!isWide&&isVix)?"1 / -1":undefined}}>
             <div style={{fontSize:13,color:vixAlert?"#f43f5e":"#4a7090",fontWeight:700,marginBottom:4}}>{idx.label}{vixAlert?" ⚠ 警戒":""}</div>
-            <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
-              <div style={{fontSize:20,fontWeight:800,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
-              <div style={{fontSize:14,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
-            </div>
+            <div style={{fontSize:20,fontWeight:800,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
+            <div style={{fontSize:15,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e",marginTop:2}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
           </div>
         );
       })}
