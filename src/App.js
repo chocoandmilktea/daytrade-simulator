@@ -1798,6 +1798,43 @@ function TachibanaQuoteModal(p){
   );
 }
 
+// ── 板情報（気配値：売気配GAP/GAV・買気配GBP/GBV）────────────────────────
+// 立花証券リアルタイム中継の生データ（TachibanaQuoteModalと同じ元データ）から
+// 気配値だけを抜き出して表示する。データが来ていない・欠けている場合は
+// その旨を表示するだけで、エラーにはしない。
+function OrderBookBoard(p){
+  var q=p.quote;
+  if(!q||!q.fields) return null;
+  var f=q.fields;
+  var asks=[5,4,3,2,1].map(function(n){return {price:f["p_1_GAP"+n],vol:f["p_1_GAV"+n]};}).filter(function(r){return r.price!=null;});
+  var bids=[1,2,3,4,5].map(function(n){return {price:f["p_1_GBP"+n],vol:f["p_1_GBV"+n]};}).filter(function(r){return r.price!=null;});
+  if(!asks.length&&!bids.length) return null;
+  function fmtNum(v){return v==null?"—":Number(v).toLocaleString();}
+  function Row(key,price,vol,color,bg){
+    return(
+      <div key={key} style={{background:bg,borderRadius:6,padding:"4px 8px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontSize:12,fontWeight:700,color:color}}>{fmtNum(price)}</span>
+        <span style={{fontSize:11,color:"#8aa4c0"}}>{fmtNum(vol)}株</span>
+      </div>
+    );
+  }
+  return(
+    <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
+      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📋 板情報（売気配・買気配）</div>
+      <div style={{display:"flex",flexDirection:"column",gap:2}}>
+        {asks.length
+          ?asks.map(function(r,i){return Row("a"+i,r.price,r.vol,"#f43f5e","#1f0010");})
+          :<div style={{fontSize:10,color:"#2a5070",padding:"2px 4px"}}>売気配データなし</div>}
+        <div style={{height:1,background:"#1e3050",margin:"3px 0"}}/>
+        {bids.length
+          ?bids.map(function(r,i){return Row("b"+i,r.price,r.vol,"#0ea5e9","#0a1a3a");})
+          :<div style={{fontSize:10,color:"#2a5070",padding:"2px 4px"}}>買気配データなし</div>}
+      </div>
+      <div style={{fontSize:9,color:"#2a5070",marginTop:5}}>立花証券リアルタイム中継（数秒遅延あり）</div>
+    </div>
+  );
+}
+
 function StockDetailPanel(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   if(!s){
@@ -1978,7 +2015,7 @@ function StockDetailPanel(p){
           <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:10}}>
-          {/* 板情報はフェーズ⑥でここに追加予定 */}
+          <OrderBookBoard quote={tachibanaQuote}/>
           {s.profitLoss&&(
             <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン（標準型）</div>
