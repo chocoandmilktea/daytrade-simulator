@@ -2976,7 +2976,8 @@ function SyncPanel(p){
   var syncStatusS=useState(null);var syncStatus=syncStatusS[0],setSyncStatus=syncStatusS[1];
   var wordS=useState("");var word=wordS[0],setWord=wordS[1];
   var pinS=useState("");var pin=pinS[0],setPin=pinS[1];
-  var loginStatusS=useState(null);var loginStatus=loginStatusS[0],setLoginStatus=loginStatusS[1];
+  // ログイン済みかどうかをlocalStorageに残し、タブを開き直しても表示が消えないようにする
+  var loginStatusS=useState(function(){try{return localStorage.getItem("daytrade_login_done")==="1"?"ok":null;}catch(e){return null;}});var loginStatus=loginStatusS[0],setLoginStatus=loginStatusS[1];
   function copyId(){
     if(navigator.clipboard){navigator.clipboard.writeText(userId).then(function(){setCopyStatus("ok");setTimeout(function(){setCopyStatus(null);},2000);});}
     else{prompt("ユーザーID",userId);}
@@ -3023,8 +3024,12 @@ function SyncPanel(p){
         if(p.syncToServer)p.syncToServer(p.favs,p.favGroups,p.groupNames,p.appTrades,p.personalTrades,id);
       }
       setLoginStatus("ok");
-      setTimeout(function(){setLoginStatus(null);scan();},1500);
-    }catch(e){setLoginStatus("error");setTimeout(function(){setLoginStatus(null);},2500);}
+      try{localStorage.setItem("daytrade_login_done","1");}catch(e){}
+      setTimeout(function(){scan();},1500); // 表示は「ログイン済み」のまま維持し、スキャンだけ行う
+    }catch(e){
+      setLoginStatus("error");
+      setTimeout(function(){try{setLoginStatus(localStorage.getItem("daytrade_login_done")==="1"?"ok":null);}catch(e2){setLoginStatus(null);}},2500);
+    }
   }
   var favCount=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]").length;}catch(e){return 0;}})();
   var tradeCount=(function(){try{return loadTrades("app").length+loadTrades("personal").length;}catch(e){return 0;}})();
@@ -3037,7 +3042,7 @@ function SyncPanel(p){
         <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:14,width:"100%",boxSizing:"border-box",marginBottom:8}} value={word} placeholder="合言葉（例：さくら）" onChange={function(e){setWord(e.target.value);}}/>
         <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:14,width:"100%",boxSizing:"border-box",marginBottom:10}} value={pin} placeholder="PIN（例：1234）" inputMode="numeric" onChange={function(e){setPin(e.target.value);}}/>
         <button onClick={loginWithPassphrase} disabled={!loginReady||loginStatus==="loading"} style={{width:"100%",background:loginReady?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:14,fontWeight:700,cursor:loginReady?"pointer":"not-allowed"}}>
-          {loginStatus==="loading"?"ログイン中...":loginStatus==="ok"?"✅ ログイン完了！":loginStatus==="error"?"❌ 失敗しました":"ログイン / 新規登録"}
+          {loginStatus==="loading"?"ログイン中...":loginStatus==="ok"?"✅ ログイン済み":loginStatus==="error"?"❌ 失敗しました":"ログイン / 新規登録"}
         </button>
         <div style={{fontSize:11,color:"#2a6060",marginTop:8}}>※ 初めて使う合言葉＋PINの組み合わせなら、新規データとして自動的に登録されます</div>
       </div>
