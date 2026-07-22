@@ -1374,15 +1374,8 @@ function IntradayChart1m(p){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
   }
   var fullCloses=data.m1.closes,fullTimes=data.m1.times||[];
-  // ローソク足用のOHLC（古いキャッシュ等でopens/highs/lowsが無い場合はcloseで代用＝実体・ヒゲなしの線になる）
-  var fullOpens=data.m1.opens&&data.m1.opens.length===fullCloses.length?data.m1.opens:fullCloses;
-  var fullHighs=data.m1.highs&&data.m1.highs.length===fullCloses.length?data.m1.highs:fullCloses;
-  var fullLows=data.m1.lows&&data.m1.lows.length===fullCloses.length?data.m1.lows:fullCloses;
-  if(p.liveTick&&p.liveTick.price!=null){ // 立花証券リアルタイム値を直近の1本（O=H=L=Cの仮の足）として継ぎ足す
+  if(p.liveTick&&p.liveTick.price!=null){ // 立花証券リアルタイム値を直近の1点として継ぎ足す
     fullCloses=fullCloses.concat([p.liveTick.price]);
-    fullOpens=fullOpens.concat([p.liveTick.price]);
-    fullHighs=fullHighs.concat([p.liveTick.price]);
-    fullLows=fullLows.concat([p.liveTick.price]);
     fullTimes=fullTimes.concat([p.liveTick.time||""]);
   }
   var dateLabel=formatChartDateLabel(data.date);
@@ -1391,11 +1384,10 @@ function IntradayChart1m(p){
   var fullMa25=trailingSMA(fullCloses,25),fullMa75=trailingSMA(fullCloses,75);
   var cropStart=Math.max(0,fullCloses.length-180);
   var closes=fullCloses.slice(cropStart),times=fullTimes.slice(cropStart);
-  var opens=fullOpens.slice(cropStart),highs=fullHighs.slice(cropStart),lows=fullLows.slice(cropStart);
   var ma25=fullMa25.slice(cropStart),ma75=fullMa75.slice(cropStart);
   var W=100;
-  // 縦軸の範囲はヒゲ（高値・安値）まで含めて決める。MAも同じ1分足由来の値なので一緒に含めてよい
-  var allVals=highs.concat(lows).concat(ma25.filter(function(v){return v!=null;})).concat(ma75.filter(function(v){return v!=null;}));
+  // 縦軸の範囲は終値とMAから決める
+  var allVals=closes.concat(ma25.filter(function(v){return v!=null;})).concat(ma75.filter(function(v){return v!=null;}));
   var mn=Math.min.apply(null,allVals),mx=Math.max.apply(null,allVals);
   var rng=mx-mn||1;
   var pad=rng*0.1;
@@ -1405,6 +1397,7 @@ function IntradayChart1m(p){
   function toPts(arr){
     return arr.map(function(v,i){return v==null?null:toX(i)+","+toY(v);}).filter(function(v){return v!=null;}).join(" ");
   }
+  var ptsClose=toPts(closes);
   var pts25=toPts(ma25),pts75=toPts(ma75);
   var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1];
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
@@ -1413,13 +1406,10 @@ function IntradayChart1m(p){
     var shortDate=formatShortDate(data.date);
     timeLabels=timeLabels.map(function(t){return {label:shortDate+" "+t.label,index:t.index};});
   }
-  // ローソク足1本の実体幅＝本数の間隔の約6割（隙間を残して見やすくする）
-  var slot=closes.length>1?(W-1)/(closes.length-1):W;
-  var bodyW=Math.max(slot*0.6,0.3);
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
-        <span>1分足（直近3時間）</span>
+        <span>1分足終値（直近3時間）</span>
         <span>{dateLabel}</span>
       </div>
       <div style={{display:"flex",gap:6}}>
@@ -1429,21 +1419,7 @@ function IntradayChart1m(p){
               var y=toY(v);
               return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
             })}
-            {closes.map(function(c,i){
-              var o=opens[i],h=highs[i],l=lows[i];
-              if(c==null||o==null||h==null||l==null) return null;
-              var up=c>=o;
-              var color=up?"#f43f5e":"#0ea5e9"; // iSPEED準拠：陽線=赤、陰線=青
-              var x=toX(i);
-              var yO=toY(o),yC=toY(c),yH=toY(h),yL=toY(l);
-              var bodyTop=Math.min(yO,yC),bodyH=Math.max(Math.abs(yC-yO),0.6);
-              return(
-                <g key={i}>
-                  <line x1={x} y1={yH} x2={x} y2={yL} stroke={color} strokeWidth={0.3}/>
-                  <rect x={x-bodyW/2} y={bodyTop} width={bodyW} height={bodyH} fill={color}/>
-                </g>
-              );
-            })}
+            {ptsClose&&<polyline points={ptsClose} fill="none" stroke="#38bdf8" strokeWidth={0.9}/>}
             {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={0.6}/>}
             {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={0.6}/>}
           </svg>
