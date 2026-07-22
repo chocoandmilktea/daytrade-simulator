@@ -2497,8 +2497,7 @@ function AllStocksPanel(p){
   }
 
   var isMobile=window.innerWidth<768;
-  var isWide=window.innerWidth>=1400; // 画面が広い時はカードを3列にして横幅を狭くする
-  var cols=isMobile?1:(isWide?3:2);
+  var cols=isMobile?1:2; // 詳細パネルを広く取るため、常に2列固定
   var stickyTop=isMobile?0:50;
   var cardGrid=(
     <div style={{display:"grid",gridTemplateColumns:"repeat("+cols+",1fr)",gap:8}}>
@@ -2534,7 +2533,7 @@ function AllStocksPanel(p){
         <MarketBar/>
         {isMobile?cardGrid:(
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-            <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
+            <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
               <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
             </div>
@@ -2600,8 +2599,7 @@ function FavPanel(p){
   }
   function isFavRef(t){return favs.indexOf(t)>=0;}
   var isMobile=window.innerWidth<768;
-  var isWide=window.innerWidth>=1400; // 全銘柄タブと同じ基準で3列にする
-  var favCols=isMobile?1:(isWide?3:2);
+  var favCols=isMobile?1:2; // 詳細パネルを広く取るため、常に2列固定
   var cardGrid=(
     <div style={{display:"grid",gridTemplateColumns:"repeat("+favCols+",1fr)",gap:8}}>
       {displayStocks.map(function(s){
@@ -2671,7 +2669,7 @@ function FavPanel(p){
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8,paddingLeft:10,paddingRight:10,paddingBottom:120}}>
         {isMobile?cardGrid:(
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-            <div style={{width:"60%",flexShrink:0}}>{cardGrid}</div>
+            <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
               <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
             </div>
