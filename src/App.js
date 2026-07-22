@@ -1419,7 +1419,7 @@ function IntradayChart1m(p){
               var y=toY(v);
               return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
             })}
-            {ptsClose&&<polyline points={ptsClose} fill="none" stroke="#38bdf8" strokeWidth={0.9}/>}
+            {ptsClose&&<polyline points={ptsClose} fill="none" stroke="#ffffff" strokeWidth={0.35}/>}
             {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={0.6}/>}
             {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={0.6}/>}
           </svg>
