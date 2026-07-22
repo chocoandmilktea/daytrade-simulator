@@ -2997,7 +2997,7 @@ function SyncPanel(p){
     var id=input.trim();if(!id)return;
     setSyncStatus("loading");
     try{
-      var res=await fetch(syncApi+"?userId="+id);
+      var res=await fetch(syncApi+"?userId="+id,{cache:"no-store"});
       var data=await res.json();
       if(!data.found)throw new Error("not found");
       applySyncedData(data,id);
@@ -3011,7 +3011,7 @@ function SyncPanel(p){
     setLoginStatus("loading");
     try{
       var id=await deriveUserId(word,pin);
-      var res=await fetch(syncApi+"?userId="+id);
+      var res=await fetch(syncApi+"?userId="+id,{cache:"no-store"});
       var data=await res.json();
       if(data.found){
         // 既にこの合言葉で登録済み→サーバーのデータで復元
@@ -3352,7 +3352,11 @@ export default function App(){
   var fgS=useState(function(){try{var v=localStorage.getItem("fav_groups");return v?JSON.parse(v):{};}catch(e){return{};}});var favGroups=fgS[0],setFavGroups=fgS[1];
   var gnS=useState(function(){try{var v=localStorage.getItem("group_names");return v?Object.assign({},DEFAULT_GROUP_NAMES,JSON.parse(v)):Object.assign({},DEFAULT_GROUP_NAMES);}catch(e){return Object.assign({},DEFAULT_GROUP_NAMES);}});var groupNames=gnS[0],setGroupNames=gnS[1];
   var NOTIFY_API="https://daytrade-simulator.vercel.app/api/notify";
+  // 起動時のサーバー読み込みが終わるまでtrueにならない。falseの間は保存を止めて、
+  // 「読み込み前の古いデータで上書きしてしまう」事故を防ぐ
+  var syncLoadedS=useState(false);var syncLoaded=syncLoadedS[0],setSyncLoaded=syncLoadedS[1];
   function syncToServer(nextFavs,nextGroups,nextGroupNames,nextAppTrades,nextPersonalTrades,targetId){
+    if(!syncLoaded)return; // 起動時の読み込み完了前は保存しない
     fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       favs:nextFavs,
       scoreHist:getAllScoreHist(),
@@ -3547,7 +3551,9 @@ export default function App(){
       }).catch(function(){});
   },[]);
   useEffect(function(){
-    fetch(SYNC_API+"?userId="+userId)
+    // cache:"no-store"→ブラウザのキャッシュを使わず必ずサーバーから最新を取得
+    // AbortSignal.timeout→通信が固まった場合でも8秒で諦めて保存ロックを解除する
+    fetch(SYNC_API+"?userId="+userId,{cache:"no-store",signal:AbortSignal.timeout(8000)})
       .then(function(r){return r.json();})
       .then(function(data){
         if(data.favs&&data.favs.length>0){setFavs(data.favs.slice());try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}}
@@ -3557,7 +3563,8 @@ export default function App(){
         if(data.personalTrades){saveTrades("personal",data.personalTrades);setPersonalTrades(data.personalTrades);}
         if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(ticker){localStorage.setItem("sh_"+ticker,JSON.stringify(data.scoreHist[ticker]));});}catch(e){}}
       })
-      .catch(function(){});
+      .catch(function(){})
+      .finally(function(){setSyncLoaded(true);}); // 成功・失敗どちらでも保存ロックを解除
   },[]);
   var TABS=[["all","📋"],["fav","⭐"],["trade","🎯"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"],["guide","📘"]];
   var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期","guide":"使い方"};
