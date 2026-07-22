@@ -1981,7 +1981,13 @@ function StockDetailPanel(p){
       </div>
 
       {s.market==="JP"&&<TachibanaBoard ticker={s.ticker} onQuote={function(q){
-        setTachibanaQuote(q);
+        // 受信イベントには「全項目入り(FD等)」と「価格だけの軽量な更新」があり、
+        // 後者を受けた時に丸ごと置き換えると気配値など前回までの情報が消えてしまうため、
+        // 既存のfieldsに新しい値を上書きする形でマージする
+        setTachibanaQuote(function(prev){
+          var merged=Object.assign({},prev&&prev.fields,q.fields);
+          return {fields:merged,updatedAt:q.updatedAt};
+        });
         var f=q.fields||{};
         if(f["p_1_DPP"]!=null) setLiveTick({
           price:parseFloat(f["p_1_DPP"]),
