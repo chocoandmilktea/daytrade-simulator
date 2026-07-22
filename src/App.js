@@ -1436,12 +1436,15 @@ function IntradayChart1m(p){
   );
 }
 
-// シグナル詳細の表示順（重い項目が上）。RSIは末尾に実際の数値が付くため前方一致で判定する
-var SIGNAL_WEIGHT_ORDER=["コンフルエンス","出来高","OBV","EMA整列","BB","寄り付きレンジ","当日ブレイク","RSI","BB収束","ATR消化率","VWAP傾き","ギャップ"];
+// シグナル詳細の表示順（指定順）。RSIは末尾に実際の数値が付くため前方一致で判定する
+// 「寄り付きレンジ」はORB(Opening Range Breakout)判定のことなので、表示名はORBに変換する（displaySignalLabel参照）
+var SIGNAL_WEIGHT_ORDER=["コンフルエンス","EMA整列","出来高","OBV","RSI","寄り付きレンジ","BB","BB収束","当日ブレイク","ATR消化率","VWAP傾き","ギャップ"];
 function signalWeightRank(label){
   var idx=SIGNAL_WEIGHT_ORDER.findIndex(function(o){return label===o||(o==="RSI"&&label.indexOf("RSI")===0);});
   return idx===-1?SIGNAL_WEIGHT_ORDER.length:idx;
 }
+// シグナル詳細パネルでの表示名（内部ロジックは「寄り付きレンジ」のまま、見た目だけORBに）
+function displaySignalLabel(label){return label==="寄り付きレンジ"?"ORB":label;}
 
 // ── シグナル詳細（カードの展開パネルとチャートモーダルで共通利用）────────
 function SignalDetailList(p){
@@ -1457,7 +1460,7 @@ function SignalDetailList(p){
         {sortedSignals.map(function(sig,i){
           return(
             <div key={i} onClick={function(){setWeightOpen(true);}} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040",cursor:"pointer"}}>
-              <span style={{fontSize:12,color:"#4a7090"}}>{sig.label}</span>
+              <span style={{fontSize:12,color:"#4a7090"}}>{displaySignalLabel(sig.label)}</span>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                 <span style={{fontSize:12,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
                 <span style={{fontSize:8,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
@@ -2250,25 +2253,31 @@ function StockDetailPanel(p){
         <IntradayChart1m data={intraday} liveTick={liveTick}/>
       </div>
 
-      {/* シグナル詳細 */}
-      <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
-
-      {s.profitLoss&&(
-        <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン（標準型）</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-            <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}>
-              <div style={{fontSize:9,color:"#22d3a0",marginBottom:2}}>💰 利確目標(ATR×1.5)</div>
-              <div style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}</div>
-            </div>
-            <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"5px 8px"}}>
-              <div style={{fontSize:9,color:"#f43f5e",marginBottom:2}}>🛑 損切り(ATR×0.75)</div>
-              <div style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}</div>
-            </div>
-          </div>
-          <div style={{fontSize:10,color:"#2a5070",marginTop:5}}>現在値からの目安値幅（リスクリワード比1:2の標準型）</div>
+      {/* シグナル詳細（左）／板情報・利確損切りライン（右） */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignItems:"start"}}>
+        <div style={{minWidth:0}}>
+          <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
-      )}
+        <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:10}}>
+          {/* 板情報はフェーズ⑥でここに追加予定 */}
+          {s.profitLoss&&(
+            <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン（標準型）</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}>
+                  <div style={{fontSize:9,color:"#22d3a0",marginBottom:2}}>💰 利確目標(ATR×1.5)</div>
+                  <div style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}</div>
+                </div>
+                <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"5px 8px"}}>
+                  <div style={{fontSize:9,color:"#f43f5e",marginBottom:2}}>🛑 損切り(ATR×0.75)</div>
+                  <div style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}</div>
+                </div>
+              </div>
+              <div style={{fontSize:10,color:"#2a5070",marginTop:5}}>現在値からの目安値幅（リスクリワード比1:2の標準型）</div>
+            </div>
+          )}
+        </div>
+      </div>
 
       {showAi&&createPortal(
         <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);setAiText("");setAiEntry(null);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"}}>
