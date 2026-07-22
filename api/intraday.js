@@ -9,7 +9,7 @@
 //   JPだけでなくUS銘柄も同じエンドポイントでそのまま取得できる副次的な利点もある。
 //
 // リクエスト例: /api/intraday?ticker=7203.T
-// レスポンス: { m1:{closes,times}, date }
+// レスポンス: { m1:{opens,highs,lows,closes,times}, date }
 //   date は実際にデータが取れた日（JST, YYYY-MM-DD）
 
 const YAHOO_HEADERS = {
@@ -23,11 +23,20 @@ async function fetchYahooChart(ticker, range) {
   const json = await r.json();
   const result = json?.chart?.result?.[0];
   if (!result || !result.timestamp) return { bars: [], status: r.status };
-  const closes = result.indicators?.quote?.[0]?.close || [];
+  const quote = result.indicators?.quote?.[0] || {};
+  const closes = quote.close || [];
+  const opens = quote.open || [];
+  const highs = quote.high || [];
+  const lows = quote.low || [];
   const bars = [];
   for (let i = 0; i < result.timestamp.length; i++) {
     if (closes[i] == null) continue;
-    bars.push({ epoch: result.timestamp[i], close: closes[i] });
+    // open/high/low が欠けている場合はcloseで代用（ローソク足が細い実体・ヒゲなしになる）
+    const close = closes[i];
+    const open = opens[i] != null ? opens[i] : close;
+    const high = highs[i] != null ? highs[i] : Math.max(open, close);
+    const low = lows[i] != null ? lows[i] : Math.min(open, close);
+    bars.push({ epoch: result.timestamp[i], open, high, low, close });
   }
   return { bars, status: r.status };
 }
@@ -61,32 +70,35 @@ export default async function handler(req, res) {
     // まず当日分(range=1d)を試す。休場日等で空なら5日分に広げて直近営業日を拾う。
     let { bars, status } = await fetchYahooChart(ticker, "1d");
     if (status === 429) {
-      return res.status(200).json({ m1: { closes: [], times: [] }, date: null, rateLimited: true });
+      return res.status(200).json({ m1: { opens: [], highs: [], lows: [], closes: [], times: [] }, date: null, rateLimited: true });
     }
     if (bars.length === 0) {
       const wider = await fetchYahooChart(ticker, "5d");
       if (wider.status === 429) {
-        return res.status(200).json({ m1: { closes: [], times: [] }, date: null, rateLimited: true });
+        return res.status(200).json({ m1: { opens: [], highs: [], lows: [], closes: [], times: [] }, date: null, rateLimited: true });
       }
       bars = wider.bars;
     }
     if (bars.length === 0) {
-      return res.status(200).json({ m1: { closes: [], times: [] }, date: null });
+      return res.status(200).json({ m1: { opens: [], highs: [], lows: [], closes: [], times: [] }, date: null });
     }
 
     // JSTに変換した上で、最後（最新）の営業日の分だけに絞る
-    const withJst = bars.map((b) => ({ ...toJst(b.epoch), close: b.close }));
+    const withJst = bars.map((b) => ({ ...toJst(b.epoch), open: b.open, high: b.high, low: b.low, close: b.close }));
     const latestDate = withJst[withJst.length - 1].date;
     const todayBars = withJst.filter((b) => b.date === latestDate);
 
-    // 1分足（チャートモーダル用）：そのまま抽出
+    // 1分足（チャートモーダル用・ローソク足描画用にOHLC全部）：そのまま抽出
+    const opens1 = todayBars.map((b) => b.open);
+    const highs1 = todayBars.map((b) => b.high);
+    const lows1 = todayBars.map((b) => b.low);
     const closes1 = todayBars.map((b) => b.close);
     const times1 = todayBars.map((b) => b.time);
 
     // ブラウザ側の短時間キャッシュ用ヘッダー（同一分内の再取得を減らす）
     res.setHeader("Cache-Control", "public, max-age=60");
     return res.status(200).json({
-      m1: { closes: closes1, times: times1 },
+      m1: { opens: opens1, highs: highs1, lows: lows1, closes: closes1, times: times1 },
       date: latestDate,
     });
   } catch (err) {
