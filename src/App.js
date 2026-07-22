@@ -1804,7 +1804,11 @@ function TachibanaQuoteModal(p){
 // 比率（%）を出す。板の一覧やグラフは出さず、比率と合計株数だけのシンプル表示。
 function OrderBookTendency(p){
   var q=p.quote;
-  if(!q||!q.fields) return null;
+  var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"};
+  var title=<div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 売買傾向</div>;
+  if(!q||!q.fields){
+    return <div style={box}>{title}<div style={{fontSize:11,color:"#4a7090"}}>気配値取得中…</div></div>;
+  }
   var f=q.fields;
   var sellVol=0,buyVol=0,found=false;
   for(var n=1;n<=10;n++){
@@ -1812,13 +1816,15 @@ function OrderBookTendency(p){
     if(av!=null){sellVol+=Number(av)||0;found=true;}
     if(bv!=null){buyVol+=Number(bv)||0;found=true;}
   }
-  if(!found) return null;
+  if(!found){
+    return <div style={box}>{title}<div style={{fontSize:11,color:"#4a7090"}}>気配値取得中…</div></div>;
+  }
   var total=sellVol+buyVol;
   var sellPct=total>0?sellVol/total*100:50;
   var buyPct=total>0?buyVol/total*100:50;
   return(
-    <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
-      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 売買傾向</div>
+    <div style={box}>
+      {title}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
         <span style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>売 {sellPct.toFixed(2)}%</span>
         <span style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>買 {buyPct.toFixed(2)}%</span>
