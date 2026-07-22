@@ -45,16 +45,29 @@ function aggregateBars(bars, intervalMinutes) {
 // ── JP: Yahoo Finance 15分足 / 30日（USと同じ取得方法に統一）─────────────
 async function handleJP(ticker, res) {
   try {
+    const code4 = ticker.replace(".T", "");
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=15m&range=30d`;
-    const r = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json",
-      },
-      signal: AbortSignal.timeout(9000),
-    });
-    if (!r.ok) throw new Error(`Yahoo Finance returned ${r.status}`);
-    const data = await r.json();
+
+    // Yahoo Finance（分足）・決算発表予定日・TOPIX・PER/PBR等は互いに依存関係が無いため並列取得する
+    // （以前は上から順番に待っていたため、その分だけ余計に時間がかかっていた）
+    const [yahooResult, earningsResult, topixResult, detailResult] = await Promise.allSettled([
+      fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept": "application/json",
+        },
+        signal: AbortSignal.timeout(9000),
+      }).then(function(r) {
+        if (!r.ok) throw new Error(`Yahoo Finance returned ${r.status}`);
+        return r.json();
+      }),
+      fetchJPEarningsMap(),
+      fetchTopixChange(),
+      fetchTachibanaIssueDetail(code4),
+    ]);
+
+    if (yahooResult.status === "rejected") throw yahooResult.reason;
+    const data = yahooResult.value;
 
     const result = data?.chart?.result?.[0];
     if (!result) throw new Error("no JP minute data");
@@ -69,31 +82,28 @@ async function handleJP(ticker, res) {
     const previousClose = meta.chartPreviousClose || meta.regularMarketPreviousClose || 0;
 
     // 決算発表予定日（東証公式Excelをキャッシュして照合。対象外ならnull）
-    const code4 = ticker.replace(".T", "");
     let earningsDate = null;
-    try {
-      const emap = await fetchJPEarningsMap();
-      earningsDate = emap[code4] || null;
-    } catch (e) { console.log("[jpx-earnings] 取得エラー:", e.message); }
+    if (earningsResult.status === "fulfilled") {
+      earningsDate = earningsResult.value[code4] || null;
+    } else {
+      console.log("[jpx-earnings] 取得エラー:", earningsResult.reason?.message);
+    }
 
     // 対TOPIX相対強弱用：直近のTOPIX騰落率（全銘柄共通の値なので1時間キャッシュ）
-    let topixChange = null;
-    try {
-      topixChange = await fetchTopixChange();
-    } catch (e) {}
+    const topixChange = topixResult.status === "fulfilled" ? topixResult.value : null;
 
     // PER/PBR/EPS/BPS/配当利回り（立花証券API経由。取得・1時間キャッシュはtachibana-server側）
     // 権利落ち日も立花証券の実績値をそのまま使用（従来は決算期末日からの概算値だった）
     let per = null, pbr = null, eps = null, bps = null, dividendYield = null, exRightsDate = null;
-    try {
-      const detail = await fetchTachibanaIssueDetail(code4);
+    if (detailResult.status === "fulfilled") {
+      const detail = detailResult.value;
       per = detail.per;
       pbr = detail.pbr;
       eps = detail.eps;
       bps = detail.bps;
       dividendYield = detail.dividendYield;
       exRightsDate = detail.exRightsDate;
-    } catch (e) {}
+    }
     if (pbr && (!isFinite(pbr) || pbr <= 0 || pbr > 1000)) pbr = null;
     if (per && (!isFinite(per) || per <= 0 || per > 10000)) per = null;
 
