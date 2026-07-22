@@ -1798,39 +1798,40 @@ function TachibanaQuoteModal(p){
   );
 }
 
-// ── 板情報（気配値：売気配GAP/GAV・買気配GBP/GBV）────────────────────────
+// ── 売買傾向（気配値の数量合計から売り・買いの比率を算出）──────────────────
 // 立花証券リアルタイム中継の生データ（TachibanaQuoteModalと同じ元データ）から
-// 気配値だけを抜き出して表示する。データが来ていない・欠けている場合は
-// その旨を表示するだけで、エラーにはしない。
-function OrderBookBoard(p){
+// 売気配(GAV)・買気配(GBV)の数量を合計し、iSPEEDの「売買傾向」と同じ考え方で
+// 比率（%）を出す。板の一覧やグラフは出さず、比率と合計株数だけのシンプル表示。
+function OrderBookTendency(p){
   var q=p.quote;
   if(!q||!q.fields) return null;
   var f=q.fields;
-  var asks=[5,4,3,2,1].map(function(n){return {price:f["p_1_GAP"+n],vol:f["p_1_GAV"+n]};}).filter(function(r){return r.price!=null;});
-  var bids=[1,2,3,4,5].map(function(n){return {price:f["p_1_GBP"+n],vol:f["p_1_GBV"+n]};}).filter(function(r){return r.price!=null;});
-  if(!asks.length&&!bids.length) return null;
-  function fmtNum(v){return v==null?"—":Number(v).toLocaleString();}
-  function Row(key,price,vol,color,bg){
-    return(
-      <div key={key} style={{background:bg,borderRadius:6,padding:"4px 8px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <span style={{fontSize:12,fontWeight:700,color:color}}>{fmtNum(price)}</span>
-        <span style={{fontSize:11,color:"#8aa4c0"}}>{fmtNum(vol)}株</span>
-      </div>
-    );
+  var sellVol=0,buyVol=0,found=false;
+  for(var n=1;n<=10;n++){
+    var av=f["p_1_GAV"+n],bv=f["p_1_GBV"+n];
+    if(av!=null){sellVol+=Number(av)||0;found=true;}
+    if(bv!=null){buyVol+=Number(bv)||0;found=true;}
   }
+  if(!found) return null;
+  var total=sellVol+buyVol;
+  var sellPct=total>0?sellVol/total*100:50;
+  var buyPct=total>0?buyVol/total*100:50;
   return(
     <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
-      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📋 板情報（売気配・買気配）</div>
-      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-        {asks.length
-          ?asks.map(function(r,i){return Row("a"+i,r.price,r.vol,"#f43f5e","#1f0010");})
-          :<div style={{fontSize:10,color:"#2a5070",padding:"2px 4px"}}>売気配データなし</div>}
-        <div style={{height:1,background:"#1e3050",margin:"3px 0"}}/>
-        {bids.length
-          ?bids.map(function(r,i){return Row("b"+i,r.price,r.vol,"#0ea5e9","#0a1a3a");})
-          :<div style={{fontSize:10,color:"#2a5070",padding:"2px 4px"}}>買気配データなし</div>}
+      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 売買傾向</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+        <span style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>売 {sellPct.toFixed(2)}%</span>
+        <span style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>買 {buyPct.toFixed(2)}%</span>
       </div>
-      <div style={{fontSize:9,color:"#2a5070",marginTop:5}}>立花証券リアルタイム中継（数秒遅延あり）</div>
+      <div style={{display:"flex",height:6,borderRadius:3,overflow:"hidden",marginBottom:4}}>
+        <div style={{width:sellPct+"%",background:"#22d3a0"}}/>
+        <div style={{width:buyPct+"%",background:"#f43f5e"}}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#8aa4c0"}}>
+        <span>{sellVol.toLocaleString()}株</span>
+        <span>{buyVol.toLocaleString()}株</span>
+      </div>
+      <div style={{fontSize:9,color:"#2a5070",marginTop:5}}>立花証券リアルタイム中継・気配値合計から算出（数秒遅延あり）</div>
     </div>
   );
 }
@@ -2015,7 +2016,7 @@ function StockDetailPanel(p){
           <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:10}}>
-          <OrderBookBoard quote={tachibanaQuote}/>
+          <OrderBookTendency quote={tachibanaQuote}/>
           {s.profitLoss&&(
             <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン（標準型）</div>
