@@ -1386,10 +1386,10 @@ function IntradayChart1m(p){
     fullTimes=fullTimes.concat([p.liveTick.time||""]);
   }
   var dateLabel=formatChartDateLabel(data.date);
-  // MAは全期間のデータで計算してから、表示だけ直近2時間（1分足120本）に絞る。
+  // MAは全期間のデータで計算してから、表示だけ直近1時間（1分足60本）に絞る。
   // 表示範囲の先頭でも正しいMA値になるよう、計算は絞り込み前の配列に対して行う。
   var fullMa25=trailingSMA(fullCloses,25),fullMa75=trailingSMA(fullCloses,75);
-  var cropStart=Math.max(0,fullCloses.length-120);
+  var cropStart=Math.max(0,fullCloses.length-60);
   var closes=fullCloses.slice(cropStart),times=fullTimes.slice(cropStart);
   var opens=fullOpens.slice(cropStart),highs=fullHighs.slice(cropStart),lows=fullLows.slice(cropStart);
   var ma25=fullMa25.slice(cropStart),ma75=fullMa75.slice(cropStart);
@@ -1419,7 +1419,7 @@ function IntradayChart1m(p){
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
-        <span>1分足（直近2時間）</span>
+        <span>1分足（直近1時間）</span>
         <span>{dateLabel}</span>
       </div>
       <div style={{display:"flex",gap:6}}>
@@ -1433,7 +1433,7 @@ function IntradayChart1m(p){
               var o=opens[i],h=highs[i],l=lows[i];
               if(c==null||o==null||h==null||l==null) return null;
               var up=c>=o;
-              var color=up?"#22d3a0":"#f43f5e";
+              var color=up?"#f43f5e":"#0ea5e9"; // iSPEED準拠：陽線=赤、陰線=青
               var x=toX(i);
               var yO=toY(o),yC=toY(c),yH=toY(h),yL=toY(l);
               var bodyTop=Math.min(yO,yC),bodyH=Math.max(Math.abs(yC-yO),0.6);
