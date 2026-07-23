@@ -214,6 +214,14 @@ async function fetchSectorRanking(manualSectors){
   }catch(e){return{stocks:null,sectors:[]};}
 }
 
+// 立花証券システムのログイン可能時間は8:30〜27:00(=翌3:00)。この時間外は
+// APIが必ず失敗するため、無駄な問い合わせをせず先にメンテナンス中と判定する
+function isTachibanaMaintenance(){
+  var jst=new Date(Date.now()+9*60*60*1000);
+  var mins=jst.getUTCHours()*60+jst.getUTCMinutes();
+  return mins>=180&&mins<510; // 3:00〜8:30
+}
+
 async function buildStockUniverse(manualSectors,skipAI){
   var jp,sectors;
   if(skipAI){
@@ -3399,11 +3407,12 @@ export default function App(){
     CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止）
     setProgress({done:0,total:0,msg:skipAI?"前回データなし・通常ランキング取得中...":(manualSectors&&manualSectors.length?"指定業種の銘柄取得中...":"AI業種選定中...")});
     try{
-      var uResult=await buildStockUniverse(manualSectors,skipAI);
+      var maintenance=isTachibanaMaintenance();
+      var uResult=maintenance?{stocks:[],sectors:[]}:await buildStockUniverse(manualSectors,skipAI);
       var universe=uResult.stocks.slice();
       var jpCount=universe.length;
       var sectorLabel=uResult.sectors&&uResult.sectors.length?uResult.sectors.map(function(s){return s.name;}).join("/"):"通常ランキング";
-      setProgress({done:0,total:0,msg:"JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始..."});
+      setProgress({done:0,total:0,msg:maintenance?"⏰ 立花証券システムメンテナンス中(3:00〜8:30)。お気に入り銘柄のみ表示します":("JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始...")});
       await new Promise(function(r){setTimeout(r,800);}); // ↑のメッセージが一瞬で上書きされて表示されないのを防ぐため少し待つ
       // 次回「前回の業種を表示」で使えるよう、実際に読み込んだ業種を保存
       if(uResult.sectors&&uResult.sectors.length){
