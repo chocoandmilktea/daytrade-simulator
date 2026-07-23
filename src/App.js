@@ -289,6 +289,30 @@ function genSim(ticker,errMsg){
 function fmtMoney(v,isJP){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);}
 function fmtPnl(v,isJP){var sign=v>=0?"+":"";return isJP?sign+"¥"+Math.round(v).toLocaleString():sign+"$"+v.toFixed(2);}
 
+// 保有上限日数：active(進行中)のままこの日数を超えたら自動で強制決済する（利確・損切り未到達の場合）
+// activeトレードの開始時刻(startAtISO)から見て、その銘柄の市場(JP/US)の
+// 直近の「引け（取引終了）」時刻をミリ秒タイムスタンプで返す（デイトレ想定：持ち越し禁止）
+// JP: 大引け15:30 JST固定。US: 22:30/23:30(夏/冬)開始〜翌5:00/6:00(JST)がセッションのため、
+// 開始が夜(セッション開始後)なら翌JST日の終値時刻、早朝(セッション中)ならその日の終値時刻を引けとする
+function sessionCloseTime(market,startAtISO){
+  var start=new Date(startAtISO);
+  var jst=new Date(start.getTime()+9*60*60*1000);
+  var y=jst.getUTCFullYear(),mo=jst.getUTCMonth(),d=jst.getUTCDate();
+  var timeMin=jst.getUTCHours()*60+jst.getUTCMinutes();
+  var closeTs;
+  if(market==="JP"){
+    closeTs=Date.UTC(y,mo,d,15-9,30); // 15:30 JST
+  }else{
+    var month=mo+1;
+    var isSummer=(month>3&&month<11)||(month===3&&d>=8)||(month===11&&d<=7);
+    var usStartMin=isSummer?22*60+30:23*60+30;
+    var usEndMin=isSummer?5*60:6*60;
+    var closeDate=timeMin>=usStartMin?d+1:d;
+    closeTs=Date.UTC(y,mo,closeDate,Math.floor(usEndMin/60)-9,usEndMin%60);
+  }
+  if(closeTs<=start.getTime())closeTs+=24*60*60*1000; // 念のための保険（開始時刻より前にならないよう1日繰り上げ）
+  return closeTs;
+}
 function tradeStorageKey(kind){return kind==="app"?"trade_app_v1":"trade_personal_v1";}
 function loadTrades(kind){try{var v=localStorage.getItem(tradeStorageKey(kind));return v?JSON.parse(v):[];}catch(e){return[];}}
 function saveTrades(kind,list){try{localStorage.setItem(tradeStorageKey(kind),JSON.stringify(list));}catch(e){}}
@@ -303,6 +327,9 @@ function getBuyDirection(t){
 function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice){
   var list=loadTrades(kind);
   var curPrice=s.rawPrice!=null?s.rawPrice:null;
+  // 登録時点で「過去実績に基づく重み補正」が何点効いていたか（検証パネル用）
+  var wAdjItem=(s.breakdown||[]).find(function(b){return b.label==="実績反映調整";});
+  var weightAdjustAtAdd=wAdjItem?wAdjItem.delta:0;
   list.push({
     id:"t"+Date.now()+Math.random().toString(36).slice(2,6),
     ticker:s.ticker,name:s.name,market:s.market,
@@ -312,8 +339,9 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice){
     buyDirection:curPrice!=null?(buyPrice<=curPrice?"down":"up"):"down",
     status:"waiting", // waiting(待機中) → active(進行中) → done(完了)
     startPrice:null,startAt:null,endPrice:null,endAt:null,
-    pnl:null,pnlPercent:null,exitReason:null, // take_profit(利確) / stop_loss(損切り) / forced(強制完了)
+    pnl:null,pnlPercent:null,exitReason:null, // take_profit(利確) / stop_loss(損切り) / time_exit(引けで強制決済) / forced(強制完了)
     signalAtAdd:s.timing||null, // 登録時点のアプリ判定（BUY/WATCH/SKIP）＝後から検証するための記録
+    weightAdjustAtAdd:weightAdjustAtAdd, // 登録時点の実績反映調整の点数（検証パネル用）
     lastPrice:curPrice,
     addedAt:new Date().toISOString()
   });
@@ -363,6 +391,13 @@ function applyPricesToTrades(kind,priceMap){
   var changed=false;
   var next=list.map(function(t){
     if(t.status==="done")return t;
+    // 引け（取引終了）を過ぎたactiveトレードは、価格取得の成否に関わらず自動決済する（デイトレ想定：持ち越し禁止）
+    if(t.status==="active"&&t.startAt&&Date.now()>=sessionCloseTime(t.market,t.startAt)){
+      changed=true;
+      var exitP=priceMap[t.ticker]!=null?priceMap[t.ticker]:t.lastPrice;
+      var pnlPerShare3=exitP-t.startPrice,pnl3=pnlPerShare3*(t.shares||1),pnlPercent3=t.startPrice?(pnlPerShare3/t.startPrice*100):0;
+      return Object.assign({},t,{status:"done",endPrice:exitP,endAt:new Date().toISOString(),pnl:pnl3,pnlPercent:pnlPercent3,exitReason:"time_exit",lastPrice:exitP});
+    }
     var cur=priceMap[t.ticker];
     if(cur==null)return t;
     if(t.status==="waiting"){
@@ -401,8 +436,9 @@ function buildAccuracyPart(signals){
   var stats=getUniverseSignalStats();
   var lines=[];
   (signals||[]).forEach(function(sig){
-    var s=stats[baseSigLabel(sig.label)+"#"+sig.state];
-    if(s&&s.t>=10) lines.push("  "+sig.label+": 過去的中率"+Math.round(s.w/s.t*100)+"%("+s.t+"件, 翌営業日上昇率)");
+    var key=baseSigLabel(sig.label)+"#"+sig.state;
+    var s=stats[key];
+    if(s&&s.t>=10) lines.push("  "+sig.label+": 過去的中率"+Math.round(signalQuality(s,key)*100)+"%("+s.t+"件, 予想方向が翌営業日に当たった率)");
   });
   return lines.length?("過去のシグナル的中率(参考・スキャン銘柄全体集計):\n"+lines.join("\n")+"\n"):"";
 }
@@ -604,7 +640,7 @@ function calcSignalAccuracy(tickers){
   });
   return Object.keys(stats).map(function(k){
     var s=stats[k];
-    return{signal:k,winRate:s.t>0?Math.round(s.w/s.t*100):null,total:s.t};
+    return{signal:k,winRate:s.t>0?Math.round(signalQuality(s,k)*100):null,total:s.t};
   }).sort(function(a,b){return(b.winRate||0)-(a.winRate||0);});
 }
 // お気に入り登録銘柄全体で集計（お気に入りタブ用）
@@ -631,15 +667,21 @@ function getUniverseSignalStats(){
   UNIVERSE_STATS_CACHE=stats;UNIVERSE_STATS_TS=now;
   return stats;
 }
+// シグナルの方向（強気/弱気/中立）を踏まえた「精度」を0〜1で返す共通関数。
+// 弱気(state=-1)シグナルは「翌営業日に上がらなかった率」、それ以外は「上がった率」が精度の目安。
+// （画面の的中率表示・スコアの重み調整・AIへの参考情報、すべてここを通す）
+function signalQuality(stat,sigKey){
+  var state=parseInt(sigKey.split("#")[1],10);
+  var winRate=stat.w/stat.t;
+  return state===-1?(1-winRate):winRate;
+}
 // シグナル1件分の重み係数（1.0=調整なし）。
 // サンプル10件未満は調整なし／10〜19件は最大±10%／20件以上は最大±20%
 function getSignalWeight(sigKey){
   var s=getUniverseSignalStats()[sigKey];
   if(!s||s.t<10) return 1;
   var maxAdjust=s.t>=20?0.2:0.1;
-  var state=parseInt(sigKey.split("#")[1],10);
-  var winRate=s.w/s.t;
-  var quality=state===-1?(1-winRate):winRate; // 弱気シグナルは「上がらなかった率」が精度の目安
+  var quality=signalQuality(s,sigKey);
   var mult=1+(quality-0.5)*2*maxAdjust;
   return Math.max(1-maxAdjust,Math.min(1+maxAdjust,mult));
 }
@@ -1591,6 +1633,9 @@ function TradeAddModal(p){
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
         </div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:12}}>価格が指定値に到達すると自動で開始・終了します（判定はトレードタブの更新ボタンで反映）</div>
+        {s.profitLoss&&(
+          <button onClick={function(){setSellVal(String(s.profitLoss.target));setStopVal(String(s.profitLoss.stop));}} style={{width:"100%",background:"#0a1a3a",border:"1px solid #0ea5e950",borderRadius:8,color:"#0ea5e9",padding:"7px",fontSize:12,fontWeight:700,cursor:"pointer",marginBottom:10}}>📐 標準ライン(ATR)を使う（利確{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}／損切り{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}）</button>
+        )}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
           <div><div style={{fontSize:11,color:"#22d3a0",marginBottom:3}}>買い価格</div><input style={inp} type="number" value={buyVal} onChange={function(e){setBuyVal(e.target.value);}}/></div>
           <div><div style={{fontSize:11,color:"#f43f5e",marginBottom:3}}>売り価格（利確）</div><input style={inp} type="number" value={sellVal} onChange={function(e){setSellVal(e.target.value);}}/></div>
@@ -2477,6 +2522,8 @@ function TradePanel(p){
         )}
       </div>
 
+      <WeightAdjustVerificationPanel appTrades={p.appTrades} personalTrades={p.personalTrades}/>
+
       {selTrade&&createPortal(
         <TradeDetailModal t={selTrade} s={selStock} kind={sub} stocks={stocks} toggleFav={toggleFav} isFav={isFavRef}
           vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock}
@@ -2519,7 +2566,7 @@ function TradeDetailModal(p){
   var sharesS=useState(String(t.shares||1));var sharesVal=sharesS[0],setSharesVal=sharesS[1];
   var STATUS_LABEL={waiting:"待機中",active:"進行中",done:"完了"};
   var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0"};
-  var EXIT_LABEL={take_profit:"利確で完了",stop_loss:"損切りで完了",forced:"強制完了"};
+  var EXIT_LABEL={take_profit:"利確で完了",stop_loss:"損切りで完了",time_exit:"引けで強制完了（持ち越しなし）",forced:"強制完了"};
   var unrealized=(t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?((t.lastPrice-t.startPrice)*(t.shares||1)):null;
   var editInp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px",fontSize:13,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
 
@@ -3067,6 +3114,46 @@ function formatSigKeyLabel(key){
   return label+" "+stateLabel;
 }
 
+// ── 実績反映調整の効果検証パネル ─────────────────────────────────────────
+// 登録時点の重み補正(weightAdjustAtAdd)の向きごとに完了トレードを3グループに分け、
+// 実際の勝率・平均損益を比較する（アプリ予想／個人予想を合算・タブ切替に関わらず常時表示）
+// ※このパネル追加より前に登録されたトレードにはweightAdjustAtAdd記録がないため集計対象外
+function WeightAdjustVerificationPanel(p){
+  var doneAll=(p.appTrades||[]).concat(p.personalTrades||[]).filter(function(t){return t.status==="done"&&t.weightAdjustAtAdd!=null;});
+  function bucket(filterFn){
+    var arr=doneAll.filter(filterFn);
+    var win=arr.length?Math.round(arr.filter(function(t){return(t.pnl||0)>0;}).length/arr.length*100):null;
+    var avgPct=arr.length?arr.reduce(function(a,t){return a+(t.pnlPercent||0);},0)/arr.length:null;
+    return{count:arr.length,winRate:win,avgPct:avgPct};
+  }
+  var rows=[
+    {label:"補正プラス（強気側に加点）",d:bucket(function(t){return t.weightAdjustAtAdd>0;}),color:"#22d3a0"},
+    {label:"補正マイナス（弱気側に減点）",d:bucket(function(t){return t.weightAdjustAtAdd<0;}),color:"#f43f5e"},
+    {label:"補正なし",d:bucket(function(t){return t.weightAdjustAtAdd===0;}),color:"#4a7090"}
+  ];
+  return(
+    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:16}}>
+      <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:6}}>🧪 実績反映調整の効果検証</div>
+      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>登録時点の重み補正の向きごとに完了トレードを分け、実際の勝率・平均損益を比較します（アプリ予想・個人予想を合算）</div>
+      {doneAll.length===0?(
+        <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだ検証対象データがありません。トレードを登録・完了させると溜まっていきます。</div>
+      ):(
+        rows.map(function(r,i){
+          return(
+            <div key={i} style={{padding:"8px 0",borderBottom:i<rows.length-1?"1px solid #0a1830":"none"}}>
+              <div style={{fontSize:12,color:"#b8cce0",marginBottom:4}}>{r.label}（{r.d.count}件）</div>
+              <div style={{display:"flex",gap:16,fontSize:13}}>
+                <span style={{color:r.color,fontWeight:700}}>勝率 {r.d.winRate!=null?r.d.winRate+"%":"—"}</span>
+                <span style={{color:r.color,fontWeight:700}}>平均損益 {r.d.avgPct!=null?(r.d.avgPct>=0?"+":"")+r.d.avgPct.toFixed(1)+"%":"—"}</span>
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
 // シグナル的中率の中身（お気に入りタブ／トレードタブ両方から使う）
 // tickers省略時はお気に入り銘柄で集計。指定時はそのtickerだけで集計（トレードタブ用・お気に入りとは分離）
 function SignalAccuracyContent(p){
@@ -3076,7 +3163,7 @@ function SignalAccuracyContent(p){
   var emptyLabel=tickers?(label+"の登録銘柄"):"お気に入り銘柄";
   return(
     <div>
-      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルが出た翌営業日に株価が上がった割合です"}</div>
+      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルの予想方向（強気なら上昇/弱気なら下落）が翌営業日に当たった割合です"}</div>
       {data.length===0?(
         <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだデータがありません。{emptyLabel}を毎日スキャンすると溜まっていきます。</div>
       ):(
