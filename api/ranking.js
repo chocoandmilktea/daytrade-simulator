@@ -161,9 +161,9 @@ export function calcChangeRate(bar) {
 }
 
 // 会社名の優先順位：IPO専用API > 立花証券の銘柄マスタ名 > ハードコード一覧 > コードそのまま
-export function mapJPBar(bar, names, jqNames) {
+export function mapJPBar(bar, names) {
   const code = String(bar.Code || "");
-  const name = names[code] || bar.Name || (jqNames && jqNames[code]) || JP_NAMES_FALLBACK[code] || code;
+  const name = names[code] || bar.Name || JP_NAMES_FALLBACK[code] || code;
   return {
     ticker: code + ".T",
     name: name,
@@ -207,7 +207,8 @@ function toBarShape(row) {
 
 // dateStrの引数は既存コード（sector.js）との互換のために残しているが、
 // 立花証券のランキング用データは常に最新値のため実質的には未使用
-export async function fetchDailyBarsWithFallback(apiKey, dateStr) {
+// （旧: J-Quants用のapiKey引数があったが、未使用のため削除済み）
+export async function fetchDailyBarsWithFallback(dateStr) {
   const rows = await fetchTachibanaRankingData();
   if (!rows.length) throw new Error("No JP ranking data");
   const bars = rows.map(toBarShape);
@@ -219,7 +220,7 @@ async function getJPRanking(req) {
 
   const [nameMap, barsResult] = await Promise.allSettled([
     fetchNameMap(req),
-    fetchDailyBarsWithFallback(null, dateStr),
+    fetchDailyBarsWithFallback(dateStr),
   ]);
 
   const names = nameMap.status === "fulfilled" ? nameMap.value : {};
@@ -233,7 +234,7 @@ async function getJPRanking(req) {
     .slice()
     .sort(function(a, b) { return (b.Vo || 0) - (a.Vo || 0); })
     .slice(0, 40)
-    .map(function(bar) { return mapJPBar(bar, names, {}); });
+    .map(function(bar) { return mapJPBar(bar, names); });
 
   // 値上がり率上位：出来高フィルター通過後20件
   // 立花証券からは銘柄別の平均出来高が取れないため、当日全銘柄の出来高の中央値で代替
@@ -248,7 +249,7 @@ async function getJPRanking(req) {
       return isVolumeAboveAvg(bar.Vo || 0, avg);
     })
     .slice(0, 20)
-    .map(function(bar) { return mapJPBar(bar, names, {}); });
+    .map(function(bar) { return mapJPBar(bar, names); });
 
   return mergeHybrid(byVolume, byChange);
 }
