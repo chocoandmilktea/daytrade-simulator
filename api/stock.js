@@ -144,45 +144,6 @@ function subtractBusinessDays(dateStr, n) {
   return d.toISOString().slice(0, 10);
 }
 
-// ── PER/PBR算出用の財務データ（BPS・予想EPS・次期末日・配当有無）。24時間キャッシュ ──
-// J-Quants /v2/fins/summary は開示履歴を古い順に全件返す仕様のため、
-// 末尾から遡って直近の有効な値を採用する
-var finCache = {}; // { code: {ts, bps, feps, fyEnd, hasDividend} }
-var FIN_TTL = 24 * 60 * 60 * 1000; // 24時間
-
-async function fetchJPFinancials(apiKey, code) {
-  const now = Date.now();
-  if (finCache[code] && now - finCache[code].ts < FIN_TTL) return finCache[code];
-
-  const res = await fetch("https://api.jquants.com/v2/fins/summary?code=" + code, {
-    headers: { "x-api-key": apiKey },
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error("fins/summary " + res.status);
-  const json = await res.json();
-  const rows = json.data || [];
-
-  let bps = null, feps = null, fyEnd = null, hasDividend = false;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const row = rows[i];
-    if (bps == null && row.BPS !== "" && row.BPS != null) bps = parseFloat(row.BPS);
-    if (feps == null && row.FEPS !== "" && row.FEPS != null) feps = parseFloat(row.FEPS);
-    if (fyEnd == null) {
-      const fy = row.NxtFYEn || row.CurFYEn;
-      if (fy) fyEnd = fy;
-    }
-    if (!hasDividend) {
-      if ((row.FDivFY && row.FDivFY !== "") || (row.DivFY && row.DivFY !== "") ||
-          (row.FDivAnn && row.FDivAnn !== "") || (row.DivAnn && row.DivAnn !== "")) hasDividend = true;
-    }
-    if (bps != null && feps != null && fyEnd != null && hasDividend) break;
-  }
-
-  const result = { ts: now, bps: bps, feps: feps, fyEnd: fyEnd, hasDividend: hasDividend };
-  finCache[code] = result;
-  return result;
-}
-
 // ── 決算発表予定日キャッシュ ──────────────────────────────────────────
 // 東証公式「決算発表予定日」ページ(無料・毎営業日17時頃更新)のExcelを直接解析する。
 // https://www.jpx.co.jp/listing/event-schedules/financial-announcement/index.html
