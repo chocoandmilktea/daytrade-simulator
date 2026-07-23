@@ -128,7 +128,7 @@ async function getSectorRanking(req, sectors) {
 
   const [names, barsResult] = await Promise.all([
     fetchNameMap(req),
-    fetchDailyBarsWithFallback(null, dateStr),
+    fetchDailyBarsWithFallback(dateStr),
   ]);
 
   const bars = barsResult.bars.filter(function(bar) {
@@ -140,7 +140,7 @@ async function getSectorRanking(req, sectors) {
   const byVolume = bars.slice()
     .sort(function(a, b) { return (b.Vo || 0) - (a.Vo || 0); })
     .slice(0, 50)
-    .map(function(bar) { return mapJPBar(bar, names, {}); });
+    .map(function(bar) { return mapJPBar(bar, names); });
 
   const allVols = bars.map(function(b) { return b.Vo || 0; }).sort(function(a, b) { return a - b; });
   const medianVol = allVols[Math.floor(allVols.length / 2)] || 0;
@@ -149,7 +149,7 @@ async function getSectorRanking(req, sectors) {
     .sort(function(a, b) { return calcChangeRate(b) - calcChangeRate(a); })
     .filter(function(bar) { return isVolumeAboveAvg(bar.Vo || 0, bar.AvgVo || medianVol); })
     .slice(0, 20)
-    .map(function(bar) { return mapJPBar(bar, names, {}); });
+    .map(function(bar) { return mapJPBar(bar, names); });
 
   return mergeHybrid(byVolume, byChange);
 }
