@@ -191,7 +191,7 @@ async function fetchDaily(ticker){
 // 出来高ランキング取得（sector API失敗時の最終フォールバック用に残置）
 async function fetchRanking(market){
   try{
-    var res=await fetch(RANKING_API+"?market="+market,{signal:AbortSignal.timeout(15000)});
+    var res=await fetch(RANKING_API+"?market="+market,{signal:AbortSignal.timeout(15000),cache:"no-store"});
     if(!res.ok) throw new Error("ranking "+res.status);
     var json=await res.json();
     // ハイブリッド方式：volume・changeも受け取る
@@ -206,7 +206,7 @@ async function fetchSectorRanking(manualSectors){
   try{
     var url=SECTOR_API;
     if(manualSectors&&manualSectors.length){url+="?sectors="+encodeURIComponent(manualSectors.join(","));}
-    var res=await fetch(url,{signal:AbortSignal.timeout(25000)});
+    var res=await fetch(url,{signal:AbortSignal.timeout(25000),cache:"no-store"});
     if(!res.ok) throw new Error("sector "+res.status);
     var json=await res.json();
     var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume||0,change:s.change||0};});
