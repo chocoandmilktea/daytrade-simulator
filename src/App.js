@@ -1662,6 +1662,7 @@ function FavPickerModal(p){
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
+  var isMobile=useIsMobile(); // スマホはカード内チャートを非表示（詳細モーダル側で確認する運用）
   // ── チャート（カードが選択された時だけ取得＝体感速度・API負荷を改善）───
   // daily: カードのミニチャート用（日足）。false=未取得, undefined=読込中, null=データなし
   var dailyS=useState(false);var daily=dailyS[0],setDaily=dailyS[1];
@@ -1675,10 +1676,10 @@ function StockCard(p){
   function stopProp(e){e.stopPropagation();}
   var isSelected=p.selectedStock&&p.selectedStock.ticker===s.ticker;
 
-  // 選択中の銘柄だけ日足を取得
+  // 選択中の銘柄だけ日足を取得（スマホはカード内チャートを表示しないため取得自体をスキップ）
   useEffect(function(){
     if(!isSelected) return;
-    if(daily===false||daily===null){
+    if(!isMobile&&(daily===false||daily===null)){
       setDaily(undefined);
       fetchDaily(s.ticker).then(function(r){setDaily(r);});
     }
@@ -1724,9 +1725,11 @@ function StockCard(p){
         </div>
       </div>
 
-      <div style={{background:"#03080f",borderRadius:6,padding:"2px 4px"}}>
-        <DailyMiniChart data={daily}/>
-      </div>
+      {!isMobile&&(
+        <div style={{background:"#03080f",borderRadius:6,padding:"2px 4px"}}>
+          <DailyMiniChart data={daily}/>
+        </div>
+      )}
 
     </div>
   );
@@ -1925,6 +1928,7 @@ function StockDetailPanel(p){
         </div>
         <div style={{display:"flex",gap:4,alignItems:"center"}}>
           <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060"}}>{isFav(s.ticker)?"★":"☆"}</button>
+          {p.onClose&&<button onClick={p.onClose} style={{background:"transparent",border:"none",fontSize:22,cursor:"pointer",padding:"0 0 0 8px",color:"#4a7090",lineHeight:1}}>✕</button>}
         </div>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:8,padding:"10px 14px"}}>
@@ -2092,6 +2096,17 @@ function StockDetailPanel(p){
   );
 }
 
+// スマホ用：詳細パネルを全画面モーダルで表示（全銘柄／お気に入りタブ共通）
+function MobileStockDetailModal(p){
+  if(!p.s) return null;
+  return createPortal(
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",inset:0,zIndex:1500,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:10}}>
+      <StockDetailPanel s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading} allStocks={p.allStocks} onAddTrade={p.onAddTrade} onClose={p.onClose}/>
+    </div>,
+    document.body
+  );
+}
+
 // ── MarketBar ─────────────────────────────────────────────────────────────────
 function MarketBar(){
   var dataS=useState({}); var data=dataS[0],setData=dataS[1];
@@ -2210,12 +2225,19 @@ function AllStocksPanel(p){
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8}}>
         <MarketBar/>
-        <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-          <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
-          <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-            <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
+        {isMobile?(
+          <>
+            {cardGrid}
+            <MobileStockDetailModal s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} onClose={function(){p.setSelectedStock(null);}}/>
+          </>
+        ):(
+          <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+            <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
+            <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
+            </div>
           </div>
-        </div>
+        )}
         {displayStocks.length===0&&(
           <div style={{textAlign:"center",padding:"40px",color:"#4a7090",fontSize:14}}>該当する銘柄がありません</div>
         )}
@@ -2329,12 +2351,19 @@ function FavPanel(p){
         )}
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8,paddingLeft:10,paddingRight:10,paddingBottom:120}}>
-        <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-          <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
-          <div style={{flex:1,position:"sticky",top:0,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-            <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
+        {isMobile?(
+          <>
+            {cardGrid}
+            <MobileStockDetailModal s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} onClose={function(){p.setSelectedStock(null);}}/>
+          </>
+        ):(
+          <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+            <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
+            <div style={{flex:1,position:"sticky",top:0,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
+            </div>
           </div>
-        </div>
+        )}
         {favs.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:13}}>ティッカーを入力して追加できます</div>}
       </div>
     </div>
