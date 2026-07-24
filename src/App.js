@@ -27,7 +27,7 @@ var MKT = {
 function scoreColor(n){ return n>=58?"#22d3a0":n>=38?"#fbbf24":"#f43f5e"; }
 function stateColor(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";}
 function stateLabel(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";}
-function bStyle(bg,border,text){ return{background:bg,border:"1px solid "+border,color:text,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:4}; }
+function bStyle(bg,border,text){ return{background:bg,border:"1px solid "+border,color:text,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:4,whiteSpace:"nowrap"}; }
 
 // 決算発表予定日のバッジ情報（日本株は「翌営業日リスト」照合のため常に直近扱い）
 function earningsInfo(dateStr){
@@ -1592,7 +1592,7 @@ function TradeAddModal(p){
   var stopS=useState("");var stopVal=stopS[0],setStopVal=stopS[1];
   var sharesS=useState("100");var sharesVal=sharesS[0],setSharesVal=sharesS[1];
   var isJP=s.market==="JP";
-  var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"8px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+  var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"8px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
   function valid(){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
     if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return false;
@@ -1605,7 +1605,7 @@ function TradeAddModal(p){
     p.onClose();
   }
   return(
-    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:"56vw"}}>
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#040c18",border:"1px solid #0ea5e950",borderRadius:16,padding:"16px",width:"100%",maxWidth:420,boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
           <div style={{fontSize:13,fontWeight:700,color:"#0ea5e9"}}>🎯 トレード登録 - {s.ticker.replace(".T","")}</div>
@@ -1694,14 +1694,16 @@ function StockCard(p){
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:"flex",gap:4,alignItems:"center"}}>
-            <div style={{fontSize:17,fontWeight:800,color:borderColor,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.ticker.replace(".T","")}</div>
+            <div style={{fontSize:15,fontWeight:800,color:borderColor,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.ticker.replace(".T","")}</div>
             <button onClick={function(e){stopProp(e);toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060",flexShrink:0}}>{isFav(s.ticker)?"★":"☆"}</button>
           </div>
-          <div style={{fontSize:11,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
-          {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
-          {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
-          {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}
-          {(function(){var si=relStrengthInfo(s.sectorRelStrength);return si&&<span style={bStyle(si.strong?"#052e16":"#1f0010","1px solid "+(si.strong?"#22d3a0":"#f43f5e"),si.strong?"#22d3a0":"#f43f5e")} title={"対"+(s.sectorName||"業種")+"相対(前日比差): "+si.label}>{si.strong?"🔥対業種":"🧊対業種"}{si.label}</span>;})()}
+          <div style={{fontSize:10,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:2}}>
+            {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
+            {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
+            {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}
+            {(function(){var si=relStrengthInfo(s.sectorRelStrength);return si&&<span style={bStyle(si.strong?"#052e16":"#1f0010","1px solid "+(si.strong?"#22d3a0":"#f43f5e"),si.strong?"#22d3a0":"#f43f5e")} title={"対"+(s.sectorName||"業種")+"相対(前日比差): "+si.label}>{si.strong?"🔥対業種":"🧊対業種"}{si.label}</span>;})()}
+          </div>
           {(function(){
             var aw=s.actualWinRate;
             var hasReal=aw&&aw.winRate!==null&&aw.total>=3;
@@ -1718,9 +1720,9 @@ function StockCard(p){
         </div>
         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0}}>
           <div style={{textAlign:"right"}}>
-            <div style={{fontSize:14,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
+            <div style={{fontSize:13,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
             {s.real===false&&s.failReason&&<div style={{fontSize:9,color:"#f43f5e",maxWidth:100,textAlign:"right"}}>{s.failReason}</div>}
-            {s.real!==false&&<div style={{fontSize:11,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>}
+            {s.real!==false&&<div style={{fontSize:10,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>}
           </div>
         </div>
       </div>
@@ -2006,7 +2008,7 @@ function StockDetailPanel(p){
       </div>
 
       {showAi&&createPortal(
-        <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);setAiText("");setAiEntry(null);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:"56vw"}}>
+        <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);setAiText("");setAiEntry(null);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <div style={{background:"#040c18",border:"1px solid #22d3a050",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -2045,10 +2047,10 @@ function StockDetailPanel(p){
           var jpy=p.usdJpy?Math.round(Math.abs(v)*p.usdJpy):null;
           return(v>=0?"+":"")+"$"+Math.abs(v).toFixed(2)+(jpy?"  (¥"+jpy.toLocaleString()+")":"");
         }
-        var inpSim={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+        var inpSim={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
         var scenarios=[{label:"損切りライン",pct:simStop,color:"#f43f5e"},{label:"-5%",pct:-5,color:"#fb923c"},{label:"+5%",pct:5,color:"#22d3a0"},{label:"+10%",pct:10,color:"#22d3a0"},{label:"+20%",pct:20,color:"#22d3a0"},{label:"目標価格",pct:simTarget,color:"#fbbf24"}];
         return(
-          <div onClick={function(e){if(e.target===e.currentTarget)setShowSim(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:"56vw"}}>
+          <div onClick={function(e){if(e.target===e.currentTarget)setShowSim(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
             <div style={{background:"#040c18",border:"1px solid #a78bfa50",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                 <div style={{fontSize:14,fontWeight:700,color:"#a78bfa"}}>💹 損益シミュレーション</div>
@@ -2065,7 +2067,7 @@ function StockDetailPanel(p){
                     <div style={{fontSize:13,color:"#fbbf24",marginBottom:3}}>{fmtP(bp*(1+simTarget/100))}</div>
                     <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
                       <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>目標</span>
-                      <input type="number" value={simTargetInput} onChange={function(e){setSimTargetInput(e.target.value);}} onBlur={function(){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}e.target.blur();}}} style={{width:56,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                      <input type="number" value={simTargetInput} onChange={function(e){setSimTargetInput(e.target.value);}} onBlur={function(){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}e.target.blur();}}} style={{width:60,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:16,fontFamily:"monospace",textAlign:"center"}}/>
                       <span style={{fontSize:13,color:"#fbbf24"}}>%</span>
                       <input type="range" min={1} max={200} value={simTarget} onChange={function(e){var v=parseInt(e.target.value);setSimTarget(v);setSimTargetInput(String(v));}} style={{flex:1,accentColor:"#fbbf24"}}/>
                     </div>
@@ -2074,7 +2076,7 @@ function StockDetailPanel(p){
                     <div style={{fontSize:13,color:"#f43f5e",marginBottom:3}}>{fmtP(bp*(1+simStop/100))}</div>
                     <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
                       <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>損切り</span>
-                      <input type="number" value={simStopInput} onChange={function(e){setSimStopInput(e.target.value);}} onBlur={function(){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}e.target.blur();}}} style={{width:56,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:12,fontFamily:"monospace",textAlign:"center"}}/>
+                      <input type="number" value={simStopInput} onChange={function(e){setSimStopInput(e.target.value);}} onBlur={function(){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}e.target.blur();}}} style={{width:60,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:16,fontFamily:"monospace",textAlign:"center"}}/>
                       <span style={{fontSize:13,color:"#f43f5e"}}>%</span>
                       <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){var v=parseInt(e.target.value);setSimStop(v);setSimStopInput(String(v));}} style={{flex:1,accentColor:"#f43f5e"}}/>
                     </div>
@@ -2099,8 +2101,15 @@ function StockDetailPanel(p){
 // スマホ用：詳細パネルを全画面モーダルで表示（全銘柄／お気に入りタブ共通）
 function MobileStockDetailModal(p){
   if(!p.s) return null;
+  var touchS=useState({y:0,atTop:true});var touch=touchS[0],setTouch=touchS[1];
+  function onTouchStart(e){setTouch({y:e.touches[0].clientY,atTop:e.currentTarget.scrollTop<=0});}
+  function onTouchEnd(e){
+    var dy=e.changedTouches[0].clientY-touch.y;
+    if(touch.atTop&&dy>90) p.onClose();
+  }
   return createPortal(
-    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",inset:0,zIndex:1500,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:10}}>
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{position:"fixed",inset:0,zIndex:1500,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:10}}>
+      <div style={{textAlign:"center",color:"#2a4060",fontSize:16,padding:"0 0 6px"}}>▾ 下にスワイプで閉じる</div>
       <StockDetailPanel s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading} allStocks={p.allStocks} onAddTrade={p.onAddTrade} onClose={p.onClose}/>
     </div>,
     document.body
@@ -2314,7 +2323,7 @@ function FavPanel(p){
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4}}>
         <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:14,fontFamily:"monospace",flex:"1 1 130px",minWidth:0}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
+            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:16,fontFamily:"monospace",flex:"1 1 130px",minWidth:0}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
             <select value={addGroup} onChange={function(e){setAddGroup(Number(e.target.value));}} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#fbbf24",padding:"0 6px",fontSize:13,fontFamily:"monospace",flex:"1 1 110px",minWidth:0}}>
               <option value={0}>全体（未分類）</option>
               {[1,2,3,4,5].map(function(n){return <option key={n} value={n}>{groupNames[n]}</option>;})}
@@ -2491,7 +2500,7 @@ function TradeDetailModal(p){
   var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0"};
   var EXIT_LABEL={take_profit:"利確で完了",stop_loss:"損切りで完了",time_exit:"引けで強制完了（持ち越しなし）",forced:"強制完了"};
   var unrealized=(t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?((t.lastPrice-t.startPrice)*(t.shares||1)):null;
-  var editInp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px",fontSize:13,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+  var editInp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
 
   function startEdit(){setBuyVal(String(t.buyPrice));setSellVal(String(t.sellPrice));setStopVal(t.stopPrice!=null?String(t.stopPrice):"");setSharesVal(String(t.shares||1));setEditing(true);}
   function saveEdit(){
@@ -2652,7 +2661,7 @@ function MarketPredictionPanel(p){
           <span style={{fontSize:12,color:"#4a7090"}}>上位</span>
           <input type="number" min="1" max="50" value={volTopN}
             onChange={function(e){setVolTopN(parseInt(e.target.value)||10);}}
-            style={{width:56,background:"#040c18",border:"1px solid #1e3050",borderRadius:6,color:"#e0f0ff",padding:"5px 8px",fontSize:13,fontFamily:"monospace"}}/>
+            style={{width:60,background:"#040c18",border:"1px solid #1e3050",borderRadius:6,color:"#e0f0ff",padding:"5px 8px",fontSize:16,fontFamily:"monospace"}}/>
           <span style={{fontSize:12,color:"#4a7090"}}>件</span>
           <button onClick={genVolumePrompt} disabled={stocks.length===0}
             style={{background:"#0ea5e9",border:"none",borderRadius:6,color:"#fff",padding:"6px 12px",fontSize:12,fontWeight:700,cursor:stocks.length===0?"not-allowed":"pointer",fontFamily:"monospace"}}>生成</button>
@@ -2985,8 +2994,8 @@ function SyncPanel(p){
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
         <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:10}}>🔐 合言葉でログイン</div>
         <div style={{fontSize:12,color:"#4a7090",marginBottom:10}}>合言葉とPINを覚えておけば、キャッシュを消した後や別端末でも同じデータに戻せます</div>
-        <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:14,width:"100%",boxSizing:"border-box",marginBottom:8}} value={word} placeholder="合言葉（例：さくら）" onChange={function(e){setWord(e.target.value);}}/>
-        <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:14,width:"100%",boxSizing:"border-box",marginBottom:10}} value={pin} placeholder="PIN（例：1234）" inputMode="numeric" onChange={function(e){setPin(e.target.value);}}/>
+        <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:16,width:"100%",boxSizing:"border-box",marginBottom:8}} value={word} placeholder="合言葉（例：さくら）" onChange={function(e){setWord(e.target.value);}}/>
+        <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:16,width:"100%",boxSizing:"border-box",marginBottom:10}} value={pin} placeholder="PIN（例：1234）" inputMode="numeric" onChange={function(e){setPin(e.target.value);}}/>
         <button onClick={loginWithPassphrase} disabled={!loginReady||loginStatus==="loading"} style={{width:"100%",background:loginReady?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:14,fontWeight:700,cursor:loginReady?"pointer":"not-allowed"}}>
           {loginStatus==="loading"?"ログイン中...":loginStatus==="ok"?"✅ ログイン済み":loginStatus==="error"?"❌ 失敗しました":"ログイン / 新規登録"}
         </button>
@@ -3010,7 +3019,7 @@ function SyncPanel(p){
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
         <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>別デバイスのIDで同期</div>
         <div style={{fontSize:12,color:"#4a7090",marginBottom:10}}>他のデバイスのIDを入力するとお気に入り・トレードが引き継がれます</div>
-        <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:14,fontFamily:"monospace",width:"100%",boxSizing:"border-box",marginBottom:10}} value={input} placeholder="別デバイスのIDを貼り付け" onChange={function(e){setInput(e.target.value);}}/>
+        <input style={{background:"#040c18",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"10px 12px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box",marginBottom:10}} value={input} placeholder="別デバイスのIDを貼り付け" onChange={function(e){setInput(e.target.value);}}/>
         <button onClick={syncById} disabled={!input.trim()||syncStatus==="loading"} style={{width:"100%",background:input.trim()?"linear-gradient(135deg,#22d3a0,#059669)":"#0a1828",border:"none",borderRadius:8,color:"#fff",padding:"10px",fontSize:14,fontWeight:700,cursor:input.trim()?"pointer":"not-allowed",fontFamily:"monospace"}}>
           {syncStatus==="loading"?"同期中...":syncStatus==="ok"?"✅ 同期完了！":syncStatus==="error"?"❌ IDが見つかりません":"このIDで同期する"}
         </button>
