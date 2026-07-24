@@ -1440,10 +1440,10 @@ function IntradayChart1m(p){
     fullTimes=fullTimes.concat([p.liveTick.time||""]);
   }
   var dateLabel=formatChartDateLabel(data.date);
-  // MAは全期間のデータで計算してから、表示だけ直近3時間（1分足180本）に絞る。
+  // MAは全期間のデータで計算してから、表示だけ直近2時間（1分足120本）に絞る。
   // 表示範囲の先頭でも正しいMA値になるよう、計算は絞り込み前の配列に対して行う。
   var fullMa25=trailingSMA(fullCloses,25),fullMa75=trailingSMA(fullCloses,75);
-  var cropStart=Math.max(0,fullCloses.length-180);
+  var cropStart=Math.max(0,fullCloses.length-120);
   var closes=fullCloses.slice(cropStart),times=fullTimes.slice(cropStart);
   var ma25=fullMa25.slice(cropStart),ma75=fullMa75.slice(cropStart);
   var W=100;
@@ -1470,7 +1470,7 @@ function IntradayChart1m(p){
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
-        <span>1分足終値（直近3時間）</span>
+        <span>1分足終値（直近2時間）</span>
         <span>{dateLabel}</span>
       </div>
       <div style={{display:"flex",gap:6}}>
@@ -1540,7 +1540,7 @@ function SignalDetailList(p){
 function SignalWeightModal(p){
   if(!p.open) return null;
   return(
-    <div onClick={p.onClose} style={{position:"fixed",inset:0,zIndex:1000,display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:"56vw"}}>
+    <div onClick={p.onClose} style={{position:"fixed",inset:0,zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div onClick={function(e){e.stopPropagation();}} style={{background:"#0a1628",border:"1px solid #2a4060",borderRadius:10,maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",padding:"16px 18px",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>📊 シグナルの重み付けについて</div>
@@ -1982,8 +1982,8 @@ function StockDetailPanel(p){
         <IntradayChart1m data={intraday} liveTick={liveTick}/>
       </div>
 
-      {/* シグナル詳細（左）／板情報・利確損切りライン（右） */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignItems:"start"}}>
+      {/* シグナル詳細（上）／板情報・利確損切りライン（下） */}
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
         <div style={{minWidth:0}}>
           <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
@@ -2317,7 +2317,7 @@ function FavPanel(p){
               <option value={0}>全体</option>
               {[1,2,3,4,5].map(function(n){return <option key={n} value={n}>{groupNames[n]}</option>;})}
             </select>
-            <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"8px 12px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"monospace",flex:"0 0 auto"}}>追加</button>
+            <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",flex:"0 0 auto"}}>追加</button>
           </div>
           {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
         </div>
@@ -2331,7 +2331,6 @@ function FavPanel(p){
           <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>グループ:</span>
           {gBtn(0,"全体")}
           {[1,2,3,4,5].map(function(n){return <span key={n} style={{display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
-          <button onClick={function(){setShowAcc(true);}} style={{marginLeft:"auto",background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
         </div>
         {showAcc&&createPortal(<SignalAccuracyModal onClose={function(){setShowAcc(false);}}/>,document.body)}
         {favStocks.length>0&&(
@@ -2340,6 +2339,7 @@ function FavPanel(p){
             {fBtn("ALL","全て","#60a5fa")}
             {fBtn("US","US","#3b82f6")}
             {fBtn("JP","JP","#f87171")}
+            <button onClick={function(){setShowAcc(true);}} style={{marginLeft:"auto",background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
           </div>
         )}
         </div>
@@ -2415,7 +2415,7 @@ function TradePanel(p){
         <div style={{width:(!showAccuracy||isMobile)?"100%":"60%",flexShrink:0,display:"flex",flexDirection:"column",gap:10,minWidth:0}}>
           <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
             <div>
-              <div style={{fontSize:11,color:"#4a7090"}}>合計損益（完了 {doneList.length}件）</div>
+              <div style={{fontSize:10,color:"#4a7090",whiteSpace:"nowrap"}}>合計損益（完了{doneList.length}件）</div>
               <div style={{fontSize:20,fontWeight:800,color:totalPnl>=0?"#22d3a0":"#f43f5e"}}>{doneList.length?fmtPnl(totalPnl,true):"—"}</div>
             </div>
             <div style={{display:"flex",gap:10,alignItems:"center"}}>
@@ -2622,7 +2622,7 @@ function MarketPredictionPanel(p){
             <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>AIがニュースと市場データを分析します</div>
           </div>
           <button onClick={runPrediction} disabled={predictionLoading||stocks.length===0}
-            style={{background:predictionLoading?"#0a1828":"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"10px 16px",fontSize:13,fontWeight:700,cursor:predictionLoading||stocks.length===0?"not-allowed":"pointer",fontFamily:"monospace",flexShrink:0}}>
+            style={{background:predictionLoading?"#0a1828":"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:predictionLoading||stocks.length===0?"not-allowed":"pointer",fontFamily:"monospace",flexShrink:0,whiteSpace:"nowrap"}}>
             {predictionLoading?"分析中...":"📡 市場予測を分析する"}
           </button>
         </div>
@@ -2706,7 +2706,7 @@ function NewsPanel(){
             {lastUpd&&<div style={{fontSize:11,color:"#2a6090",marginTop:2}}>更新: {lastUpd}</div>}
           </div>
           <button onClick={fetchNews} disabled={loading}
-            style={{background:loading?"#0a1828":"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"7px 16px",fontSize:13,fontWeight:700,cursor:loading?"not-allowed":"pointer",fontFamily:"monospace"}}>
+            style={{background:loading?"#0a1828":"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:loading?"not-allowed":"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>
             {loading?"取得中...":"🔄 最新ニュース取得"}
           </button>
         </div>
@@ -2858,7 +2858,7 @@ function IndexPanel(){
         {INDEX_FUNDS.map(function(item,i){
           return(
             <a key={i} href={item.url} target="_blank" rel="noreferrer" style={{display:"flex",flexDirection:"column",padding:"12px 14px",margin:"4px 0",background:"#071428",border:"1px solid #1e3050",borderRadius:8,textDecoration:"none",gap:4}}>
-              <span style={{fontSize:15,fontWeight:700,color:"#93c5fd"}}>{item.label}</span>
+              <span style={{fontSize:13,fontWeight:700,color:"#93c5fd"}}>{item.label}</span>
               <span style={{fontSize:12,color:"#4a7090"}}>{item.desc}</span>
             </a>
           );
