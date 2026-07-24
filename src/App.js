@@ -2121,6 +2121,7 @@ function MobileStockDetailModal(p){
 function MarketBar(){
   var dataS=useState({}); var data=dataS[0],setData=dataS[1];
   var loadingS=useState(true); var loading=loadingS[0],setLoading=loadingS[1];
+  var isMobile=useIsMobile();
   var INDICES=[
     {key:"nikkei",  ticker:"^N225",   label:"日経平均",  prefix:"¥", round:true},
     {key:"dow",     ticker:"^DJI",    label:"NYダウ",    prefix:"$", round:true},
@@ -2152,7 +2153,8 @@ function MarketBar(){
       <span style={{fontSize:12,color:"#2a6090"}}>市況取得中...</span>
     </div>
   );
-  return(
+  // ── スマホ：横スクロールのコンパクト表示 ─────────────────────────────
+  if(isMobile) return(
     <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px",marginBottom:12,display:"flex",gap:6,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
       {INDICES.map(function(idx){
         var d=data[idx.key];
@@ -2171,6 +2173,33 @@ function MarketBar(){
             <div style={{fontSize:10,color:vixAlert?"#f43f5e":"#4a7090",fontWeight:700,marginBottom:2,whiteSpace:"nowrap"}}>{idx.label}{vixAlert?" ⚠":""}</div>
             <div style={{fontSize:14,fontWeight:800,color:vixAlert?"#f43f5e":"#d8eeff",whiteSpace:"nowrap"}}>{d.prefix}{price}</div>
             <div style={{fontSize:11,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e",whiteSpace:"nowrap"}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+  // ── PC/iPad：元の大きめグリッド表示 ─────────────────────────────────
+  return(
+    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px",marginBottom:12,display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8}}>
+      {INDICES.map(function(idx){
+        var d=data[idx.key];
+        if(!d||d.error) return(
+          <div key={idx.key} style={{background:"#050e1c",borderRadius:8,padding:"10px 12px"}}>
+            <div style={{fontSize:13,color:"#2a6090"}}>{idx.label}</div>
+            <div style={{fontSize:15,color:"#4a7090"}}>─</div>
+          </div>
+        );
+        var isUp=parseFloat(d.change)>=0;
+        var price=d.round?Math.round(d.price).toLocaleString():parseFloat(d.price).toFixed(2);
+        var isVix=idx.key==="vix";
+        var vixAlert=isVix&&d.price>=20;
+        return(
+          <div key={idx.key} style={{background:vixAlert?"#1f0010":"#050e1c",borderRadius:8,padding:"10px 12px",border:vixAlert?"1px solid #f43f5e50":"1px solid transparent"}}>
+            <div style={{fontSize:13,color:vixAlert?"#f43f5e":"#4a7090",fontWeight:700,marginBottom:4}}>{idx.label}{vixAlert?" ⚠ 警戒":""}</div>
+            <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+              <div style={{fontSize:20,fontWeight:800,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
+              <div style={{fontSize:14,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
+            </div>
           </div>
         );
       })}
@@ -3053,18 +3082,18 @@ function SignalAccuracyContent(p){
       ):(
         <div>
           <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
-            <div style={{flex:1}}>シグナル</div>
-            <div style={{width:60,textAlign:"right"}}>的中率</div>
-            <div style={{width:50,textAlign:"right"}}>件数</div>
+            <div style={{flex:1,minWidth:0}}>シグナル</div>
+            <div style={{width:52,flexShrink:0,textAlign:"right"}}>的中率</div>
+            <div style={{width:40,flexShrink:0,textAlign:"right"}}>件数</div>
           </div>
           {data.map(function(row,i){
             var reliable=row.total>=5;
             var color=row.winRate==null?"#4a7090":row.winRate>=60?"#22d3a0":row.winRate>=50?"#fbbf24":"#f43f5e";
             return(
               <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830",opacity:reliable?1:0.5}}>
-                <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{formatSigKeyLabel(row.signal)}</div>
-                <div style={{width:60,textAlign:"right",color:color,fontWeight:700}}>{row.winRate!=null?row.winRate+"%":"-"}</div>
-                <div style={{width:50,textAlign:"right",color:"#4a7090"}}>{row.total}</div>
+                <div style={{flex:1,minWidth:0,color:"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{formatSigKeyLabel(row.signal)}</div>
+                <div style={{width:52,flexShrink:0,textAlign:"right",color:color,fontWeight:700}}>{row.winRate!=null?row.winRate+"%":"-"}</div>
+                <div style={{width:40,flexShrink:0,textAlign:"right",color:"#4a7090"}}>{row.total}</div>
               </div>
             );
           })}
@@ -3078,7 +3107,7 @@ function SignalAccuracyContent(p){
 function SignalAccuracyModal(p){
   var onClose=p.onClose;
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:500,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"flex-end",padding:16,paddingRight:"56vw"}}
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:500,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}
       onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"88vh",overflowY:"scroll",WebkitOverflowScrolling:"touch"}}>
