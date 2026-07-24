@@ -1940,13 +1940,13 @@ function StockDetailPanel(p){
           {s.market==="JP"&&<span style={{fontSize:9,color:"#4a7090",marginLeft:6}}>📡詳細</span>}
           {s.market==="US"&&p.usdJpy&&<div style={{fontSize:13,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>}
         </div>
-        <div style={{textAlign:"right"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
           {s.real!==false&&(function(){
             var pct=liveTick&&liveTick.changePct!=null?liveTick.changePct:parseFloat(s.change);
             var up=pct>=0;
             return <span style={{fontSize:15,fontWeight:700,color:up?"#22d3a0":"#f43f5e"}}>{up?"▲":"▼"}{Math.abs(pct).toFixed(2)}%</span>;
           })()}
-          <div style={{marginTop:4}}><span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span></div>
         </div>
       </div>
 
@@ -1969,6 +1969,7 @@ function StockDetailPanel(p){
       <div style={{display:"flex",gap:4,alignItems:"center",overflowX:"auto",WebkitOverflowScrolling:"touch",paddingBottom:2}}>
         <a href={s.yahooUrl} target="_blank" rel="noreferrer" title="Yahoo!ファイナンス" style={{flexShrink:0,background:"#071428",border:"1px solid #4f46e5",borderRadius:6,color:"#a5b4fc",padding:"4px 9px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>🔗</a>
         <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} title="iSPEED（銘柄コードをコピー）" style={{flexShrink:0,background:"#1a0a0a",border:"1px solid #f87171",borderRadius:6,color:"#fca5a5",padding:"4px 9px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>📱</a>
+        <div style={{flexShrink:0,width:30}}/>
         <button onClick={copyTradePrompt} title="判定プロンプトをコピー" style={{flexShrink:0,background:promptCopied?"#052e16":"transparent",border:"1px solid "+(promptCopied?"#22d3a0":"#2a4060"),borderRadius:6,color:promptCopied?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>{promptCopied?"✓":"📋"}</button>
         <button onClick={function(){if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} title="再スキャン" style={{flexShrink:0,background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
         <button onClick={runAiAnalysis} disabled={aiLoading} title="AI相談" style={{flexShrink:0,background:"transparent",border:"1px solid "+(aiLoading?"#22d3a0":"#2a4060"),borderRadius:6,color:aiLoading?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:aiLoading?"not-allowed":"pointer"}}>{aiLoading?"⏳":"🤖"}</button>
@@ -2109,7 +2110,7 @@ function MobileStockDetailModal(p){
   }
   return createPortal(
     <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{position:"fixed",inset:0,zIndex:1500,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:10}}>
-      <div style={{textAlign:"center",color:"#2a4060",fontSize:16,padding:"0 0 6px"}}>▾ 下にスワイプで閉じる</div>
+      <div style={{textAlign:"center",color:"#2a4060",fontSize:11,padding:"0 0 6px"}}>▾ 下にスワイプで閉じる</div>
       <StockDetailPanel s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading} allStocks={p.allStocks} onAddTrade={p.onAddTrade} onClose={p.onClose}/>
     </div>,
     document.body
@@ -2120,7 +2121,6 @@ function MobileStockDetailModal(p){
 function MarketBar(){
   var dataS=useState({}); var data=dataS[0],setData=dataS[1];
   var loadingS=useState(true); var loading=loadingS[0],setLoading=loadingS[1];
-  var isWide=window.innerWidth>=768;
   var INDICES=[
     {key:"nikkei",  ticker:"^N225",   label:"日経平均",  prefix:"¥", round:true},
     {key:"dow",     ticker:"^DJI",    label:"NYダウ",    prefix:"$", round:true},
@@ -2153,13 +2153,13 @@ function MarketBar(){
     </div>
   );
   return(
-    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"12px",marginBottom:12,display:"grid",gridTemplateColumns:isWide?"repeat(5,1fr)":"1fr 1fr",gap:8}}>
+    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"10px",marginBottom:12,display:"flex",gap:6,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
       {INDICES.map(function(idx){
         var d=data[idx.key];
         if(!d||d.error) return(
-          <div key={idx.key} style={{background:"#050e1c",borderRadius:8,padding:"10px 12px"}}>
-            <div style={{fontSize:13,color:"#2a6090"}}>{idx.label}</div>
-            <div style={{fontSize:15,color:"#4a7090"}}>─</div>
+          <div key={idx.key} style={{flexShrink:0,minWidth:84,background:"#050e1c",borderRadius:8,padding:"7px 10px"}}>
+            <div style={{fontSize:10,color:"#2a6090",whiteSpace:"nowrap"}}>{idx.label}</div>
+            <div style={{fontSize:13,color:"#4a7090"}}>─</div>
           </div>
         );
         var isUp=parseFloat(d.change)>=0;
@@ -2167,12 +2167,10 @@ function MarketBar(){
         var isVix=idx.key==="vix";
         var vixAlert=isVix&&d.price>=20;
         return(
-          <div key={idx.key} style={{background:vixAlert?"#1f0010":"#050e1c",borderRadius:8,padding:"10px 12px",border:vixAlert?"1px solid #f43f5e50":"1px solid transparent",gridColumn:(!isWide&&isVix)?"1 / -1":undefined}}>
-            <div style={{fontSize:13,color:vixAlert?"#f43f5e":"#4a7090",fontWeight:700,marginBottom:4}}>{idx.label}{vixAlert?" ⚠ 警戒":""}</div>
-            <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
-              <div style={{fontSize:20,fontWeight:800,color:vixAlert?"#f43f5e":"#d8eeff"}}>{d.prefix}{price}</div>
-              <div style={{fontSize:14,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
-            </div>
+          <div key={idx.key} style={{flexShrink:0,minWidth:84,background:vixAlert?"#1f0010":"#050e1c",borderRadius:8,padding:"7px 10px",border:vixAlert?"1px solid #f43f5e50":"1px solid transparent"}}>
+            <div style={{fontSize:10,color:vixAlert?"#f43f5e":"#4a7090",fontWeight:700,marginBottom:2,whiteSpace:"nowrap"}}>{idx.label}{vixAlert?" ⚠":""}</div>
+            <div style={{fontSize:14,fontWeight:800,color:vixAlert?"#f43f5e":"#d8eeff",whiteSpace:"nowrap"}}>{d.prefix}{price}</div>
+            <div style={{fontSize:11,fontWeight:700,color:isUp?"#22d3a0":"#f43f5e",whiteSpace:"nowrap"}}>{isUp?"▲":"▼"}{Math.abs(d.change)}%</div>
           </div>
         );
       })}
@@ -3288,15 +3286,15 @@ function MarketHours(){
   if(dow===6&&timeMin<usEndMin) usOpen=true;
   if(dow===0&&timeMin>=usStartMin) usOpen=false;
   return(
-    <div style={{display:"flex",gap:8,alignItems:"center",flexDirection:"row"}}>
-      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-        <span style={{fontSize:13,fontWeight:jpOpen?700:400,color:jpOpen?"#22d3a0":"#4a7090"}}>🇯🇵 9:00〜11:30</span>
-        <span style={{fontSize:13,fontWeight:jpOpen?700:400,color:jpOpen?"#22d3a0":"#4a7090"}}>🇯🇵 12:30〜15:30</span>
+    <div style={{display:"flex",gap:5,alignItems:"center",flexDirection:"row"}}>
+      <div style={{display:"flex",flexDirection:"column",gap:1}}>
+        <span style={{fontSize:10,fontWeight:jpOpen?700:400,color:jpOpen?"#22d3a0":"#4a7090",whiteSpace:"nowrap"}}>🇯🇵 9:00〜11:30</span>
+        <span style={{fontSize:10,fontWeight:jpOpen?700:400,color:jpOpen?"#22d3a0":"#4a7090",whiteSpace:"nowrap"}}>🇯🇵 12:30〜15:30</span>
       </div>
-      <span style={{fontSize:13,color:"#1e3050"}}>|</span>
-      <div style={{display:"flex",flexDirection:"column",gap:2}}>
-        <span style={{fontSize:13,fontWeight:usOpen?700:400,color:usOpen?"#22d3a0":"#4a7090"}}>🇺🇸 22:30〜翌5:00 <span style={{fontSize:11,color:usOpen?"#22d3a0":"#2a6090"}}>[夏]</span></span>
-        <span style={{fontSize:13,fontWeight:usOpen?700:400,color:usOpen?"#22d3a0":"#4a7090"}}>🇺🇸 23:30〜翌6:00 <span style={{fontSize:11,color:usOpen?"#22d3a0":"#2a6090"}}>[冬]</span></span>
+      <span style={{fontSize:10,color:"#1e3050"}}>|</span>
+      <div style={{display:"flex",flexDirection:"column",gap:1}}>
+        <span style={{fontSize:10,fontWeight:usOpen?700:400,color:usOpen?"#22d3a0":"#4a7090",whiteSpace:"nowrap"}}>🇺🇸 22:30〜翌5:00<span style={{fontSize:9,color:usOpen?"#22d3a0":"#2a6090"}}>[夏]</span></span>
+        <span style={{fontSize:10,fontWeight:usOpen?700:400,color:usOpen?"#22d3a0":"#4a7090",whiteSpace:"nowrap"}}>🇺🇸 23:30〜翌6:00<span style={{fontSize:9,color:usOpen?"#22d3a0":"#2a6090"}}>[冬]</span></span>
       </div>
     </div>
   );
