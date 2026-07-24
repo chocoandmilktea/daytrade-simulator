@@ -1,5 +1,6 @@
 import XLSX from "xlsx";
 import { Redis } from "@upstash/redis";
+import { withFallback } from "./_fallbackCache.js";
 
 const redis = Redis.fromEnv();
 
@@ -325,19 +326,24 @@ async function fetchTopixChange() {
   const now = Date.now();
   if (topixCache.change !== null && now - topixCache.ts < TOPIX_TTL) return topixCache.change;
 
-  const apiUrl = process.env.TACHIBANA_TOPIX_API;
-  if (!apiUrl) throw new Error("TACHIBANA_TOPIX_API not set");
+  // 立花証券APIが一時的に使えない時（早朝メンテナンス等）は、Redisに保存済みの
+  // 直近の成功データ（引け値ベース）を代わりに使う
+  const change = await withFallback("topix", async () => {
+    const apiUrl = process.env.TACHIBANA_TOPIX_API;
+    if (!apiUrl) throw new Error("TACHIBANA_TOPIX_API not set");
 
-  const headers = {};
-  if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
+    const headers = {};
+    if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
 
-  const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error("topix " + res.status);
-  const json = await res.json();
-  if (json.change == null) throw new Error("topix: change値がありません");
+    const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error("topix " + res.status);
+    const json = await res.json();
+    if (json.change == null) throw new Error("topix: change値がありません");
+    return json.change;
+  });
 
-  topixCache = { change: json.change, ts: now };
-  return json.change;
+  topixCache = { change: change, ts: now };
+  return change;
 }
 
 // ── PER/PBR/EPS/BPS/配当利回り ────────────────────────────────────────
@@ -351,15 +357,19 @@ async function fetchTachibanaIssueDetail(code4) {
   const cached = issueDetailCache[code4];
   if (cached && now - cached.ts < ISSUE_DETAIL_TTL) return cached.data;
 
-  const apiUrl = process.env.TACHIBANA_ISSUE_DETAIL_API;
-  if (!apiUrl) throw new Error("TACHIBANA_ISSUE_DETAIL_API not set");
+  // 立花証券APIが一時的に使えない時（早朝メンテナンス等）は、Redisに保存済みの
+  // 直近の成功データ（引け値ベース）を代わりに使う。銘柄ごとにキーを分ける。
+  const data = await withFallback("issue-detail:" + code4, async () => {
+    const apiUrl = process.env.TACHIBANA_ISSUE_DETAIL_API;
+    if (!apiUrl) throw new Error("TACHIBANA_ISSUE_DETAIL_API not set");
 
-  const headers = {};
-  if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
+    const headers = {};
+    if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
 
-  const res = await fetch(`${apiUrl}?code=${code4}`, { headers, signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error("issue-detail " + res.status);
-  const data = await res.json();
+    const res = await fetch(`${apiUrl}?code=${code4}`, { headers, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error("issue-detail " + res.status);
+    return await res.json();
+  });
 
   issueDetailCache[code4] = { data: data, ts: now };
   return data;
