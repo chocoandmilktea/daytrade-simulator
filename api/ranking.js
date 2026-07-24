@@ -2,6 +2,8 @@
 // ハイブリッド方式：出来高上位 + 値上がり率上位20（出来高フィルター付き）
 // JP: 出来高上位40 / US: 出来高上位50（US: Yahoo Finance, JP: 立花証券API経由）
 
+import { withFallback } from "./_fallbackCache.js";
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -180,16 +182,20 @@ export function mapJPBar(bar, names) {
 // 実際の取得（銘柄マスタ・出来高一括取得・並列バッチ処理）はtachibana-server側
 // （webapi.js の /ranking-data）で行っている。ranking.js側はそれを1回呼ぶだけ。
 async function fetchTachibanaRankingData() {
-  const apiUrl = process.env.TACHIBANA_RANKING_API;
-  if (!apiUrl) throw new Error("TACHIBANA_RANKING_API not set");
+  // 立花証券APIが一時的に使えない時（早朝メンテナンス等）は、Redisに保存済みの
+  // 直近の成功データ（引け値ベース）を代わりに使う
+  return await withFallback("ranking-data", async () => {
+    const apiUrl = process.env.TACHIBANA_RANKING_API;
+    if (!apiUrl) throw new Error("TACHIBANA_RANKING_API not set");
 
-  const headers = {};
-  if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
+    const headers = {};
+    if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
 
-  const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error("ranking-data " + res.status);
-  const json = await res.json();
-  return json.rows || [];
+    const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error("ranking-data " + res.status);
+    const json = await res.json();
+    return json.rows || [];
+  });
 }
 
 // 立花証券の行データ（code/name/sector/price/prevClose/volume）を
