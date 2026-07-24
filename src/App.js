@@ -1587,6 +1587,7 @@ function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.activ
 // ── トレード登録モーダル（買い/売り価格を入力し、アプリ予想 or 個人予想へ追加）─────
 function TradeAddModal(p){
   var s=p.s;
+  var isMobile=useIsMobile();
   var buyS=useState(s.rawPrice!=null?String(s.rawPrice):"");var buyVal=buyS[0],setBuyVal=buyS[1];
   var sellS=useState("");var sellVal=sellS[0],setSellVal=sellS[1];
   var stopS=useState("");var stopVal=stopS[0],setStopVal=stopS[1];
@@ -1605,7 +1606,7 @@ function TradeAddModal(p){
     p.onClose();
   }
   return(
-    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
       <div style={{background:"#040c18",border:"1px solid #0ea5e950",borderRadius:16,padding:"16px",width:"100%",maxWidth:420,boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
           <div style={{fontSize:13,fontWeight:700,color:"#0ea5e9"}}>🎯 トレード登録 - {s.ticker.replace(".T","")}</div>
@@ -1858,6 +1859,7 @@ function StockDetailPanel(p){
     );
   }
   var isUp=parseFloat(s.change)>=0;
+  var isMobile=useIsMobile();
   var mc=MKT[s.market]||MKT["US"];
   var bc=BADGE[s.timing];
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
@@ -2009,7 +2011,7 @@ function StockDetailPanel(p){
       </div>
 
       {showAi&&createPortal(
-        <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);setAiText("");setAiEntry(null);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);setAiText("");setAiEntry(null);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
           <div style={{background:"#040c18",border:"1px solid #22d3a050",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -2051,7 +2053,7 @@ function StockDetailPanel(p){
         var inpSim={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
         var scenarios=[{label:"損切りライン",pct:simStop,color:"#f43f5e"},{label:"-5%",pct:-5,color:"#fb923c"},{label:"+5%",pct:5,color:"#22d3a0"},{label:"+10%",pct:10,color:"#22d3a0"},{label:"+20%",pct:20,color:"#22d3a0"},{label:"目標価格",pct:simTarget,color:"#fbbf24"}];
         return(
-          <div onClick={function(e){if(e.target===e.currentTarget)setShowSim(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div onClick={function(e){if(e.target===e.currentTarget)setShowSim(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
             <div style={{background:"#040c18",border:"1px solid #a78bfa50",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                 <div style={{fontSize:14,fontWeight:700,color:"#a78bfa"}}>💹 損益シミュレーション</div>
