@@ -2,8 +2,10 @@
 // 立花証券APIから「コード → 正式名称」の対応表を返す
 // 実際の取得（銘柄マスタ）はtachibana-server側（webapi.js の /names）で行っている。
 
-// サーバーサイドキャッシュ（同一サーバーインスタンス内で1時間再利用）
-// ※tachibana-server側も24時間キャッシュしているため、こちらは短めでも実害は少ない
+import { withFallback } from "./_fallbackCache.js";
+
+// サーバーサイドキャッシュ（同一サーバーインスタンス内で1時間再利用。高速化用の軽いキャッシュ）
+// ※取得失敗時（早朝メンテナンス等）の本格的なフォールバックはwithFallback側（Redis）が担当する
 let _cache = null;
 let _cacheTs = 0;
 const CACHE_TTL = 60 * 60 * 1000; // 1時間
@@ -18,18 +20,20 @@ export default async function handler(req, res) {
     return res.status(200).json({ names: _cache, cached: true });
   }
 
-  const apiUrl = process.env.TACHIBANA_NAMES_API;
-  if (!apiUrl) return res.status(500).json({ error: "TACHIBANA_NAMES_API not set" });
-
   try {
-    const headers = {};
-    if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
+    const names = await withFallback("names", async () => {
+      const apiUrl = process.env.TACHIBANA_NAMES_API;
+      if (!apiUrl) throw new Error("TACHIBANA_NAMES_API not set");
 
-    const r = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(15000) });
-    if (!r.ok) throw new Error("names api: " + r.status);
+      const headers = {};
+      if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
 
-    const json = await r.json();
-    const names = json.names || {};
+      const r = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(15000) });
+      if (!r.ok) throw new Error("names api: " + r.status);
+
+      const json = await r.json();
+      return json.names || {};
+    });
 
     // キャッシュ更新
     _cache = names;
@@ -41,10 +45,6 @@ export default async function handler(req, res) {
       cached: false,
     });
   } catch (e) {
-    // キャッシュが古くても返せるなら返す（フォールバック）
-    if (_cache) {
-      return res.status(200).json({ names: _cache, cached: true, fallback: true });
-    }
     return res.status(500).json({ error: e.message });
   }
 }
