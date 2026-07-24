@@ -2262,7 +2262,6 @@ function FavPanel(p){
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
   var filterS=useState("ALL");var filterMkt=filterS[0],setFilterMkt=filterS[1];
-  var sortS=useState("score");var sortBy=sortS[0],setSortBy=sortS[1];
   var groupFilterS=useState(0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1]; // 0=全体
   var addGroupS=useState(0);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
   var showAccS=useState(false);var showAcc=showAccS[0],setShowAcc=showAccS[1];
@@ -2284,18 +2283,10 @@ function FavPanel(p){
   }
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
   var groupedStocks=groupFilter===0?favStocks:favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
-  var displayStocks=(filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){
-    if(sortBy==="score") return b.score-a.score;
-    if(sortBy==="change") return parseFloat(b.change)-parseFloat(a.change);
-    return 0;
-  });
+  var displayStocks=(filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){return b.score-a.score;});
   function fBtn(val,label,activeColor){
     var active=filterMkt===val;
     return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
-  }
-  function sBtn(val,label){
-    var active=sortBy===val;
-    return(<button onClick={function(){setSortBy(val);}} style={{background:active?"#0ea5e920":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#0ea5e9":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
   }
   function gBtn(val,label){
     var active=groupFilter===val;
@@ -2320,18 +2311,18 @@ function FavPanel(p){
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(50+extraH)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4}}>
         <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 10px",fontSize:16,fontFamily:"monospace",flex:"1 1 130px",minWidth:0}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
-            <select value={addGroup} onChange={function(e){setAddGroup(Number(e.target.value));}} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#fbbf24",padding:"0 6px",fontSize:13,fontFamily:"monospace",flex:"1 1 110px",minWidth:0}}>
-              <option value={0}>全体（未分類）</option>
+          <div style={{display:"flex",gap:6,flexWrap:"nowrap"}}>
+            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 8px",fontSize:16,fontFamily:"monospace",flex:"1 1 auto",minWidth:0}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
+            <select value={addGroup} onChange={function(e){setAddGroup(Number(e.target.value));}} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#fbbf24",padding:"0 2px",fontSize:12,fontFamily:"monospace",flex:"0 0 auto",width:78}}>
+              <option value={0}>全体</option>
               {[1,2,3,4,5].map(function(n){return <option key={n} value={n}>{groupNames[n]}</option>;})}
             </select>
-            <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"8px 16px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"monospace",flex:"0 0 auto"}}>追加</button>
+            <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"8px 12px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"monospace",flex:"0 0 auto"}}>追加</button>
           </div>
           {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
         </div>
         <button onClick={function(){setFiltersOpen(function(v){return !v;});}} style={{width:"100%",background:"#071428",border:"1px solid #0f2040",borderRadius:10,color:"#4a90c0",padding:"6px 12px",fontSize:11,cursor:"pointer",fontFamily:"monospace",marginBottom:4,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span>🔍 絞り込み（グループ・市場・並替）</span>
+          <span>🔍 絞り込み（グループ・市場）</span>
           <span>{filtersOpen?"▲":"▼"}</span>
         </button>
         {filtersOpen&&(
@@ -2349,9 +2340,6 @@ function FavPanel(p){
             {fBtn("ALL","全て","#60a5fa")}
             {fBtn("US","US","#3b82f6")}
             {fBtn("JP","JP","#f87171")}
-            <span style={{fontSize:11,color:"#2a6090",marginLeft:8,marginRight:2}}>並替:</span>
-            {sBtn("score","スコア順")}
-            {sBtn("change","上昇率順")}
           </div>
         )}
         </div>
@@ -2522,7 +2510,7 @@ function TradeDetailModal(p){
   }
 
   return(
-    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:"56vw"}}>
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#040c18",border:"1px solid #0f204090",borderRadius:16,padding:12,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",display:"flex",flexDirection:"column",gap:6}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontSize:11,fontWeight:700,color:STATUS_COLOR[t.status]}}>● {STATUS_LABEL[t.status]}{t.status==="done"&&t.exitReason?"（"+EXIT_LABEL[t.exitReason]+"）":""}</span>
@@ -2625,22 +2613,6 @@ function MarketPredictionPanel(p){
     setPredictionLoading(false);
   }
 
-  // ── 出来高ランキングTOP N → claude.ai用プロンプト ──────────────────────
-  var volTopNS=useState(10);var volTopN=volTopNS[0],setVolTopN=volTopNS[1];
-  var volPromptS=useState("");var volPrompt=volPromptS[0],setVolPrompt=volPromptS[1];
-  var volCopiedS=useState(false);var volCopied=volCopiedS[0],setVolCopied=volCopiedS[1];
-  function genVolumePrompt(){
-    setVolPrompt(buildVolumeRankingPrompt(stocks,volTopN));
-    setVolCopied(false);
-  }
-  function copyVolumePrompt(){
-    if(!volPrompt) return;
-    navigator.clipboard.writeText(volPrompt).then(function(){
-      setVolCopied(true);
-      setTimeout(function(){setVolCopied(false);},2000);
-    });
-  }
-
   return(
     <div>
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:12}}>
@@ -2656,29 +2628,6 @@ function MarketPredictionPanel(p){
         </div>
         {lastUpd&&<div style={{fontSize:11,color:"#2a6090"}}>最終更新: {lastUpd}</div>}
         {stocks.length===0&&<div style={{fontSize:11,color:"#f43f5e",marginTop:4}}>※ 先にスキャンを実行してください</div>}
-      </div>
-
-      <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:12}}>
-        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:8}}>📋 出来高急増率×ボラ ランキング(日本株限定) → claude.ai用プロンプト</div>
-        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
-          <span style={{fontSize:12,color:"#4a7090"}}>上位</span>
-          <input type="number" min="1" max="50" value={volTopN}
-            onChange={function(e){setVolTopN(parseInt(e.target.value)||10);}}
-            style={{width:60,background:"#040c18",border:"1px solid #1e3050",borderRadius:6,color:"#e0f0ff",padding:"5px 8px",fontSize:16,fontFamily:"monospace"}}/>
-          <span style={{fontSize:12,color:"#4a7090"}}>件</span>
-          <button onClick={genVolumePrompt} disabled={stocks.length===0}
-            style={{background:"#0ea5e9",border:"none",borderRadius:6,color:"#fff",padding:"6px 12px",fontSize:12,fontWeight:700,cursor:stocks.length===0?"not-allowed":"pointer",fontFamily:"monospace"}}>生成</button>
-        </div>
-        {volPrompt&&(
-          <div>
-            <textarea readOnly value={volPrompt}
-              style={{width:"100%",height:180,background:"#040c18",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:8,fontSize:11,fontFamily:"monospace",resize:"vertical",boxSizing:"border-box"}}/>
-            <button onClick={copyVolumePrompt}
-              style={{marginTop:8,width:"100%",background:volCopied?"#22d3a0":"transparent",border:"1px solid "+(volCopied?"#22d3a0":"#1e4070"),borderRadius:8,color:volCopied?"#04150c":"#4a7090",padding:"8px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
-              {volCopied?"✓ コピーしました":"📋 コピー"}
-            </button>
-          </div>
-        )}
       </div>
 
       {predictionLoading&&(
@@ -3191,7 +3140,7 @@ function GuidePanel(){
         "グループ1〜5に分類可能（グループ名は選択中に表示される✎アイコンで編集）",
         "「全体」フィルターで登録済みお気に入りを全件表示",
         "検索欄にティッカーコード（例：AAPL、7203）を入力すると新規銘柄を追加登録できる（登録グループも指定可）",
-        "市場（US/JP）で絞り込み、スコア順・上昇率順で並び替え可能",
+        "市場（US/JP）で絞り込み表示可能（スコアの高い順に並びます）",
         "「📊的中率」ボタンでお気に入り銘柄のシグナル的中率を確認"
       ]},
     ]},
