@@ -2380,6 +2380,7 @@ function FavPanel(p){
 // ── トレードタブ：アプリ予想／個人予想の一覧・損益集計 ─────────────────────────
 function TradePanel(p){
   var stocks=p.stocks,toggleFav=p.toggleFav,favs=p.favs,vix=p.vix;
+  var isMobile=useIsMobile();
   var subS=useState("app");var sub=subS[0],setSub=subS[1];
   var selIdS=useState(null);var selId=selIdS[0],setSelId=selIdS[1];
   function isFavRef(t){return favs.indexOf(t)>=0;}
@@ -2392,7 +2393,8 @@ function TradePanel(p){
   var winRate=doneList.length?Math.round(doneList.filter(function(t){return(t.pnl||0)>0;}).length/doneList.length*100):null;
   // 的中率の集計対象：現在選択中のタブ（アプリ予想／個人予想）に登録した銘柄のみ（お気に入りタブの集計とは分離）
   var tradeTickers=Array.from(new Set(list.map(function(t){return t.ticker;})));
-  var showAccuracy=true;
+  // スマホはタップして表示（初期非表示）、PC/iPadは今まで通り常時表示
+  var showAccS=useState(!isMobile);var showAccuracy=showAccS[0],setShowAccuracy=showAccS[1];
   var predLabel=sub==="app"?"アプリ予想":"個人予想";
   var selTrade=selId?list.find(function(t){return t.id===selId;}):null;
   var selStock=selTrade?stocks.find(function(x){return x.ticker===selTrade.ticker;}):null;
@@ -2421,8 +2423,8 @@ function TradePanel(p){
         {sub==="app"?"アプリの買いシグナル判断を忠実に守った場合の検証用":"アプリの判断とは異なる、自分自身の判断を検証するためのタブ"}
       </div>
 
-      <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
-        <div style={{width:!showAccuracy?"100%":"60%",flexShrink:0,display:"flex",flexDirection:"column",gap:10,minWidth:0}}>
+      <div style={{display:"flex",gap:12,alignItems:"flex-start",flexDirection:isMobile?"column":"row"}}>
+        <div style={{width:(!showAccuracy||isMobile)?"100%":"60%",flexShrink:0,display:"flex",flexDirection:"column",gap:10,minWidth:0}}>
           <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
             <div>
               <div style={{fontSize:11,color:"#4a7090"}}>合計損益（完了 {doneList.length}件）</div>
@@ -2434,7 +2436,10 @@ function TradePanel(p){
                 <div style={{fontSize:17,fontWeight:800,color:"#fbbf24"}}>{winRate!=null?winRate+"%":"—"}</div>
               </div>
             </div>
-            <button onClick={p.onRefreshTrades} disabled={p.tradeRefreshing} style={{background:p.tradeRefreshing?"#0f2040":"#0a1a3a",border:"1px solid #0ea5e9",borderRadius:8,color:"#0ea5e9",padding:"8px 12px",fontSize:12,fontWeight:700,cursor:p.tradeRefreshing?"not-allowed":"pointer",whiteSpace:"nowrap"}}>{p.tradeRefreshing?"更新中…":"🔄 価格更新"}</button>
+            <div style={{display:"flex",gap:6,flexShrink:0}}>
+              {isMobile&&<button onClick={function(){setShowAccuracy(function(v){return !v;});}} style={{background:showAccuracy?"#0a1a3a":"transparent",border:"1px solid "+(showAccuracy?"#0ea5e9":"#2a4060"),borderRadius:8,color:showAccuracy?"#0ea5e9":"#4a7090",padding:"8px 10px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>📊 的中率</button>}
+              <button onClick={p.onRefreshTrades} disabled={p.tradeRefreshing} style={{background:p.tradeRefreshing?"#0f2040":"#0a1a3a",border:"1px solid #0ea5e9",borderRadius:8,color:"#0ea5e9",padding:"8px 12px",fontSize:12,fontWeight:700,cursor:p.tradeRefreshing?"not-allowed":"pointer",whiteSpace:"nowrap"}}>{p.tradeRefreshing?"更新中…":"🔄 価格更新"}</button>
+            </div>
           </div>
 
           {list.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:13}}>まだトレードが登録されていません。銘柄カードの🎯ボタンから登録してください</div>}
@@ -2445,7 +2450,7 @@ function TradePanel(p){
         </div>
 
         {showAccuracy&&(
-          <div style={{flex:1,position:"sticky",top:0,background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:16,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+          <div style={{flex:1,width:isMobile?"100%":undefined,position:isMobile?"static":"sticky",top:0,background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:16,maxHeight:isMobile?undefined:"calc(100vh - 200px)",overflowY:isMobile?"visible":"auto",WebkitOverflowScrolling:"touch"}}>
             <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:10}}>{"📊 シグナル的中率（"+predLabel+"銘柄）"}</div>
             <SignalAccuracyContent tickers={tradeTickers} label={predLabel}/>
           </div>
