@@ -1982,8 +1982,8 @@ function StockDetailPanel(p){
         <IntradayChart1m data={intraday} liveTick={liveTick}/>
       </div>
 
-      {/* シグナル詳細（上）／板情報・利確損切りライン（下） */}
-      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+      {/* シグナル詳細（左）／板情報・利確損切りライン（右） */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignItems:"start"}}>
         <div style={{minWidth:0}}>
           <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
