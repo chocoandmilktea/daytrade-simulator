@@ -1481,7 +1481,7 @@ function dailyVWAPSeries(closes,highs,lows,volumes,dates){
   return result;
 }
 function IntradayChart1m(p){
-  var data=p.data,H=p.height||140,BUCKET=5,CANDLE_W=14,RIGHT_GUTTER=52;
+  var data=p.data,H=p.height||140,BUCKET=5,CANDLE_W=11,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   var scrollRef=useRef(null);
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
@@ -1553,8 +1553,12 @@ function IntradayChart1m(p){
   var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1],lastVwap=vwapLine?vwapLine[vwapLine.length-1]:null;
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
   var bodyHalf=CANDLE_W*0.35;
-  // 複数日ぶんのデータになりうるので、時刻ラベルには常にその足の日付(M/D)を添える
-  var timeLabels=pickTimeLabels(visCandles.map(function(c){return c.time;}),5)
+  // 複数日ぶんのデータになりうるので、時刻ラベルには常にその足の日付(M/D)を添える。
+  // ラベルは"M/D HH:MM"で幅を取るため、見えている幅に対して詰め込みすぎると重なる。
+  // 表示中の幅から「重ならずに入る本数」を逆算してから選ぶ。
+  var visibleWidthPx=(rangeEnd-rangeStart+1)*CANDLE_W;
+  var maxLabels=Math.max(2,Math.min(5,Math.floor(visibleWidthPx/85)));
+  var timeLabels=pickTimeLabels(visCandles.map(function(c){return c.time;}),maxLabels)
     .map(function(t){
       var c=visCandles[t.index];
       var sd=c&&c.date?formatShortDate(c.date):"";
