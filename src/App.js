@@ -502,8 +502,9 @@ function buildAiPrompt(s){
     histPart+
     accPart+
     "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
-    "以下のトレード判断を数値で答えてください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n5. 🔮 今後の見通し: 必ずWeb検索でこの銘柄の最新ニュース・決算・材料を調べた上で、今後数日〜1週間程度で上昇/下落/中立のどれに向かいやすいかを予想し、確信度と根拠を1〜2文で述べてください\n\n"+
-    "最後の行に必ずこの形式のみでJSONを出力してください（説明不要）:\n{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+",\"forecast\":{\"direction\":\"上昇 or 下落 or 中立\",\"confidence\":整数0〜100,\"timeframe\":\"文字列\",\"reason\":\"文字列\"}}";
+    "まず最初の1行に、次の形式のタグで数値データだけを出力してください（前後に説明や```を付けないこと。これが最優先です）:\n"+
+    "<AI_DATA>{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+",\"forecast\":{\"direction\":\"上昇 or 下落 or 中立\",\"confidence\":整数0〜100,\"timeframe\":\"文字列\",\"reason\":\"文字列\"}}</AI_DATA>\n\n"+
+    "その後で、以下のトレード判断を日本語で分かりやすく解説してください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n5. 🔮 今後の見通し: 必ずWeb検索でこの銘柄の最新ニュース・決算・材料を調べた上で、今後数日〜1週間程度で上昇/下落/中立のどれに向かいやすいかを予想し、確信度と根拠を1〜2文で述べてください";
 }
 // 上位N件 → claude.ai貼り付け用プロンプトを生成
 // jpLimited(既定true): 日本株限定で「出来高急増率」×「ボラティリティ」の合成ランキングで上位N件を選出
@@ -574,17 +575,21 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
     var aiData=await res.json();
     if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
     var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
-    // 末尾の{...}ブロックを探してJSON.parseする（ネスト・配列値にも対応）
-    var cleanText=aiText2.replace(/```json[\s\S]*?```/g,"");
-    var braceIdx=cleanText.lastIndexOf("{");
-    var parsed=null;
-    if(braceIdx!==-1){
-      try{parsed=JSON.parse(cleanText.slice(braceIdx));}catch(je){}
+    // 冒頭の<AI_DATA>...</AI_DATA>タグから数値データを取り出す（先頭にあるので、後半の説明が
+    // 長くなって途中で切れても確実に拾える）。タグが無い場合は旧形式（末尾JSON）にフォールバック。
+    var tagMatch=aiText2.match(/<AI_DATA>([\s\S]*?)<\/AI_DATA>/);
+    var parsed=null,cleanText=aiText2;
+    if(tagMatch){
+      try{parsed=JSON.parse(tagMatch[1]);}catch(je){}
+      cleanText=aiText2.replace(tagMatch[0],"");
+    }else{
+      var stripped=aiText2.replace(/```json[\s\S]*?```/g,"");
+      var braceIdx=stripped.lastIndexOf("{");
+      if(braceIdx!==-1){
+        try{parsed=JSON.parse(stripped.slice(braceIdx));cleanText=stripped.slice(0,braceIdx);}catch(je2){}
+      }
     }
-    if(parsed&&typeof parsed.entry!=="undefined"){
-      setAiEntry(parsed);
-      cleanText=cleanText.slice(0,braceIdx);
-    }
+    if(parsed&&typeof parsed.entry!=="undefined") setAiEntry(parsed);
     setAiText(cleanText.trim()||"分析できませんでした。");
   }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
   setAiLoading(false);
