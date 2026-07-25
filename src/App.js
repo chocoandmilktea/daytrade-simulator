@@ -1497,18 +1497,18 @@ function IntradayChart1m(p){
     if(fullVolumes)fullVolumes=fullVolumes.concat([0]);
     if(fullDates)fullDates=fullDates.concat([data.date||fullDates[fullDates.length-1]]);
   }
-  // MAは1分足そのもので計算(25分・75分の移動平均という意味を保つ)。ローソクは5分足に
-  // 束ねて、その足の最終時点でのMA値を採用する。
-  var fullMa25=trailingSMA(fullCloses,25),fullMa75=trailingSMA(fullCloses,75);
   var candles=aggregateCandles(fullOpens,fullHighs,fullLows,fullCloses,fullVolumes,fullTimes,fullDates,BUCKET);
   var n=candles.length;
-  var ma25=candles.map(function(c){return fullMa25[c.endIndex];});
-  var ma75=candles.map(function(c){return fullMa75[c.endIndex];});
+  // MAは表示中の足（5分足）の終値ベースで計算する。以前は1分足25本(=5分足5本相当)で
+  // 計算していたため、5分足チャート上では実質MA5のような短い動きになってしまっていた。
+  var candleCloses=candles.map(function(c){return c.close;});
+  var ma25=trailingSMA(candleCloses,25),ma75=trailingSMA(candleCloses,75);
   var hasVolume=!!fullVolumes;
   // VWAPは日をまたぐとリセットする「その日の累積」出来高加重平均
   var fullVwap=hasVolume?dailyVWAPSeries(fullCloses,fullHighs,fullLows,fullVolumes,fullDates):null;
   var vwapLine=fullVwap?candles.map(function(c){return fullVwap[c.endIndex];}):null;
   var chartWidth=Math.max(n*CANDLE_W,1);
+
 
   // スクロール位置から「今画面に映っている足の範囲」を割り出し、縦軸をその範囲に自動調整する
   function updateVisibleRange(){
