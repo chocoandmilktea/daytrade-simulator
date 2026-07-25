@@ -1753,9 +1753,9 @@ function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.activ
 function TradeAddModal(p){
   var s=p.s;
   var isMobile=useIsMobile();
-  var buyS=useState(s.rawPrice!=null?String(s.rawPrice):"");var buyVal=buyS[0],setBuyVal=buyS[1];
-  var sellS=useState("");var sellVal=sellS[0],setSellVal=sellS[1];
-  var stopS=useState("");var stopVal=stopS[0],setStopVal=stopS[1];
+  var buyS=useState(p.prefill?String(p.prefill.buy):(s.rawPrice!=null?String(s.rawPrice):""));var buyVal=buyS[0],setBuyVal=buyS[1];
+  var sellS=useState(p.prefill?String(p.prefill.sell):"");var sellVal=sellS[0],setSellVal=sellS[1];
+  var stopS=useState(p.prefill&&p.prefill.stop!=null?String(p.prefill.stop):"");var stopVal=stopS[0],setStopVal=stopS[1];
   var sharesS=useState("100");var sharesVal=sharesS[0],setSharesVal=sharesS[1];
   var isJP=s.market==="JP";
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"8px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
@@ -1778,6 +1778,7 @@ function TradeAddModal(p){
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
         </div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:12}}>価格が指定値に到達すると自動で開始・終了します（判定はトレードタブの更新ボタンで反映）</div>
+        {p.prefill&&<div style={{fontSize:11,color:"#4a90c0",background:"#0a1a3a",border:"1px solid #4a90c040",borderRadius:6,padding:"6px 8px",marginBottom:10}}>🤖 AI分析の提案値を反映しています。必要に応じて数値を編集してください。</div>}
         {s.profitLoss&&(
           <button onClick={function(){setSellVal(String(s.profitLoss.target));setStopVal(String(s.profitLoss.stop));}} style={{width:"100%",background:"#0a1a3a",border:"1px solid #0ea5e950",borderRadius:8,color:"#0ea5e9",padding:"7px",fontSize:12,fontWeight:700,cursor:"pointer",marginBottom:10}}>📐 標準ライン(ATR)を使う（利確{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}／損切り{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}）</button>
         )}
@@ -2051,6 +2052,7 @@ function StockDetailPanel(p){
 
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var showTradeS=useState(false);var showTrade=showTradeS[0],setShowTrade=showTradeS[1];
+  var tradePrefillS=useState(null);var tradePrefill=tradePrefillS[0],setTradePrefill=tradePrefillS[1]; // AI提案からトレード登録を開いた時の初期値
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   useEffect(function(){var isJP=s.market==="JP";setSimBuy(s.rawPrice?(isJP?String(Math.round(s.rawPrice)):s.rawPrice.toFixed(2)):"");},[s.ticker]);
@@ -2143,7 +2145,7 @@ function StockDetailPanel(p){
         <button onClick={function(){if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} title="再スキャン" style={{flexShrink:0,background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
         <button onClick={runAiAnalysis} disabled={aiLoading} title="AI相談" style={{flexShrink:0,background:"transparent",border:"1px solid "+(aiLoading?"#22d3a0":"#2a4060"),borderRadius:6,color:aiLoading?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:aiLoading?"not-allowed":"pointer"}}>{aiLoading?"⏳":"🤖"}</button>
         <button onClick={function(){setShowSim(function(v){return !v;});}} title="シミュレーター" style={{flexShrink:0,background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
-        <button onClick={function(){setShowTrade(function(v){return !v;});}} title="トレード登録" style={{flexShrink:0,background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
+        <button onClick={function(){setTradePrefill(null);setShowTrade(function(v){return !v;});}} title="トレード登録" style={{flexShrink:0,background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
       </div>
 
       {/* チャート（1分足＋週足MA） */}
@@ -2203,6 +2205,9 @@ function StockDetailPanel(p){
                 </div>
               </div>
             )}
+            {!aiLoading&&aiEntry&&(
+              <button onClick={function(){setTradePrefill({buy:aiEntry.entry,sell:aiEntry.target,stop:aiEntry.stop});setShowAi(false);setShowTrade(true);}} style={{width:"100%",marginTop:8,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"9px",fontSize:13,fontWeight:700,cursor:"pointer"}}>🎯 AI提案でトレード登録</button>
+            )}
             {!aiLoading&&aiEntry&&ForecastBox(aiEntry.forecast)}
             {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
           </div>
@@ -2261,7 +2266,7 @@ function StockDetailPanel(p){
         );
       })(),document.body)}
 
-      {showTrade&&createPortal(<TradeAddModal s={s} onAddTrade={p.onAddTrade} onClose={function(){setShowTrade(false);}}/>,document.body)}
+      {showTrade&&createPortal(<TradeAddModal s={s} onAddTrade={p.onAddTrade} prefill={tradePrefill} onClose={function(){setShowTrade(false);setTradePrefill(null);}}/>,document.body)}
 
       {showTachibana&&createPortal(<TachibanaQuoteModal quote={tachibanaQuote} onClose={function(){setShowTachibana(false);}}/>,document.body)}
     </div>
