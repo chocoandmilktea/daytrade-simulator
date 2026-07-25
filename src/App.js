@@ -367,6 +367,22 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice){
   saveTrades(kind,list);
   return list;
 }
+// 指定銘柄がアプリ予想・個人予想のどちらかで進行中(waiting/active)かどうか
+function hasActiveTrade(ticker,appTrades,personalTrades){
+  var lists=[appTrades||[],personalTrades||[]];
+  for(var i=0;i<lists.length;i++){
+    for(var j=0;j<lists[i].length;j++){
+      var t=lists[i][j];
+      if(t.ticker===ticker&&(t.status==="waiting"||t.status==="active")) return true;
+    }
+  }
+  return false;
+}
+// ★ボタンの見た目：進行中トレードがあれば赤、無ければ従来通りお気に入り色分け
+function starStyle(ticker,isFav,appTrades,personalTrades){
+  if(hasActiveTrade(ticker,appTrades,personalTrades)) return {symbol:"★",color:"#f43f5e"};
+  return isFav(ticker)?{symbol:"★",color:"#fbbf24"}:{symbol:"☆",color:"#2a4060"};
+}
 function removeTradeRecord(kind,id){var list=loadTrades(kind).filter(function(t){return t.id!==id;});saveTrades(kind,list);return list;}
 
 // 売買価格・株数・損切り価格の編集（進行中・完了済みの場合は開始/終了価格や損益も再計算）
@@ -1379,13 +1395,20 @@ function DailyMiniChart(p){
   if(data===null||!data.closes||data.closes.length<2){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
   }
-  var closes=data.closes,dates=data.dates||[];
+  var closes=data.closes,dates=data.dates||[],highs=data.highs||[],lows=data.lows||[];
+  // VWAPは本来「1日の中」の指標のため、日足(1本=1日)では出来高加重ではなく
+  // その日の代表値（高値・安値・終値の平均＝典型価格）として表示する。
+  var ma25=trailingSMA(closes,25),ma75=trailingSMA(closes,75);
+  var vwapProxy=closes.map(function(c,i){return(highs[i]!=null&&lows[i]!=null)?(highs[i]+lows[i]+c)/3:null;});
   var W=100;
-  var mn=Math.min.apply(null,closes),mx=Math.max.apply(null,closes);
+  var allVals=closes.concat(ma25.filter(function(v){return v!=null;})).concat(ma75.filter(function(v){return v!=null;})).concat(vwapProxy.filter(function(v){return v!=null;}));
+  var mn=Math.min.apply(null,allVals),mx=Math.max.apply(null,allVals);
   var rng=mx-mn||1;
   function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
   function toX(i){return(i/(closes.length-1))*(W-1);}
-  var pts=closes.map(function(v,i){return toX(i)+","+toY(v);}).join(" ");
+  function toPts(arr){return arr.map(function(v,i){return v==null?null:toX(i)+","+toY(v);}).filter(function(v){return v!=null;}).join(" ");}
+  var pts=toPts(closes);
+  var pts25=toPts(ma25),pts75=toPts(ma75),ptsVwap=toPts(vwapProxy);
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
   var dateLabels=pickDateLabels(dates,4);
   return(
@@ -1401,6 +1424,9 @@ function DailyMiniChart(p){
               return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
             })}
             <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.4} strokeLinejoin="round" strokeLinecap="round"/>
+            {ptsVwap&&<polyline points={ptsVwap} fill="none" stroke="#38bdf8" strokeWidth={0.3}/>}
+            {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={0.3}/>}
+            {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={0.3}/>}
           </svg>
         </div>
         <div style={{width:52,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
@@ -1425,8 +1451,24 @@ function trailingSMA(closes,period){
   }
   return result;
 }
+// 1分足をbucket本ずつ束ねてローソク足(OHLC)に集約する。endIndexは元の1分足配列での
+// 最終インデックス（MA・VWAPを1分足ベースで計算した値をローソクに揃えて拾うために使う）。
+function aggregateCandles(opens,highs,lows,closes,volumes,times,bucket){
+  var n=closes.length,candles=[];
+  for(var i=0;i<n;i+=bucket){
+    var end=Math.min(i+bucket,n);
+    var h=-Infinity,l=Infinity,vol=0;
+    for(var j=i;j<end;j++){
+      if(highs[j]>h)h=highs[j];
+      if(lows[j]<l)l=lows[j];
+      if(volumes)vol+=volumes[j]||0;
+    }
+    candles.push({open:opens[i],high:h,low:l,close:closes[end-1],volume:vol,endIndex:end-1,time:times[end-1]});
+  }
+  return candles;
+}
 function IntradayChart1m(p){
-  var data=p.data,H=140;
+  var data=p.data,H=140,BUCKET=5;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   if(data===undefined){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
@@ -1434,35 +1476,47 @@ function IntradayChart1m(p){
   if(data===null||!data.m1||!data.m1.closes||data.m1.closes.length<2){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
   }
-  var fullCloses=data.m1.closes,fullTimes=data.m1.times||[];
+  var m1=data.m1;
+  var fullOpens=m1.opens||m1.closes,fullHighs=m1.highs||m1.closes,fullLows=m1.lows||m1.closes;
+  var fullCloses=m1.closes,fullTimes=m1.times||[],fullVolumes=m1.volumes||null; // volumesが無ければVWAPは非表示
   if(p.liveTick&&p.liveTick.price!=null){ // 立花証券リアルタイム値を直近の1点として継ぎ足す
-    fullCloses=fullCloses.concat([p.liveTick.price]);
-    fullTimes=fullTimes.concat([p.liveTick.time||""]);
+    var lv=p.liveTick.price;
+    fullOpens=fullOpens.concat([lv]);fullHighs=fullHighs.concat([lv]);fullLows=fullLows.concat([lv]);
+    fullCloses=fullCloses.concat([lv]);fullTimes=fullTimes.concat([p.liveTick.time||""]);
+    if(fullVolumes)fullVolumes=fullVolumes.concat([0]);
   }
   var dateLabel=formatChartDateLabel(data.date);
-  // MAは全期間のデータで計算してから、表示だけ直近2時間（1分足120本）に絞る。
-  // 表示範囲の先頭でも正しいMA値になるよう、計算は絞り込み前の配列に対して行う。
+  // MAは1分足そのもので計算(25分・75分の移動平均という意味を保つ)。ローソクは5分足に
+  // 束ねて、その足の最終時点でのMA値を採用する。
   var fullMa25=trailingSMA(fullCloses,25),fullMa75=trailingSMA(fullCloses,75);
-  var cropStart=Math.max(0,fullCloses.length-120);
-  var closes=fullCloses.slice(cropStart),times=fullTimes.slice(cropStart);
-  var ma25=fullMa25.slice(cropStart),ma75=fullMa75.slice(cropStart);
+  var candles=aggregateCandles(fullOpens,fullHighs,fullLows,fullCloses,fullVolumes,fullTimes,BUCKET);
+  var n=candles.length;
+  var ma25=candles.map(function(c){return fullMa25[c.endIndex];});
+  var ma75=candles.map(function(c){return fullMa75[c.endIndex];});
+  var hasVolume=!!fullVolumes;
+  // VWAPはその日の始めから各足までの累積出来高加重平均
+  var vwapLine=hasVolume?candles.map(function(c){
+    return calcVWAP(fullCloses.slice(0,c.endIndex+1),fullHighs.slice(0,c.endIndex+1),fullLows.slice(0,c.endIndex+1),fullVolumes.slice(0,c.endIndex+1));
+  }):null;
   var W=100;
-  // 縦軸の範囲は終値とMAから決める
-  var allVals=closes.concat(ma25.filter(function(v){return v!=null;})).concat(ma75.filter(function(v){return v!=null;}));
+  var allVals=candles.reduce(function(a,c){return a.concat([c.high,c.low]);},[])
+    .concat(ma25.filter(function(v){return v!=null;})).concat(ma75.filter(function(v){return v!=null;}));
+  if(vwapLine)allVals=allVals.concat(vwapLine.filter(function(v){return v!=null;}));
   var mn=Math.min.apply(null,allVals),mx=Math.max.apply(null,allVals);
   var rng=mx-mn||1;
   var pad=rng*0.1;
   mn-=pad;mx+=pad;rng=mx-mn||1;
   function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
-  function toX(i){return(i/(closes.length-1))*(W-1);}
+  function toX(i){return n>1?(i/(n-1))*(W-1):W/2;}
   function toPts(arr){
     return arr.map(function(v,i){return v==null?null:toX(i)+","+toY(v);}).filter(function(v){return v!=null;}).join(" ");
   }
-  var ptsClose=toPts(closes);
-  var pts25=toPts(ma25),pts75=toPts(ma75);
-  var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1];
+  var pts25=toPts(ma25),pts75=toPts(ma75),ptsVwap=vwapLine?toPts(vwapLine):null;
+  var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1],lastVwap=vwapLine?vwapLine[vwapLine.length-1]:null;
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
-  var timeLabels=pickTimeLabels(times,5);
+  var step=n>1?W/(n-1):W;
+  var bodyHalf=Math.max(0.5,step*0.32);
+  var timeLabels=pickTimeLabels(candles.map(function(c){return c.time;}),5);
   if(dateLabel){
     var shortDate=formatShortDate(data.date);
     timeLabels=timeLabels.map(function(t){return {label:shortDate+" "+t.label,index:t.index};});
@@ -1470,7 +1524,7 @@ function IntradayChart1m(p){
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
-        <span>1分足終値（直近2時間）</span>
+        <span>5分足（本日）</span>
         <span>{dateLabel}</span>
       </div>
       <div style={{display:"flex",gap:6}}>
@@ -1480,9 +1534,20 @@ function IntradayChart1m(p){
               var y=toY(v);
               return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
             })}
-            {ptsClose&&<polyline points={ptsClose} fill="none" stroke="#ffffff" strokeWidth={0.15}/>}
-            {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={0.6}/>}
-            {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={0.6}/>}
+            {candles.map(function(c,i){
+              var x=toX(i),isUp=c.close>=c.open,col=isUp?"#22d3a0":"#f43f5e";
+              var yO=toY(c.open),yC=toY(c.close),yH=toY(c.high),yL=toY(c.low);
+              var top=Math.min(yO,yC),bh=Math.max(0.6,Math.abs(yC-yO));
+              return(
+                <g key={i}>
+                  <line x1={x} y1={yH} x2={x} y2={yL} stroke={col} strokeWidth={0.3}/>
+                  <rect x={x-bodyHalf} y={top} width={bodyHalf*2} height={bh} fill={col}/>
+                </g>
+              );
+            })}
+            {ptsVwap&&<polyline points={ptsVwap} fill="none" stroke="#38bdf8" strokeWidth={0.35}/>}
+            {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={0.5}/>}
+            {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={0.5}/>}
           </svg>
         </div>
         <div style={{width:52,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
@@ -1492,6 +1557,7 @@ function IntradayChart1m(p){
       <div style={{display:"flex",gap:10,fontSize:10,marginTop:3,flexWrap:"wrap"}}>
         <span style={{color:"#a3e635"}}>― 25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
         <span style={{color:"#f472b6"}}>― 75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
+        {hasVolume?<span style={{color:"#38bdf8"}}>― VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{color:"#2a4060"}}>VWAP: 出来高データ未対応のため非表示</span>}
       </div>
       {timeLabels.length>0&&<TimeLabelRow timeLabels={timeLabels} toX={toX} W={W} rightGutter={58}/>}
     </div>
@@ -1512,7 +1578,7 @@ function displaySignalLabel(label){return label==="寄り付きレンジ"?"ORB":
 function SignalDetailList(p){
   var weightOpenS=useState(false);var weightOpen=weightOpenS[0],setWeightOpen=weightOpenS[1];
   var sortedSignals=(p.signals||[])
-    .filter(function(sig){return sig.label==="BB"||sig.label==="BB収束"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");})
+    .filter(function(sig){return sig.label==="BB"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");})
     .slice()
     .sort(function(a,b){return signalWeightRank(a.label)-signalWeightRank(b.label);});
   return(
@@ -1662,6 +1728,7 @@ function FavPickerModal(p){
 
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
+  var star=starStyle(s.ticker,isFav,p.appTrades,p.personalTrades);
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var isMobile=useIsMobile(); // スマホはカード内チャートを非表示（詳細モーダル側で確認する運用）
   // ── チャート（カードが選択された時だけ取得＝体感速度・API負荷を改善）───
@@ -1696,7 +1763,7 @@ function StockCard(p){
         <div style={{flex:1,minWidth:0}}>
           <div style={{display:"flex",gap:4,alignItems:"center"}}>
             <div style={{fontSize:15,fontWeight:800,color:borderColor,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.ticker.replace(".T","")}</div>
-            <button onClick={function(e){stopProp(e);toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060",flexShrink:0}}>{isFav(s.ticker)?"★":"☆"}</button>
+            <button onClick={function(e){stopProp(e);toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:star.color,flexShrink:0}}>{star.symbol}</button>
           </div>
           <div style={{fontSize:10,color:"#4a7090",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:2}}>
@@ -1867,6 +1934,7 @@ function StockDetailPanel(p){
   var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
+  var star=starStyle(s.ticker,isFav,p.appTrades,p.personalTrades);
 
   // チャート（1分足＋25期・75期の短期MA）：この銘柄が選択された時に取得
   // intraday: undefined=読込中, null=データなし, オブジェクト=取得済み
@@ -1931,7 +1999,7 @@ function StockDetailPanel(p){
           </div>
         </div>
         <div style={{display:"flex",gap:4,alignItems:"center"}}>
-          <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:isFav(s.ticker)?"#fbbf24":"#2a4060"}}>{isFav(s.ticker)?"★":"☆"}</button>
+          <button onClick={function(){toggleFav(s.ticker);}} style={{background:"transparent",border:"none",fontSize:15,cursor:"pointer",padding:0,color:star.color}}>{star.symbol}</button>
           {p.onClose&&<button onClick={p.onClose} style={{background:"transparent",border:"none",fontSize:22,cursor:"pointer",padding:"0 0 0 8px",color:"#4a7090",lineHeight:1}}>✕</button>}
         </div>
       </div>
@@ -2113,7 +2181,7 @@ function MobileStockDetailModal(p){
   return createPortal(
     <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{position:"fixed",inset:0,zIndex:1500,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:10}}>
       <div style={{textAlign:"center",color:"#2a4060",fontSize:11,padding:"0 0 6px"}}>▾ 下にスワイプで閉じる</div>
-      <StockDetailPanel s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading} allStocks={p.allStocks} onAddTrade={p.onAddTrade} onClose={p.onClose}/>
+      <StockDetailPanel s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading} allStocks={p.allStocks} onAddTrade={p.onAddTrade} onClose={p.onClose} appTrades={p.appTrades} personalTrades={p.personalTrades}/>
     </div>,
     document.body
   );
@@ -2211,6 +2279,7 @@ function MarketBar(){
 
 function AllStocksPanel(p){
   var stocks=p.stocks,loading=p.loading,toggleFav=p.toggleFav,favs=p.favs,vix=p.vix,onScan=p.onScan,ts=p.ts,progress=p.progress;
+  var appTrades=p.appTrades,personalTrades=p.personalTrades;
   var isMobile=useIsMobile();
   var extraH=isMobile?MOBILE_TABBAR_H:0; // スマホ用タブバー分の高さを差し引く
 
@@ -2245,7 +2314,7 @@ function AllStocksPanel(p){
   var cardGrid=(
     <div style={{display:"grid",gridTemplateColumns:"repeat("+cols+",1fr)",gap:8}}>
       {displayStocks.map(function(s){
-        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/>;
       })}
     </div>
   );
@@ -2266,13 +2335,13 @@ function AllStocksPanel(p){
         {isMobile?(
           <>
             {cardGrid}
-            <MobileStockDetailModal s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} onClose={function(){p.setSelectedStock(null);}}/>
+            <MobileStockDetailModal s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} onClose={function(){p.setSelectedStock(null);}} appTrades={appTrades} personalTrades={personalTrades}/>
           </>
         ):(
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"100%",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/>
             </div>
           </div>
         )}
@@ -2286,6 +2355,7 @@ function AllStocksPanel(p){
 
 function FavPanel(p){
   var stocks=p.stocks,setStocks=p.setStocks,favs=p.favs,toggleFav=p.toggleFav,vix=p.vix;
+  var appTrades=p.appTrades,personalTrades=p.personalTrades;
   var favGroups=p.favGroups,groupNames=p.groupNames,renameGroup=p.renameGroup;
   var isMobile=useIsMobile();
   var extraH=isMobile?MOBILE_TABBAR_H:0; // スマホ用タブバー分の高さを差し引く
@@ -2333,7 +2403,7 @@ function FavPanel(p){
     <div style={{display:"grid",gridTemplateColumns:"repeat("+favCols+",1fr)",gap:8}}>
       {displayStocks.map(function(s){
         var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>;
+        return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/>;
       })}
     </div>
   );
@@ -2380,13 +2450,13 @@ function FavPanel(p){
         {isMobile?(
           <>
             {cardGrid}
-            <MobileStockDetailModal s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} onClose={function(){p.setSelectedStock(null);}}/>
+            <MobileStockDetailModal s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} onClose={function(){p.setSelectedStock(null);}} appTrades={appTrades} personalTrades={personalTrades}/>
           </>
         ):(
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade}/>
+              <StockDetailPanel s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/>
             </div>
           </div>
         )}
@@ -2483,7 +2553,8 @@ function TradePanel(p){
           vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock}
           onRescan={p.onRescan} rescanLoading={p.rescanLoading} onAddTrade={p.onAddTrade}
           onRemoveTrade={function(kind,id){p.onRemoveTrade(kind,id);setSelId(null);}}
-          onEditTrade={p.onEditTrade} onForceComplete={p.onForceComplete} onClose={function(){setSelId(null);}}/>,
+          onEditTrade={p.onEditTrade} onForceComplete={p.onForceComplete} onClose={function(){setSelId(null);}}
+          appTrades={p.appTrades} personalTrades={p.personalTrades}/>,
         document.body
       )}
     </div>
@@ -2578,7 +2649,7 @@ function TradeDetailModal(p){
         {isJP&&<a href="ispeed://" onClick={function(){var code=t.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>}
 
         {p.s?(
-          <StockCard s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[t.ticker]} allStocks={p.stocks} onAddTrade={p.onAddTrade}/>
+          <StockCard s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[t.ticker]} allStocks={p.stocks} onAddTrade={p.onAddTrade} appTrades={p.appTrades} personalTrades={p.personalTrades}/>
         ):(
           <div style={{fontSize:11,color:"#2a4060",padding:"6px 0"}}>{t.ticker.replace(".T","")}（データ取得中… 「再スキャン」を実行すると表示されます）</div>
         )}
@@ -3667,8 +3738,8 @@ export default function App(){
           </div>
         )}
         <div style={{marginLeft:isMobile?0:50,padding:isMobile?"6px 6px 100px":"10px 10px 120px"}}>
-          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={function(){setRescanMenuOpen(true);}} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
-          {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler}/>}
+          {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={function(){setRescanMenuOpen(true);}} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} appTrades={appTrades} personalTrades={personalTrades}/>}
+          {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} appTrades={appTrades} personalTrades={personalTrades}/>}
           {activeTab==="trade"&&<TradePanel stocks={stocks} appTrades={appTrades} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler} onForceComplete={forceCompleteHandler} onRefreshTrades={refreshTradePrices} tradeRefreshing={tradeRefreshing}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading} favs={favs} toggleFav={toggleFav}/>}
