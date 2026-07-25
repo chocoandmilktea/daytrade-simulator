@@ -1486,6 +1486,9 @@ function IntradayChart1m(p){
   var scrollRef=useRef(null);
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
 
+  var aiLevels=p.aiEntry||null; // AI分析のentry/target/stop/forecast
+  var hasForecast=!!(aiLevels&&aiLevels.forecast&&aiLevels.forecast.direction);
+  var PROJECTION_W=hasForecast?46:0; // 予測トレンド線用の余白
   var hasData=!!(data&&data.m1&&data.m1.closes&&data.m1.closes.length>=2);
   var m1=hasData?data.m1:{closes:[],opens:[],highs:[],lows:[],times:[],volumes:null,dates:null};
   var fullOpens=m1.opens||m1.closes,fullHighs=m1.highs||m1.closes,fullLows=m1.lows||m1.closes;
@@ -1507,7 +1510,7 @@ function IntradayChart1m(p){
   // VWAPは日をまたぐとリセットする「その日の累積」出来高加重平均
   var fullVwap=hasVolume?dailyVWAPSeries(fullCloses,fullHighs,fullLows,fullVolumes,fullDates):null;
   var vwapLine=fullVwap?candles.map(function(c){return fullVwap[c.endIndex];}):null;
-  var chartWidth=Math.max(n*CANDLE_W,1);
+  var chartWidth=Math.max(n*CANDLE_W,1)+PROJECTION_W;
 
 
   // スクロール位置から「今画面に映っている足の範囲」を割り出し、縦軸をその範囲に自動調整する
@@ -1540,6 +1543,9 @@ function IntradayChart1m(p){
     .concat(visMa25.filter(function(v){return v!=null;})).concat(visMa75.filter(function(v){return v!=null;}));
   if(visVwap)allVals=allVals.concat(visVwap.filter(function(v){return v!=null;}));
   if(allVals.length===0)allVals=candles.reduce(function(a,c){return a.concat([c.high,c.low]);},[]);
+  if(aiLevels){
+    [aiLevels.entry,aiLevels.target,aiLevels.stop].forEach(function(v){if(v!=null)allVals.push(v);});
+  }
   var mn=Math.min.apply(null,allVals),mx=Math.max.apply(null,allVals);
   var rng=mx-mn||1;
   var pad=rng*0.1;
@@ -1598,6 +1604,37 @@ function IntradayChart1m(p){
               {ptsVwap&&<polyline points={ptsVwap} fill="none" stroke="#38bdf8" strokeWidth={1}/>}
               {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={1.2}/>}
               {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={1.2}/>}
+              {/* AI分析：エントリー/利確/損切りの水平線 */}
+              {aiLevels&&[
+                {v:aiLevels.entry,color:"#fbbf24",label:"エントリー"},
+                {v:aiLevels.target,color:"#22d3a0",label:"利確"},
+                {v:aiLevels.stop,color:"#f43f5e",label:"損切り"}
+              ].map(function(o,i){
+                if(o.v==null)return null;
+                var y=toY(o.v);
+                return(
+                  <g key={i}>
+                    <line x1={0} y1={y} x2={chartWidth} y2={y} stroke={o.color} strokeWidth={1} strokeDasharray="4,3"/>
+                    <text x={chartWidth-4} y={y-3} fontSize={9} fill={o.color} textAnchor="end">{o.label} {fmtPriceLabel(o.v)}</text>
+                  </g>
+                );
+              })}
+              {/* AI分析：今後の見通し（forecast）を点線トレンドで表示 */}
+              {hasForecast&&(function(){
+                var dir=aiLevels.forecast.direction||"",conf=aiLevels.forecast.confidence!=null?aiLevels.forecast.confidence:50;
+                var x0=toX(n-1),y0=toY(fullCloses[fullCloses.length-1]);
+                var up=dir.indexOf("上昇")>=0,down=dir.indexOf("下落")>=0;
+                var dy=(up?-1:down?1:0)*34*(conf/100); // 確信度が高いほど傾きを大きく
+                var x1=x0+PROJECTION_W-6,y1=Math.max(4,Math.min(H-4,y0+dy));
+                var col=up?"#22d3a0":down?"#f43f5e":"#8a9bb0";
+                return(
+                  <g>
+                    <line x1={x0} y1={y0} x2={x1} y2={y1} stroke={col} strokeWidth={1.6} strokeDasharray="3,3"/>
+                    <circle cx={x1} cy={y1} r={2.5} fill={col}/>
+                    <text x={x1} y={y1+(dy<=0?-6:12)} fontSize={9} fill={col} textAnchor="middle">AI予想{conf}%</text>
+                  </g>
+                );
+              })()}
             </svg>
             <div style={{position:"relative",height:14,marginTop:3}}>
               {timeLabels.map(function(t,i){
@@ -1614,6 +1651,8 @@ function IntradayChart1m(p){
         <span style={{color:"#a3e635"}}>― 25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
         <span style={{color:"#f472b6"}}>― 75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
         {hasVolume?<span style={{color:"#38bdf8"}}>― VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{color:"#2a4060"}}>VWAP: 出来高データ未対応のため非表示</span>}
+        {aiLevels&&<span style={{color:"#fbbf24"}}>┈ AI分析ライン（エントリー/利確/損切り）</span>}
+        {hasForecast&&<span style={{color:"#8a9bb0"}}>┈ AI予想トレンド（{aiLevels.forecast.direction}・確信度{aiLevels.forecast.confidence}%）</span>}
       </div>
     </div>
   );
@@ -2104,7 +2143,7 @@ function StockDetailPanel(p){
 
       {/* チャート（1分足＋週足MA） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
-        <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340}/>
+        <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340} aiEntry={aiEntry}/>
       </div>
 
       {/* シグナル詳細（左）／板情報・利確損切りライン（右） */}
