@@ -1468,24 +1468,21 @@ function aggregateCandles(opens,highs,lows,closes,volumes,times,bucket){
   return candles;
 }
 function IntradayChart1m(p){
-  var data=p.data,H=140,BUCKET=5;
+  var data=p.data,H=140,BUCKET=5,CANDLE_W=10,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
-  if(data===undefined){
-    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
-  }
-  if(data===null||!data.m1||!data.m1.closes||data.m1.closes.length<2){
-    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
-  }
-  var m1=data.m1;
+  var scrollRef=useRef(null);
+  var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
+
+  var hasData=!!(data&&data.m1&&data.m1.closes&&data.m1.closes.length>=2);
+  var m1=hasData?data.m1:{closes:[],opens:[],highs:[],lows:[],times:[],volumes:null};
   var fullOpens=m1.opens||m1.closes,fullHighs=m1.highs||m1.closes,fullLows=m1.lows||m1.closes;
   var fullCloses=m1.closes,fullTimes=m1.times||[],fullVolumes=m1.volumes||null; // volumesが無ければVWAPは非表示
-  if(p.liveTick&&p.liveTick.price!=null){ // 立花証券リアルタイム値を直近の1点として継ぎ足す
+  if(hasData&&p.liveTick&&p.liveTick.price!=null){ // 立花証券リアルタイム値を直近の1点として継ぎ足す
     var lv=p.liveTick.price;
     fullOpens=fullOpens.concat([lv]);fullHighs=fullHighs.concat([lv]);fullLows=fullLows.concat([lv]);
     fullCloses=fullCloses.concat([lv]);fullTimes=fullTimes.concat([p.liveTick.time||""]);
     if(fullVolumes)fullVolumes=fullVolumes.concat([0]);
   }
-  var dateLabel=formatChartDateLabel(data.date);
   // MAは1分足そのもので計算(25分・75分の移動平均という意味を保つ)。ローソクは5分足に
   // 束ねて、その足の最終時点でのMA値を採用する。
   var fullMa25=trailingSMA(fullCloses,25),fullMa75=trailingSMA(fullCloses,75);
@@ -1494,29 +1491,58 @@ function IntradayChart1m(p){
   var ma25=candles.map(function(c){return fullMa25[c.endIndex];});
   var ma75=candles.map(function(c){return fullMa75[c.endIndex];});
   var hasVolume=!!fullVolumes;
-  // VWAPはその日の始めから各足までの累積出来高加重平均
+  // VWAPは(現状は当日の、バックエンド対応後は取得期間の)始めから各足までの累積出来高加重平均
   var vwapLine=hasVolume?candles.map(function(c){
     return calcVWAP(fullCloses.slice(0,c.endIndex+1),fullHighs.slice(0,c.endIndex+1),fullLows.slice(0,c.endIndex+1),fullVolumes.slice(0,c.endIndex+1));
   }):null;
-  var W=100;
-  var allVals=candles.reduce(function(a,c){return a.concat([c.high,c.low]);},[])
-    .concat(ma25.filter(function(v){return v!=null;})).concat(ma75.filter(function(v){return v!=null;}));
-  if(vwapLine)allVals=allVals.concat(vwapLine.filter(function(v){return v!=null;}));
+  var chartWidth=Math.max(n*CANDLE_W,1);
+
+  // スクロール位置から「今画面に映っている足の範囲」を割り出し、縦軸をその範囲に自動調整する
+  function updateVisibleRange(){
+    var el=scrollRef.current;if(!el||n===0)return;
+    var start=Math.max(0,Math.floor(el.scrollLeft/CANDLE_W)-1);
+    var end=Math.min(n-1,Math.ceil((el.scrollLeft+el.clientWidth)/CANDLE_W)+1);
+    setVisRange({start:start,end:end});
+  }
+  useEffect(function(){
+    if(!hasData)return;
+    var el=scrollRef.current;if(!el)return;
+    el.scrollLeft=el.scrollWidth; // 初期表示は一番右＝直近2時間程度
+    updateVisibleRange();
+  },[data,n]);
+
+  if(data===undefined){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
+  }
+  if(!hasData){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
+  }
+
+  var dateLabel=formatChartDateLabel(data.date);
+  var rangeStart=visRange?Math.min(visRange.start,n-1):Math.max(0,n-24);
+  var rangeEnd=visRange?Math.min(visRange.end,n-1):n-1;
+  var visCandles=candles.slice(rangeStart,rangeEnd+1);
+  var visMa25=ma25.slice(rangeStart,rangeEnd+1),visMa75=ma75.slice(rangeStart,rangeEnd+1);
+  var visVwap=vwapLine?vwapLine.slice(rangeStart,rangeEnd+1):null;
+  var allVals=visCandles.reduce(function(a,c){return a.concat([c.high,c.low]);},[])
+    .concat(visMa25.filter(function(v){return v!=null;})).concat(visMa75.filter(function(v){return v!=null;}));
+  if(visVwap)allVals=allVals.concat(visVwap.filter(function(v){return v!=null;}));
+  if(allVals.length===0)allVals=candles.reduce(function(a,c){return a.concat([c.high,c.low]);},[]);
   var mn=Math.min.apply(null,allVals),mx=Math.max.apply(null,allVals);
   var rng=mx-mn||1;
   var pad=rng*0.1;
   mn-=pad;mx+=pad;rng=mx-mn||1;
   function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
-  function toX(i){return n>1?(i/(n-1))*(W-1):W/2;}
-  function toPts(arr){
+  function toX(i){return i*CANDLE_W+CANDLE_W/2;} // 全期間を通した絶対px座標
+  function toPtsAbs(arr){
     return arr.map(function(v,i){return v==null?null:toX(i)+","+toY(v);}).filter(function(v){return v!=null;}).join(" ");
   }
-  var pts25=toPts(ma25),pts75=toPts(ma75),ptsVwap=vwapLine?toPts(vwapLine):null;
+  var pts25=toPtsAbs(ma25),pts75=toPtsAbs(ma75),ptsVwap=vwapLine?toPtsAbs(vwapLine):null;
   var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1],lastVwap=vwapLine?vwapLine[vwapLine.length-1]:null;
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
-  var step=n>1?W/(n-1):W;
-  var bodyHalf=Math.max(0.5,step*0.32);
-  var timeLabels=pickTimeLabels(candles.map(function(c){return c.time;}),5);
+  var bodyHalf=CANDLE_W*0.35;
+  var timeLabels=pickTimeLabels(visCandles.map(function(c){return c.time;}),5)
+    .map(function(t){return {label:t.label,index:t.index+rangeStart};});
   if(dateLabel){
     var shortDate=formatShortDate(data.date);
     timeLabels=timeLabels.map(function(t){return {label:shortDate+" "+t.label,index:t.index};});
@@ -1524,33 +1550,40 @@ function IntradayChart1m(p){
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
-        <span>5分足（本日）</span>
+        <span>5分足（←スクロールで過去を表示）</span>
         <span>{dateLabel}</span>
       </div>
       <div style={{display:"flex",gap:6}}>
-        <div style={{flex:1,minWidth:0}}>
-          <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
-            {priceLevels.map(function(v,i){
-              var y=toY(v);
-              return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
-            })}
-            {candles.map(function(c,i){
-              var x=toX(i),isUp=c.close>=c.open,col=isUp?"#22d3a0":"#f43f5e";
-              var yO=toY(c.open),yC=toY(c.close),yH=toY(c.high),yL=toY(c.low);
-              var top=Math.min(yO,yC),bh=Math.max(0.6,Math.abs(yC-yO));
-              return(
-                <g key={i}>
-                  <line x1={x} y1={yH} x2={x} y2={yL} stroke={col} strokeWidth={0.3}/>
-                  <rect x={x-bodyHalf} y={top} width={bodyHalf*2} height={bh} fill={col}/>
-                </g>
-              );
-            })}
-            {ptsVwap&&<polyline points={ptsVwap} fill="none" stroke="#38bdf8" strokeWidth={0.35}/>}
-            {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={0.5}/>}
-            {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={0.5}/>}
-          </svg>
+        <div ref={scrollRef} onScroll={updateVisibleRange} style={{flex:1,minWidth:0,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+          <div style={{width:chartWidth}}>
+            <svg width={chartWidth} height={H} style={{display:"block",overflow:"hidden"}}>
+              {priceLevels.map(function(v,i){
+                var y=toY(v);
+                return <line key={i} x1={0} y1={y} x2={chartWidth} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
+              })}
+              {candles.map(function(c,i){
+                var x=toX(i),isUp=c.close>=c.open,col=isUp?"#22d3a0":"#f43f5e";
+                var yO=toY(c.open),yC=toY(c.close),yH=toY(c.high),yL=toY(c.low);
+                var top=Math.min(yO,yC),bh=Math.max(0.6,Math.abs(yC-yO));
+                return(
+                  <g key={i}>
+                    <line x1={x} y1={yH} x2={x} y2={yL} stroke={col} strokeWidth={1}/>
+                    <rect x={x-bodyHalf} y={top} width={bodyHalf*2} height={bh} fill={col}/>
+                  </g>
+                );
+              })}
+              {ptsVwap&&<polyline points={ptsVwap} fill="none" stroke="#38bdf8" strokeWidth={1}/>}
+              {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={1.2}/>}
+              {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={1.2}/>}
+            </svg>
+            <div style={{position:"relative",height:14,marginTop:3}}>
+              {timeLabels.map(function(t,i){
+                return <span key={i} style={{position:"absolute",left:toX(t.index)+"px",top:0,fontSize:11,color:"#6a90b0",whiteSpace:"nowrap",transform:"translateX(-50%)"}}>{t.label}</span>;
+              })}
+            </div>
+          </div>
         </div>
-        <div style={{width:52,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
+        <div style={{width:RIGHT_GUTTER,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
           {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v,rng)}</span>;})}
         </div>
       </div>
@@ -1559,7 +1592,6 @@ function IntradayChart1m(p){
         <span style={{color:"#f472b6"}}>― 75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
         {hasVolume?<span style={{color:"#38bdf8"}}>― VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{color:"#2a4060"}}>VWAP: 出来高データ未対応のため非表示</span>}
       </div>
-      {timeLabels.length>0&&<TimeLabelRow timeLabels={timeLabels} toX={toX} W={W} rightGutter={58}/>}
     </div>
   );
 }
