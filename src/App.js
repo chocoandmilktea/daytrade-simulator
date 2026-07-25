@@ -1481,7 +1481,7 @@ function dailyVWAPSeries(closes,highs,lows,volumes,dates){
   return result;
 }
 function IntradayChart1m(p){
-  var data=p.data,H=p.height||140,BUCKET=5,CANDLE_W=11,RIGHT_GUTTER=52;
+  var data=p.data,H=p.height||140,BUCKET=5,CANDLE_W=8,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   var scrollRef=useRef(null);
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
