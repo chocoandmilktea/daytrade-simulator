@@ -1,6 +1,6 @@
 // api/intraday.js
-// 当日（休場日なら直近の取引日）の株価分足を返すエンドポイント
-// （カードのミニチャート/チャートモーダル用）
+// 直近5営業日分の株価1分足を返すエンドポイント
+// （詳細パネルの5分足ローソクチャート用。直近2時間を初期表示し、過去分はスクロールで確認する想定）
 //
 // データ取得元: Yahoo Finance（非公式チャートAPI）
 //   理由: J-Quantsの分足アドオンは「日次更新・16:30頃」にしか発行されないため、
@@ -9,8 +9,8 @@
 //   JPだけでなくUS銘柄も同じエンドポイントでそのまま取得できる副次的な利点もある。
 //
 // リクエスト例: /api/intraday?ticker=7203.T
-// レスポンス: { m1:{opens,highs,lows,closes,times}, date }
-//   date は実際にデータが取れた日（JST, YYYY-MM-DD）
+// レスポンス: { m1:{opens,highs,lows,closes,times,volumes,dates}, date }
+//   date は最新営業日（JST, YYYY-MM-DD）。datesは各1分足がどの日のものかを示す配列（同じ長さ）。
 
 const YAHOO_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -28,6 +28,7 @@ async function fetchYahooChart(ticker, range) {
   const opens = quote.open || [];
   const highs = quote.high || [];
   const lows = quote.low || [];
+  const volumes = quote.volume || [];
   const bars = [];
   for (let i = 0; i < result.timestamp.length; i++) {
     if (closes[i] == null) continue;
@@ -36,7 +37,8 @@ async function fetchYahooChart(ticker, range) {
     const open = opens[i] != null ? opens[i] : close;
     const high = highs[i] != null ? highs[i] : Math.max(open, close);
     const low = lows[i] != null ? lows[i] : Math.min(open, close);
-    bars.push({ epoch: result.timestamp[i], open, high, low, close });
+    const volume = volumes[i] != null ? volumes[i] : 0;
+    bars.push({ epoch: result.timestamp[i], open, high, low, close, volume });
   }
   return { bars, status: r.status };
 }
@@ -67,38 +69,34 @@ export default async function handler(req, res) {
   }
 
   try {
-    // まず当日分(range=1d)を試す。休場日等で空なら5日分に広げて直近営業日を拾う。
-    let { bars, status } = await fetchYahooChart(ticker, "1d");
+    // 直近5営業日分の1分足をまとめて取得する（以前は当日分のみで、5日分は
+    // 休場日フォールバック時にしか使っていなかった。詳細パネルのスクロール
+    // チャート化に合わせて、常に5日分を返すようにした）。
+    let { bars, status } = await fetchYahooChart(ticker, "5d");
     if (status === 429) {
-      return res.status(200).json({ m1: { opens: [], highs: [], lows: [], closes: [], times: [] }, date: null, rateLimited: true });
+      return res.status(200).json({ m1: { opens: [], highs: [], lows: [], closes: [], times: [], volumes: [], dates: [] }, date: null, rateLimited: true });
     }
     if (bars.length === 0) {
-      const wider = await fetchYahooChart(ticker, "5d");
-      if (wider.status === 429) {
-        return res.status(200).json({ m1: { opens: [], highs: [], lows: [], closes: [], times: [] }, date: null, rateLimited: true });
-      }
-      bars = wider.bars;
-    }
-    if (bars.length === 0) {
-      return res.status(200).json({ m1: { opens: [], highs: [], lows: [], closes: [], times: [] }, date: null });
+      return res.status(200).json({ m1: { opens: [], highs: [], lows: [], closes: [], times: [], volumes: [], dates: [] }, date: null });
     }
 
-    // JSTに変換した上で、最後（最新）の営業日の分だけに絞る
-    const withJst = bars.map((b) => ({ ...toJst(b.epoch), open: b.open, high: b.high, low: b.low, close: b.close }));
+    // JSTに変換。以前は最新営業日だけに絞っていたが、5日分すべてをそのまま返す
+    const withJst = bars.map((b) => ({ ...toJst(b.epoch), open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume }));
     const latestDate = withJst[withJst.length - 1].date;
-    const todayBars = withJst.filter((b) => b.date === latestDate);
 
-    // 1分足（チャートモーダル用・ローソク足描画用にOHLC全部）：そのまま抽出
-    const opens1 = todayBars.map((b) => b.open);
-    const highs1 = todayBars.map((b) => b.high);
-    const lows1 = todayBars.map((b) => b.low);
-    const closes1 = todayBars.map((b) => b.close);
-    const times1 = todayBars.map((b) => b.time);
+    // 1分足（チャートモーダル用・ローソク足描画用にOHLC＋出来高＋日付）
+    const opens1 = withJst.map((b) => b.open);
+    const highs1 = withJst.map((b) => b.high);
+    const lows1 = withJst.map((b) => b.low);
+    const closes1 = withJst.map((b) => b.close);
+    const times1 = withJst.map((b) => b.time);
+    const volumes1 = withJst.map((b) => b.volume);
+    const dates1 = withJst.map((b) => b.date); // 各足がどの日のものかをフロント側で表示するため
 
     // ブラウザ側の短時間キャッシュ用ヘッダー（同一分内の再取得を減らす）
     res.setHeader("Cache-Control", "public, max-age=60");
     return res.status(200).json({
-      m1: { opens: opens1, highs: highs1, lows: lows1, closes: closes1, times: times1 },
+      m1: { opens: opens1, highs: highs1, lows: lows1, closes: closes1, times: times1, volumes: volumes1, dates: dates1 },
       date: latestDate,
     });
   } catch (err) {
