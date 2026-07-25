@@ -1453,7 +1453,7 @@ function trailingSMA(closes,period){
 }
 // 1分足をbucket本ずつ束ねてローソク足(OHLC)に集約する。endIndexは元の1分足配列での
 // 最終インデックス（MA・VWAPを1分足ベースで計算した値をローソクに揃えて拾うために使う）。
-function aggregateCandles(opens,highs,lows,closes,volumes,times,bucket){
+function aggregateCandles(opens,highs,lows,closes,volumes,times,dates,bucket){
   var n=closes.length,candles=[];
   for(var i=0;i<n;i+=bucket){
     var end=Math.min(i+bucket,n);
@@ -1463,9 +1463,22 @@ function aggregateCandles(opens,highs,lows,closes,volumes,times,bucket){
       if(lows[j]<l)l=lows[j];
       if(volumes)vol+=volumes[j]||0;
     }
-    candles.push({open:opens[i],high:h,low:l,close:closes[end-1],volume:vol,endIndex:end-1,time:times[end-1]});
+    candles.push({open:opens[i],high:h,low:l,close:closes[end-1],volume:vol,endIndex:end-1,time:times[end-1],date:dates?dates[end-1]:null});
   }
   return candles;
+}
+// 1分足全体に対して、日付が変わるたびにリセットする「その日の累積VWAP」を計算する。
+// （VWAPは本来1日の中の指標のため、複数日分のデータでも日をまたいで積み上げない）
+function dailyVWAPSeries(closes,highs,lows,volumes,dates){
+  var result=new Array(closes.length).fill(null);
+  var cumTPV=0,cumVol=0,prevDate=null;
+  for(var i=0;i<closes.length;i++){
+    if(dates&&dates[i]!==prevDate){cumTPV=0;cumVol=0;prevDate=dates[i];}
+    var tp=(highs[i]+lows[i]+closes[i])/3,v=volumes[i]||0;
+    cumTPV+=tp*v;cumVol+=v;
+    result[i]=cumVol>0?cumTPV/cumVol:null;
+  }
+  return result;
 }
 function IntradayChart1m(p){
   var data=p.data,H=140,BUCKET=5,CANDLE_W=10,RIGHT_GUTTER=52;
@@ -1474,27 +1487,27 @@ function IntradayChart1m(p){
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
 
   var hasData=!!(data&&data.m1&&data.m1.closes&&data.m1.closes.length>=2);
-  var m1=hasData?data.m1:{closes:[],opens:[],highs:[],lows:[],times:[],volumes:null};
+  var m1=hasData?data.m1:{closes:[],opens:[],highs:[],lows:[],times:[],volumes:null,dates:null};
   var fullOpens=m1.opens||m1.closes,fullHighs=m1.highs||m1.closes,fullLows=m1.lows||m1.closes;
-  var fullCloses=m1.closes,fullTimes=m1.times||[],fullVolumes=m1.volumes||null; // volumesが無ければVWAPは非表示
+  var fullCloses=m1.closes,fullTimes=m1.times||[],fullVolumes=m1.volumes||null,fullDates=m1.dates||null; // volumesが無ければVWAPは非表示
   if(hasData&&p.liveTick&&p.liveTick.price!=null){ // 立花証券リアルタイム値を直近の1点として継ぎ足す
     var lv=p.liveTick.price;
     fullOpens=fullOpens.concat([lv]);fullHighs=fullHighs.concat([lv]);fullLows=fullLows.concat([lv]);
     fullCloses=fullCloses.concat([lv]);fullTimes=fullTimes.concat([p.liveTick.time||""]);
     if(fullVolumes)fullVolumes=fullVolumes.concat([0]);
+    if(fullDates)fullDates=fullDates.concat([data.date||fullDates[fullDates.length-1]]);
   }
   // MAは1分足そのもので計算(25分・75分の移動平均という意味を保つ)。ローソクは5分足に
   // 束ねて、その足の最終時点でのMA値を採用する。
   var fullMa25=trailingSMA(fullCloses,25),fullMa75=trailingSMA(fullCloses,75);
-  var candles=aggregateCandles(fullOpens,fullHighs,fullLows,fullCloses,fullVolumes,fullTimes,BUCKET);
+  var candles=aggregateCandles(fullOpens,fullHighs,fullLows,fullCloses,fullVolumes,fullTimes,fullDates,BUCKET);
   var n=candles.length;
   var ma25=candles.map(function(c){return fullMa25[c.endIndex];});
   var ma75=candles.map(function(c){return fullMa75[c.endIndex];});
   var hasVolume=!!fullVolumes;
-  // VWAPは(現状は当日の、バックエンド対応後は取得期間の)始めから各足までの累積出来高加重平均
-  var vwapLine=hasVolume?candles.map(function(c){
-    return calcVWAP(fullCloses.slice(0,c.endIndex+1),fullHighs.slice(0,c.endIndex+1),fullLows.slice(0,c.endIndex+1),fullVolumes.slice(0,c.endIndex+1));
-  }):null;
+  // VWAPは日をまたぐとリセットする「その日の累積」出来高加重平均
+  var fullVwap=hasVolume?dailyVWAPSeries(fullCloses,fullHighs,fullLows,fullVolumes,fullDates):null;
+  var vwapLine=fullVwap?candles.map(function(c){return fullVwap[c.endIndex];}):null;
   var chartWidth=Math.max(n*CANDLE_W,1);
 
   // スクロール位置から「今画面に映っている足の範囲」を割り出し、縦軸をその範囲に自動調整する
@@ -1518,7 +1531,6 @@ function IntradayChart1m(p){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
   }
 
-  var dateLabel=formatChartDateLabel(data.date);
   var rangeStart=visRange?Math.min(visRange.start,n-1):Math.max(0,n-24);
   var rangeEnd=visRange?Math.min(visRange.end,n-1):n-1;
   var visCandles=candles.slice(rangeStart,rangeEnd+1);
@@ -1541,17 +1553,24 @@ function IntradayChart1m(p){
   var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1],lastVwap=vwapLine?vwapLine[vwapLine.length-1]:null;
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
   var bodyHalf=CANDLE_W*0.35;
+  // 複数日ぶんのデータになりうるので、時刻ラベルには常にその足の日付(M/D)を添える
   var timeLabels=pickTimeLabels(visCandles.map(function(c){return c.time;}),5)
-    .map(function(t){return {label:t.label,index:t.index+rangeStart};});
-  if(dateLabel){
-    var shortDate=formatShortDate(data.date);
-    timeLabels=timeLabels.map(function(t){return {label:shortDate+" "+t.label,index:t.index};});
-  }
+    .map(function(t){
+      var c=visCandles[t.index];
+      var sd=c&&c.date?formatShortDate(c.date):"";
+      return {label:(sd?sd+" ":"")+t.label,index:t.index+rangeStart};
+    });
+  // ヘッダー右側：取得できている範囲の日付（最古〜最新）
+  var oldestDate=candles.length>0?candles[0].date:null;
+  var newestDate=candles.length>0?candles[candles.length-1].date:data.date;
+  var rangeLabel=(oldestDate&&newestDate&&oldestDate!==newestDate)
+    ?formatShortDate(oldestDate)+"〜"+formatShortDate(newestDate)
+    :formatChartDateLabel(data.date);
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
         <span>5分足（←スクロールで過去を表示）</span>
-        <span>{dateLabel}</span>
+        <span>{rangeLabel}</span>
       </div>
       <div style={{display:"flex",gap:6}}>
         <div ref={scrollRef} onScroll={updateVisibleRange} style={{flex:1,minWidth:0,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
