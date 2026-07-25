@@ -1481,7 +1481,7 @@ function dailyVWAPSeries(closes,highs,lows,volumes,dates){
   return result;
 }
 function IntradayChart1m(p){
-  var data=p.data,H=140,BUCKET=5,CANDLE_W=14,RIGHT_GUTTER=52;
+  var data=p.data,H=p.height||140,BUCKET=5,CANDLE_W=14,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   var scrollRef=useRef(null);
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
@@ -2100,7 +2100,7 @@ function StockDetailPanel(p){
 
       {/* チャート（1分足＋週足MA） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
-        <IntradayChart1m data={intraday} liveTick={liveTick}/>
+        <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340}/>
       </div>
 
       {/* シグナル詳細（左）／板情報・利確損切りライン（右） */}
@@ -2231,7 +2231,6 @@ function MobileStockDetailModal(p){
   }
   return createPortal(
     <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{position:"fixed",inset:0,zIndex:1500,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:10}}>
-      <div style={{textAlign:"center",color:"#2a4060",fontSize:11,padding:"0 0 6px"}}>▾ 下にスワイプで閉じる</div>
       <StockDetailPanel s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading} allStocks={p.allStocks} onAddTrade={p.onAddTrade} onClose={p.onClose} appTrades={p.appTrades} personalTrades={p.personalTrades}/>
     </div>,
     document.body
