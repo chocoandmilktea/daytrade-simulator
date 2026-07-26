@@ -58,6 +58,25 @@ function relStrengthInfo(rel){
   return{diff:rel,label:(strong?"+":"")+rel.toFixed(1)+"%",strong:strong};
 }
 
+// ── スキャル・デイトレ向き簡易フィルタ（E簡易版）─────────────────────────
+// 板情報（気配・スプレッド）は使わず、出来高（売買代金）とATR%（値動きの大きさ）だけで
+// 「そもそもスキャルに向かなそうな銘柄」を簡易的に見分けるための目安。数値は一般的な
+// 目安であり、必要に応じて調整してください
+var SCALP_MIN_TURNOVER_JP=300000000; // 売買代金の目安：日本株 3億円/日 未満は薄いとみなす
+var SCALP_MIN_TURNOVER_US=5000000;   // 米国株 500万ドル/日
+var SCALP_MIN_ATR_PCT=1.2;           // ATRが株価の1.2%未満だと値幅が小さすぎる目安
+function scalpFitInfo(s){
+  if(s.price==null||!s.volume) return null;
+  var turnover=s.price*s.volume;
+  var minTurnover=s.market==="JP"?SCALP_MIN_TURNOVER_JP:SCALP_MIN_TURNOVER_US;
+  var atrPct=(s.atr!=null&&s.price)?(s.atr/s.price*100):null;
+  var reasons=[];
+  if(turnover<minTurnover) reasons.push("薄商い");
+  if(atrPct!=null&&atrPct<SCALP_MIN_ATR_PCT) reasons.push("値幅小");
+  if(reasons.length===0) return null;
+  return{label:reasons.join("・")};
+}
+
 // ── 決算日・権利落ち日のローカル記憶 ─────────────────────────────────────
 // 外部APIが当日中に日付を返さなくなっても、実際の予定日を過ぎるまで表示を継続するための保険
 var EVENT_DATE_CACHE_KEY="event_date_cache_v1";
@@ -2051,6 +2070,7 @@ function StockCard(p){
             {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
             {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}
             {(function(){var si=relStrengthInfo(s.sectorRelStrength);return si&&<span style={bStyle(si.strong?"#052e16":"#1f0010","1px solid "+(si.strong?"#22d3a0":"#f43f5e"),si.strong?"#22d3a0":"#f43f5e")} title={"対"+(s.sectorName||"業種")+"相対(前日比差): "+si.label}>{si.strong?"🔥対業種":"🧊対業種"}{si.label}</span>;})()}
+            {(function(){var sf=scalpFitInfo(s);return sf&&<span style={bStyle("#2a1400","1px solid #fb923c","#fb923c")} title={"スキャル・デイトレに不向きな可能性："+sf.label+"（出来高とATR%のみの簡易判定。板情報・スプレッドは考慮していません）"}>⚠️{sf.label}</span>;})()}
           </div>
           {(function(){
             var aw=s.actualWinRate;
@@ -2275,6 +2295,7 @@ function StockDetailPanel(p){
               {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
           {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}
           {(function(){var si=relStrengthInfo(s.sectorRelStrength);return si&&<span style={bStyle(si.strong?"#052e16":"#1f0010","1px solid "+(si.strong?"#22d3a0":"#f43f5e"),si.strong?"#22d3a0":"#f43f5e")} title={"対"+(s.sectorName||"業種")+"相対(前日比差): "+si.label}>{si.strong?"🔥対業種":"🧊対業種"}{si.label}</span>;})()}
+          {(function(){var sf=scalpFitInfo(s);return sf&&<span style={bStyle("#2a1400","1px solid #fb923c","#fb923c")} title={"スキャル・デイトレに不向きな可能性："+sf.label+"（出来高とATR%のみの簡易判定。板情報・スプレッドは考慮していません）"}>⚠️{sf.label}</span>;})()}
             </div>
             <div style={{fontSize:13,color:"#4a7090",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
           </div>
