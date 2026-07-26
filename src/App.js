@@ -354,6 +354,22 @@ function sessionCloseTime(market,startAtISO){
   if(closeTs<=start.getTime())closeTs+=24*60*60*1000; // 念のための保険（開始時刻より前にならないよう1日繰り上げ）
   return closeTs;
 }
+// 今、その市場（JP/US）が取引時間中かどうか（大まかな判定・祝日は考慮しない）
+// 閉場中は前日終値等の古い値が返ってくるため、待機中→進行中の誤判定を防ぐために使用
+function isMarketOpen(market){
+  var jst=new Date(Date.now()+9*60*60*1000);
+  var mo=jst.getUTCMonth(),d=jst.getUTCDate();
+  var timeMin=jst.getUTCHours()*60+jst.getUTCMinutes();
+  if(market==="JP"){
+    return (timeMin>=9*60&&timeMin<11*60+30)||(timeMin>=12*60+30&&timeMin<15*60+30);
+  }else{
+    var month=mo+1;
+    var isSummer=(month>3&&month<11)||(month===3&&d>=8)||(month===11&&d<=7);
+    var usStartMin=isSummer?22*60+30:23*60+30;
+    var usEndMin=isSummer?5*60:6*60;
+    return timeMin>=usStartMin||timeMin<usEndMin;
+  }
+}
 function tradeStorageKey(kind){return kind==="app"?"trade_app_v1":"trade_personal_v1";}
 function loadTrades(kind){try{var v=localStorage.getItem(tradeStorageKey(kind));return v?JSON.parse(v):[];}catch(e){return[];}}
 function saveTrades(kind,list){try{localStorage.setItem(tradeStorageKey(kind),JSON.stringify(list));}catch(e){}}
@@ -460,7 +476,7 @@ function applyPricesToTrades(kind,priceMap){
     if(t.status==="waiting"){
       var dir=getBuyDirection(t);
       var reached=dir==="down"?cur<=t.buyPrice:cur>=t.buyPrice;
-      if(reached){
+      if(reached&&isMarketOpen(t.market)){
         changed=true;
         return Object.assign({},t,{status:"active",startPrice:t.buyPrice,startAt:new Date().toISOString(),lastPrice:cur});
       }
