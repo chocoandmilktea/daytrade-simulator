@@ -607,7 +607,7 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
     var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         prompt:buildAiPrompt(s),
-        system:"必ず自分でWeb検索ツールを使って、この銘柄の最新ニュース・材料を確認してから回答してください。ユーザーに質問や確認を求めず、自律的に分析を完了してください。",
+        system:"必ず自分でWeb検索ツールを使って、この銘柄の最新ニュース・材料を確認してから回答してください。ユーザーに質問や確認を求めず、自律的に分析を完了してください。\n\n回答の一番最初に、解説文より前に必ず次の形式でJSONデータを出力してください:\n<AI_DATA>{\"entry\":推奨エントリー価格の数値,\"target\":利確目標価格の数値,\"stop\":損切りラインの数値,\"forecast\":{\"direction\":\"上昇\"または\"下落\"または\"中立\",\"confidence\":0〜100の確信度数値,\"timeframe\":\"期間目安(例:1〜3営業日)\",\"reason\":\"見通しの理由を1文で\"}}</AI_DATA>\nこのタグの後に、通常の分析コメント（買い/売り推奨、Entry/Target/Stopの詳細、今後の見通しなど）を日本語で記載してください。",
         useWebSearch:true
       }),signal:AbortSignal.timeout(45000)});
     var aiData=await res.json();
