@@ -706,6 +706,19 @@ function calcActualWinRate(scoreHist,threshold){
 // 基準ラベルのみ抽出して同一シグナルとして集計できるようにする
 function baseSigLabel(label){return label.replace(/\([^)]*\)$/,"");}
 
+// 現在時刻（端末のローカル時刻＝日本国内利用前提でJST）から取引時間帯ラベルを判定
+// 日本株の寄り付き〜引けの目安で区切り、それ以外（米国株スキャン・時間外）は"時間外"にまとめる
+var INTRADAY_SESSIONS=["寄り付き","前場","後場前半","後場後半"];
+function currentSessionLabel(){
+  var now=new Date();
+  var mins=now.getHours()*60+now.getMinutes();
+  if(mins>=9*60&&mins<10*60) return "寄り付き";
+  if(mins>=10*60&&mins<11*60+30) return "前場";
+  if(mins>=12*60+30&&mins<14*60) return "後場前半";
+  if(mins>=14*60&&mins<15*60+30) return "後場後半";
+  return "時間外";
+}
+
 // 1銘柄分のscoreHistから、シグナルごとの勝敗数をstatsに積算する
 // daysAfter: 何営業日後の価格と比較するか(scoreHistの記録間隔=1エントリ想定)
 function accumulateSignalStats(hist,daysAfter,stats){
@@ -816,6 +829,42 @@ function getUniverseBandStats(){
   });
   UNIVERSE_BAND_TS=now;
   return UNIVERSE_BAND_CACHE;
+}
+
+// ── 時間帯別（セッション別）の的中率集計（Dの機能・sh_intraday_*横断）─────
+// 「その時間帯にスコア60点以上だった銘柄が、その日の（記録された最後の＝引けに近い）
+// 時点までに上がっていたか」を集計する。翌営業日ではなく“その日の中”の答え合わせ。
+var INTRADAY_ACC_CACHE=null,INTRADAY_ACC_TS=0;
+function calcIntradayAccuracy(){
+  var now=Date.now();
+  if(INTRADAY_ACC_CACHE&&now-INTRADAY_ACC_TS<UNIVERSE_STATS_TTL) return INTRADAY_ACC_CACHE;
+  var scoreStats={};
+  INTRADAY_SESSIONS.forEach(function(s){scoreStats[s]={w:0,t:0};});
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_intraday_")!==0) return;
+      var hist;try{hist=JSON.parse(localStorage.getItem(k)||"[]");}catch(e){hist=[];}
+      var byDate={};
+      hist.forEach(function(e){(byDate[e.d]=byDate[e.d]||[]).push(e);});
+      Object.keys(byDate).forEach(function(d){
+        var entries=byDate[d];
+        var closeEntry=entries[entries.length-1]; // その日最後の記録＝引けに近いスナップショット
+        if(closeEntry.p==null) return;
+        entries.forEach(function(e){
+          if(e===closeEntry||e.p==null||e.s<60) return;
+          if(INTRADAY_SESSIONS.indexOf(e.session)===-1) return;
+          scoreStats[e.session].t++;
+          if(closeEntry.p>e.p) scoreStats[e.session].w++;
+        });
+      });
+    });
+  }catch(e){}
+  INTRADAY_ACC_CACHE=INTRADAY_SESSIONS.map(function(s){
+    var v=scoreStats[s];
+    return{session:s,winRate:v.t>0?Math.round(v.w/v.t*100):null,total:v.t};
+  });
+  INTRADAY_ACC_TS=now;
+  return INTRADAY_ACC_CACHE;
 }
 // シグナルの方向（強気/弱気/中立）を踏まえた「精度」を0〜1で返す共通関数。
 // 弱気(state=-1)シグナルは「翌営業日に上がらなかった率」、それ以外は「上がった率」が精度の目安。
@@ -1346,6 +1395,27 @@ function analyzeStock(stock,pd,vixVal){
     }catch(e){return[];}
   })();
   // ────────────────────────────────────────────────────────────────────────
+
+  // ── 時間帯別検証用のイントラデイ履歴（①のscoreHistとは別キー・別ロジック）───
+  // 1日に複数件残す（同一日・同一時間帯の再スキャンのみ上書き）。Dの機能専用。
+  (function(){
+    try{
+      var ikey="sh_intraday_"+stock.ticker;
+      var ihist=JSON.parse(localStorage.getItem(ikey)||"[]");
+      var itoday=new Date().toISOString().slice(0,10);
+      var isession=currentSessionLabel();
+      var isigKeys=signals.map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
+      var ilast=ihist[ihist.length-1];
+      var ientry={d:itoday,session:isession,s:sc,p:price,sig:isigKeys};
+      if(ilast&&ilast.d===itoday&&ilast.session===isession){
+        ihist[ihist.length-1]=ientry;
+      }else{
+        ihist.push(ientry);
+        if(ihist.length>200)ihist.shift(); // 目安：1日最大4件×約50日分
+      }
+      localStorage.setItem(ikey,JSON.stringify(ihist));
+    }catch(e){}
+  })();
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     volume:stock.volume||0,volSurge:(typeof surge!=="undefined"?surge:1),
@@ -3363,6 +3433,7 @@ function SignalAccuracyContent(p){
   var emptyLabel=tickers?(label+"の登録銘柄"):"お気に入り銘柄";
   var horizons=[{k:"d1",h:"1日後"},{k:"d3",h:"3日後"},{k:"d5",h:"5日後"}];
   var aiAcc=calcAiForecastAccuracy();
+  var intradayAcc=calcIntradayAccuracy();
   function cellColor(wr){return wr==null?"#4a7090":wr>=60?"#22d3a0":wr>=50?"#fbbf24":"#f43f5e";}
   return(
     <div>
@@ -3441,6 +3512,24 @@ function SignalAccuracyContent(p){
               );
             })}
           </div>
+        )}
+      </div>
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>⏰ 時間帯別 的中率（当日終値との比較）</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>その時間帯にスコア60点以上だった銘柄が、記録されたその日最後の時点までに上がっていたかを集計。翌営業日ではなく“当日中”の答え合わせです</div>
+        {intradayAcc.every(function(s){return s.total===0;})?(
+          <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。1日に複数回スキャンすると溜まっていきます</div>
+        ):(
+          intradayAcc.map(function(s,i){
+            var reliable=s.total>=5;
+            return(
+              <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:i<intradayAcc.length-1?"1px solid #0a1830":"none",opacity:reliable?1:0.5}}>
+                <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{s.session}</div>
+                <div style={{width:52,textAlign:"right",color:cellColor(s.winRate),fontWeight:700}}>{s.winRate!=null?s.winRate+"%":"-"}</div>
+                <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{s.total}</div>
+              </div>
+            );
+          })
         )}
       </div>
     </div>
