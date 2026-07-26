@@ -1905,9 +1905,10 @@ function SignalDetailList(p){
 
 // シグナル詳細タップ時に表示する、配点の重み説明モーダル（画面左側に表示）
 function SignalWeightModal(p){
+  var isMobile=useIsMobile();
   if(!p.open) return null;
   return(
-    <div onClick={p.onClose} style={{position:"fixed",inset:0,zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div onClick={p.onClose} style={{position:"fixed",inset:0,zIndex:1000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
       <div onClick={function(e){e.stopPropagation();}} style={{background:"#0a1628",border:"1px solid #2a4060",borderRadius:10,maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",padding:"16px 18px",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>📊 シグナルの重み付けについて</div>
@@ -1938,7 +1939,9 @@ function SignalWeightModal(p){
 }
 
 function ScoreRing(p){
-  var sc=p.score,R=14,C=2*Math.PI*R,col=scoreColor(sc);
+  var raw=Number(p.score);
+  var sc=isNaN(raw)?0:Math.round(Math.min(100,Math.max(0,raw)));
+  var R=14,C=2*Math.PI*R,col=scoreColor(sc);
   return(
     <svg width={34} height={34} style={{flexShrink:0}}>
       <circle cx={17} cy={17} r={R} fill="none" stroke="#1e3050" strokeWidth={3}/>
