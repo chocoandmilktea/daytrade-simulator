@@ -2180,7 +2180,7 @@ function StockDetailPanel(p){
       </div>
 
       {showAi&&createPortal(
-        <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);setAiText("");setAiEntry(null);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
+        <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
           <div style={{background:"#040c18",border:"1px solid #22d3a050",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -2192,7 +2192,7 @@ function StockDetailPanel(p){
                   {s.scoreHist.length>=7?"精度◎":s.scoreHist.length>=3?"精度△("+s.scoreHist.length+"日)":"精度⚠️("+s.scoreHist.length+"日)"}
                 </span>)}
               </div>
-              <button onClick={function(){setShowAi(false);setAiText("");setAiEntry(null);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+              <button onClick={function(){setShowAi(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
             </div>
             {aiLoading?(<div style={{textAlign:"center",padding:"12px 0"}}><div style={{fontSize:18}}>⏳</div><div style={{fontSize:14,color:"#4a90c0",marginTop:4}}>AIが分析中...</div></div>):(<div style={{fontSize:15,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}</div>)}
             {!aiLoading&&aiEntry&&(
