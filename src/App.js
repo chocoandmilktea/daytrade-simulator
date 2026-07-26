@@ -590,9 +590,60 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
       }
     }
     if(parsed&&typeof parsed.entry!=="undefined") setAiEntry(parsed);
+    if(parsed&&parsed.forecast) recordAiForecast(s.ticker,s.price,parsed.forecast);
     setAiText(cleanText.trim()||"分析できませんでした。");
   }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
   setAiLoading(false);
+}
+// ── AI予想（forecast）の的中率トラッキング ───────────────────────────────
+// AI分析を実行するたびに「その日時点の予想方向・確信度・株価」を記録し、
+// 後日scoreHist（実際の値動き）と突き合わせてAI予想自体の的中率を検証する
+function recordAiForecast(ticker,price,forecast){
+  if(!forecast||!forecast.direction||price==null) return;
+  var key="aipred_"+ticker;
+  var today=new Date().toISOString().slice(0,10);
+  var hist;try{hist=JSON.parse(localStorage.getItem(key)||"[]");}catch(e){hist=[];}
+  var idx=hist.findIndex(function(x){return x.d===today;});
+  var entry={d:today,p:price,dir:forecast.direction,conf:forecast.confidence};
+  if(idx>=0)hist[idx]=entry;else hist.push(entry);
+  if(hist.length>60)hist=hist.slice(-60); // 最大60日分保持
+  try{localStorage.setItem(key,JSON.stringify(hist));}catch(e){}
+}
+// 全銘柄のAI予想記録とscoreHist（実際の終値）を突き合わせて的中率を算出
+// 「中立」予想は方向判定ができないため集計対象から除外する
+function calcAiForecastAccuracy(){
+  var horizons=[1,3];
+  var byHorizon={};horizons.forEach(function(h){byHorizon[h]={w:0,t:0};});
+  var byConf={"50-69":{w:0,t:0},"70-89":{w:0,t:0},"90+":{w:0,t:0}};
+  try{
+    Object.keys(localStorage).forEach(function(key){
+      if(key.indexOf("aipred_")!==0) return;
+      var ticker=key.slice(7);
+      var preds;try{preds=JSON.parse(localStorage.getItem(key)||"[]");}catch(e){preds=[];}
+      var hist;try{hist=JSON.parse(localStorage.getItem("sh_"+ticker)||"[]");}catch(e){hist=[];}
+      if(!hist.length||!preds.length) return;
+      preds.forEach(function(pr){
+        if(!pr.dir||pr.dir.indexOf("中立")!==-1) return;
+        var idx=hist.findIndex(function(x){return x.d===pr.d;});
+        if(idx<0) return;
+        horizons.forEach(function(h){
+          var base=hist[idx],nxt=hist[idx+h];
+          if(!nxt||nxt.p==null||base.p==null) return;
+          var won=pr.dir.indexOf("上昇")!==-1?(nxt.p>base.p):(nxt.p<base.p);
+          byHorizon[h].t++;if(won)byHorizon[h].w++;
+          if(h===1){
+            var band=pr.conf>=90?"90+":pr.conf>=70?"70-89":"50-69";
+            byConf[band].t++;if(won)byConf[band].w++;
+          }
+        });
+      });
+    });
+  }catch(e){}
+  function pct(o){return o.t>0?Math.round(o.w/o.t*100):null;}
+  return{
+    byHorizon:horizons.map(function(h){return{h:h,winRate:pct(byHorizon[h]),total:byHorizon[h].t};}),
+    byConfidence:["50-69","70-89","90+"].map(function(k){return{band:k,winRate:pct(byConf[k]),total:byConf[k].t};})
+  };
 }
 // 見通し（forecast）表示用の共通コンポーネント
 function ForecastBox(f){
@@ -3311,6 +3362,7 @@ function SignalAccuracyContent(p){
   var bandData=getUniverseBandStats();
   var emptyLabel=tickers?(label+"の登録銘柄"):"お気に入り銘柄";
   var horizons=[{k:"d1",h:"1日後"},{k:"d3",h:"3日後"},{k:"d5",h:"5日後"}];
+  var aiAcc=calcAiForecastAccuracy();
   function cellColor(wr){return wr==null?"#4a7090":wr>=60?"#22d3a0":wr>=50?"#fbbf24":"#f43f5e";}
   return(
     <div>
@@ -3353,6 +3405,42 @@ function SignalAccuracyContent(p){
               </div>
             );
           })
+        )}
+      </div>
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🤖 AI予想 的中率</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>個別銘柄のAI分析で出た予想方向（上昇/下落）が、実際に当たったかを集計。「中立」予想は対象外です</div>
+        {aiAcc.byHorizon.every(function(h){return h.total===0;})?(
+          <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。銘柄詳細でAI分析を実行すると溜まっていきます。</div>
+        ):(
+          <div>
+            <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
+              <div style={{flex:1}}>ホライズン</div>
+              <div style={{width:52,textAlign:"right"}}>的中率</div>
+              <div style={{width:40,textAlign:"right"}}>件数</div>
+            </div>
+            {aiAcc.byHorizon.map(function(h,i){
+              var reliable=h.total>=5;
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830",opacity:reliable?1:0.5}}>
+                  <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{h.h+"日後"}</div>
+                  <div style={{width:52,textAlign:"right",color:cellColor(h.winRate),fontWeight:700}}>{h.winRate!=null?h.winRate+"%":"-"}</div>
+                  <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{h.total}</div>
+                </div>
+              );
+            })}
+            <div style={{fontSize:11,color:"#2a6090",marginTop:10,marginBottom:4}}>確信度帯別（1日後判定）</div>
+            {aiAcc.byConfidence.map(function(c,i){
+              var reliable=c.total>=5;
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:i<aiAcc.byConfidence.length-1?"1px solid #0a1830":"none",opacity:reliable?1:0.5}}>
+                  <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{"確信度 "+c.band}</div>
+                  <div style={{width:52,textAlign:"right",color:cellColor(c.winRate),fontWeight:700}}>{c.winRate!=null?c.winRate+"%":"-"}</div>
+                  <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{c.total}</div>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
