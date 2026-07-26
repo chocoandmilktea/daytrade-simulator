@@ -135,11 +135,14 @@ function enqueueIntraday(fn){
 }
 
 // ── メイン株価取得（/api/stock）用の直列キュー ──────────────────────────
-// 分足キューと同じ考え方：J-Quantsの60件/分制限を守るため、スキャン時も
-// 同時並行ではなく一定間隔で1件ずつ順番に呼び出す。429を検知したら
-// キュー全体を一時停止し、レート制限が収まってから再開する。
+// 同時並行ではなく一定間隔で1件ずつ順番に呼び出すことで、Yahoo Finance・
+// 立花証券API双方への負荷を抑える。429を検知したらキュー全体を一時停止し、
+// レート制限が収まってから再開する。
+// ※旧J-Quants時代の60件/分制限を基準に1.5秒間隔にしていたが、立花証券API
+// 　移行後は制限が緩和されている可能性があるため段階的に短縮してテスト中（Step1）。
+// 　429エラーが増える場合は下の数値を1500付近に戻せば元通りになる。
 var STOCK_QUEUE=[], STOCK_TIMER=null, STOCK_LAST_DISPATCH=0;
-var STOCK_MIN_INTERVAL=1500; // 分足キューと同じ約1.5秒に1件ペース
+var STOCK_MIN_INTERVAL=600; // Step1: 1.5秒→0.6秒に短縮（安全重視・様子見）
 var STOCK_PAUSED_UNTIL=0;
 function scheduleStockQueue(){
   if(STOCK_TIMER||STOCK_QUEUE.length===0) return;
