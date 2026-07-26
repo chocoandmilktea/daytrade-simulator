@@ -2790,22 +2790,28 @@ function TradePanel(p){
   var totalPnl=doneList.reduce(function(a,t){return a+(t.pnl||0);},0);
   // 勝率：完了トレードのうち損益がプラスだった割合
   var winRate=doneList.length?Math.round(doneList.filter(function(t){return(t.pnl||0)>0;}).length/doneList.length*100):null;
-  // 的中率の集計対象：現在選択中のタブ（アプリ予想／個人予想）に登録した銘柄のみ（お気に入りタブの集計とは分離）
-  var tradeTickers=Array.from(new Set(list.map(function(t){return t.ticker;})));
+  // 的中率の集計対象：アプリ予想／個人予想を合わせた全登録銘柄（お気に入りタブの集計とは分離）
+  // ※シグナル的中率は銘柄ごとのスコア履歴（scoreHist）から算出しており、価格設定(アプリ/個人)とは無関係なため
+  //   タブでは分けず、両方に登録した銘柄をまとめて1つの集計として表示する
+  var tradeTickers=Array.from(new Set(p.appTrades.concat(p.personalTrades).map(function(t){return t.ticker;})));
   // スマホはタップして表示（初期非表示）、PC/iPadは今まで通り常時表示
   var showAccS=useState(!isMobile);var showAccuracy=showAccS[0],setShowAccuracy=showAccS[1];
-  var predLabel=sub==="app"?"アプリ予想":"個人予想";
   var selTrade=selId?list.find(function(t){return t.id===selId;}):null;
   var selStock=selTrade?stocks.find(function(x){return x.ticker===selTrade.ticker;}):null;
 
-  function Section(title,items,color){
+  function Section(title,items,color,useScoreColor){
     if(!items.length)return null;
     return(
       <div>
         <div style={{fontSize:11,fontWeight:700,color:color,margin:"2px 0 6px"}}>● {title}（{items.length}）</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
           {items.slice().reverse().map(function(t){
-            return <TradeMiniTile key={t.id} t={t} onClick={function(){setSelId(t.id);}}/>;
+            var tickerColor=null;
+            if(useScoreColor){
+              var st=stocks.find(function(x){return x.ticker===t.ticker;});
+              if(st) tickerColor=scoreColor(st.score);
+            }
+            return <TradeMiniTile key={t.id} t={t} tickerColor={tickerColor} onClick={function(){setSelId(t.id);}}/>;
           })}
         </div>
       </div>
@@ -2844,14 +2850,14 @@ function TradePanel(p){
           {list.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:13}}>まだトレードが登録されていません。銘柄カードの🎯ボタンから登録してください</div>}
 
           {Section("進行中",activeList,"#0ea5e9")}
-          {Section("待機中",waitingList,"#4a7090")}
+          {Section("待機中",waitingList,"#4a7090",true)}
           {Section("完了",doneList,"#22d3a0")}
         </div>
 
         {showAccuracy&&(
           <div style={{flex:1,width:isMobile?"100%":undefined,position:isMobile?"static":"sticky",top:0,background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:16,maxHeight:isMobile?undefined:"calc(100vh - 200px)",overflowY:isMobile?"visible":"auto",WebkitOverflowScrolling:"touch"}}>
-            <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:10}}>{"📊 シグナル的中率（"+predLabel+"銘柄）"}</div>
-            <SignalAccuracyContent tickers={tradeTickers} label={predLabel}/>
+            <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:10}}>📊 シグナル的中率（全トレード銘柄・アプリ/個人共通）</div>
+            <SignalAccuracyContent tickers={tradeTickers} label="全トレード"/>
           </div>
         )}
       </div>
@@ -2879,7 +2885,7 @@ function TradeMiniTile(p){
   var pnlVal=t.status==="done"?t.pnl:((t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?(t.lastPrice-t.startPrice)*(t.shares||1):null);
   return(
     <button onClick={p.onClick} style={{background:"#03080f",border:"1px solid "+STATUS_COLOR[t.status],borderRadius:8,padding:"6px 2px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,cursor:"pointer",minWidth:0}}>
-      <div style={{fontSize:10,fontWeight:800,color:"#d8eeff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{t.ticker.replace(".T","")}</div>
+      <div style={{fontSize:10,fontWeight:800,color:p.tickerColor||"#d8eeff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{t.ticker.replace(".T","")}</div>
       <div style={{width:5,height:5,borderRadius:"50%",background:STATUS_COLOR[t.status]}}/>
       {pnlVal!=null?(
         <div style={{fontSize:9,fontWeight:700,color:pnlVal>=0?"#22d3a0":"#f43f5e",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>{fmtPnl(pnlVal,isJP)}</div>
@@ -2943,11 +2949,25 @@ function TradeDetailModal(p){
             <div><div style={{fontSize:10,color:"#fbbf24",marginBottom:2}}>損切り（任意）</div><input type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} style={editInp} placeholder="未設定でもOK"/></div>
           </div>
         ):(
-          <div style={{display:"flex",gap:12,fontSize:11,color:"#4a7090",flexWrap:"wrap"}}>
-            <span>買い {fmtMoney(t.buyPrice,isJP)}</span>
-            <span>売り {fmtMoney(t.sellPrice,isJP)}</span>
-            {t.stopPrice!=null&&<span style={{color:"#fbbf24"}}>損切り {fmtMoney(t.stopPrice,isJP)}</span>}
-            <span>{t.shares||1}株</span>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>
+            <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"6px 8px"}}>
+              <div style={{fontSize:10,color:"#22d3a0",marginBottom:2}}>買い</div>
+              <div style={{fontSize:15,fontWeight:800,color:"#22d3a0"}}>{fmtMoney(t.buyPrice,isJP)}</div>
+            </div>
+            <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"6px 8px"}}>
+              <div style={{fontSize:10,color:"#f43f5e",marginBottom:2}}>売り（利確）</div>
+              <div style={{fontSize:15,fontWeight:800,color:"#f43f5e"}}>{fmtMoney(t.sellPrice,isJP)}</div>
+            </div>
+            {t.stopPrice!=null&&(
+              <div style={{background:"#1c1400",border:"1px solid #fbbf2440",borderRadius:6,padding:"6px 8px"}}>
+                <div style={{fontSize:10,color:"#fbbf24",marginBottom:2}}>損切り</div>
+                <div style={{fontSize:15,fontWeight:800,color:"#fbbf24"}}>{fmtMoney(t.stopPrice,isJP)}</div>
+              </div>
+            )}
+            <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,padding:"6px 8px"}}>
+              <div style={{fontSize:10,color:"#4a7090",marginBottom:2}}>株数</div>
+              <div style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{t.shares||1}株</div>
+            </div>
           </div>
         )}
 
