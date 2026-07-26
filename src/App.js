@@ -688,6 +688,32 @@ function calcFavSignalAccuracy(){
   var favList=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]");}catch(e){return[];}})();
   return calcSignalAccuracy(favList);
 }
+// シグナル別的中率を複数ホライズン（1日後/3日後/5日後）でまとめて算出
+// どのシグナルがどの時間軸で当たりやすいかを見るための拡張版
+var ACCURACY_HORIZONS=[1,3,5];
+function calcSignalAccuracyMulti(tickers){
+  var statsByH={};
+  ACCURACY_HORIZONS.forEach(function(h){statsByH[h]={};});
+  (tickers||[]).forEach(function(ticker){
+    var hist=(function(){try{return JSON.parse(localStorage.getItem("sh_"+ticker)||"[]");}catch(e){return[];}})();
+    ACCURACY_HORIZONS.forEach(function(h){accumulateSignalStats(hist,h,statsByH[h]);});
+  });
+  var keys={};
+  ACCURACY_HORIZONS.forEach(function(h){Object.keys(statsByH[h]).forEach(function(k){keys[k]=1;});});
+  return Object.keys(keys).map(function(k){
+    var row={signal:k};
+    ACCURACY_HORIZONS.forEach(function(h){
+      var s=statsByH[h][k];
+      row["d"+h]=s?{winRate:Math.round(signalQuality(s,k)*100),total:s.t}:{winRate:null,total:0};
+    });
+    return row;
+  }).sort(function(a,b){return(b.d1.winRate||0)-(a.d1.winRate||0);});
+}
+// お気に入り登録銘柄全体で集計（複数ホライズン版）
+function calcFavSignalAccuracyMulti(){
+  var favList=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]");}catch(e){return[];}})();
+  return calcSignalAccuracyMulti(favList);
+}
 
 // ── スキャン対象銘柄全体での的中率集計（スコア重み調整・AI判定材料用）─────
 // お気に入りは個人の好みで選ばれ銘柄構成に偏りが出るため、重み調整やAIへの
@@ -706,6 +732,39 @@ function getUniverseSignalStats(){
   }catch(e){}
   UNIVERSE_STATS_CACHE=stats;UNIVERSE_STATS_TS=now;
   return stats;
+}
+// ── スコア帯別（0-100点）の実績的中率集計（全スキャン銘柄横断・スコアロジック自体の検証用）──
+// 「スコアが高い銘柄ほど本当に翌営業日上がりやすいか」を帯ごとに可視化する
+var UNIVERSE_BAND_CACHE=null,UNIVERSE_BAND_TS=0;
+var SCORE_BANDS=[{min:0,max:40,label:"〜39"},{min:40,max:60,label:"40-59"},{min:60,max:80,label:"60-79"},{min:80,max:101,label:"80+"}];
+function bandLabelFor(score){
+  for(var i=0;i<SCORE_BANDS.length;i++){if(score>=SCORE_BANDS[i].min&&score<SCORE_BANDS[i].max)return SCORE_BANDS[i].label;}
+  return SCORE_BANDS[SCORE_BANDS.length-1].label;
+}
+function getUniverseBandStats(){
+  var now=Date.now();
+  if(UNIVERSE_BAND_CACHE&&now-UNIVERSE_BAND_TS<UNIVERSE_STATS_TTL) return UNIVERSE_BAND_CACHE;
+  var stats={};
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_")!==0) return;
+      var hist=JSON.parse(localStorage.getItem(k)||"[]");
+      for(var i=0;i<hist.length-1;i++){
+        var cur=hist[i],nxt=hist[i+1];
+        if(cur.p==null||nxt.p==null) continue;
+        var band=bandLabelFor(cur.s);
+        if(!stats[band])stats[band]={w:0,t:0};
+        stats[band].t++;
+        if(nxt.p>cur.p)stats[band].w++;
+      }
+    });
+  }catch(e){}
+  UNIVERSE_BAND_CACHE=SCORE_BANDS.map(function(b){
+    var s=stats[b.label]||{w:0,t:0};
+    return{band:b.label,winRate:s.t>0?Math.round(s.w/s.t*100):null,total:s.t};
+  });
+  UNIVERSE_BAND_TS=now;
+  return UNIVERSE_BAND_CACHE;
 }
 // シグナルの方向（強気/弱気/中立）を踏まえた「精度」を0〜1で返す共通関数。
 // 弱気(state=-1)シグナルは「翌営業日に上がらなかった率」、それ以外は「上がった率」が精度の目安。
@@ -3248,34 +3307,54 @@ function WeightAdjustVerificationPanel(p){
 function SignalAccuracyContent(p){
   var tickers=p&&p.tickers;
   var label=(p&&p.label)||"アプリ予想";
-  var data=tickers?calcSignalAccuracy(tickers):calcFavSignalAccuracy();
+  var data=tickers?calcSignalAccuracyMulti(tickers):calcFavSignalAccuracyMulti();
+  var bandData=getUniverseBandStats();
   var emptyLabel=tickers?(label+"の登録銘柄"):"お気に入り銘柄";
+  var horizons=[{k:"d1",h:"1日後"},{k:"d3",h:"3日後"},{k:"d5",h:"5日後"}];
+  function cellColor(wr){return wr==null?"#4a7090":wr>=60?"#22d3a0":wr>=50?"#fbbf24":"#f43f5e";}
   return(
     <div>
-      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルの予想方向（強気なら上昇/弱気なら下落）が翌営業日に当たった割合です"}</div>
+      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルの予想方向（強気なら上昇/弱気なら下落）が何営業日後に当たったかを表示します"}</div>
       {data.length===0?(
         <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだデータがありません。{emptyLabel}を毎日スキャンすると溜まっていきます。</div>
       ):(
         <div>
           <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
             <div style={{flex:1,minWidth:0}}>シグナル</div>
-            <div style={{width:52,flexShrink:0,textAlign:"right"}}>的中率</div>
-            <div style={{width:40,flexShrink:0,textAlign:"right"}}>件数</div>
+            {horizons.map(function(hz){return <div key={hz.k} style={{width:48,flexShrink:0,textAlign:"right"}}>{hz.h}</div>;})}
           </div>
           {data.map(function(row,i){
-            var reliable=row.total>=5;
-            var color=row.winRate==null?"#4a7090":row.winRate>=60?"#22d3a0":row.winRate>=50?"#fbbf24":"#f43f5e";
             return(
-              <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830",opacity:reliable?1:0.5}}>
+              <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
                 <div style={{flex:1,minWidth:0,color:"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{formatSigKeyLabel(row.signal)}</div>
-                <div style={{width:52,flexShrink:0,textAlign:"right",color:color,fontWeight:700}}>{row.winRate!=null?row.winRate+"%":"-"}</div>
-                <div style={{width:40,flexShrink:0,textAlign:"right",color:"#4a7090"}}>{row.total}</div>
+                {horizons.map(function(hz){
+                  var c=row[hz.k],reliable=c.total>=5;
+                  return <div key={hz.k} title={c.total+"件"} style={{width:48,flexShrink:0,textAlign:"right",color:cellColor(c.winRate),fontWeight:700,opacity:reliable?1:0.5}}>{c.winRate!=null?c.winRate+"%":"-"}</div>;
+                })}
               </div>
             );
           })}
-          <div style={{fontSize:11,color:"#2a6090",marginTop:10}}>※件数5未満は参考値（薄く表示）。件数が増えるほど信頼度が上がります</div>
+          <div style={{fontSize:11,color:"#2a6090",marginTop:10}}>※薄字は件数5件未満（参考値）。数値をタップ/ホバーで件数を確認できます</div>
         </div>
       )}
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>📈 スコア帯別 的中率（全スキャン銘柄）</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>タブに関わらず、これまでスキャンした全銘柄のスコアと翌営業日の値動きを集計。スコアが高いほど的中率が高いかの目安になります</div>
+        {bandData.every(function(b){return b.total===0;})?(
+          <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。スキャンを重ねると溜まっていきます。</div>
+        ):(
+          bandData.map(function(b,i){
+            var reliable=b.total>=5;
+            return(
+              <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:i<bandData.length-1?"1px solid #0a1830":"none",opacity:reliable?1:0.5}}>
+                <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{"スコア "+b.band}</div>
+                <div style={{width:52,textAlign:"right",color:cellColor(b.winRate),fontWeight:700}}>{b.winRate!=null?b.winRate+"%":"-"}</div>
+                <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{b.total}</div>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
