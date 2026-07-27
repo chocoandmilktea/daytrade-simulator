@@ -381,7 +381,7 @@ function getBuyDirection(t){
   return "down";
 }
 
-function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice){
+function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection){
   var list=loadTrades(kind);
   var curPrice=s.rawPrice!=null?s.rawPrice:null;
   // 登録時点で「過去実績に基づく重み補正」が何点効いていたか（検証パネル用）
@@ -393,7 +393,7 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice){
     buyPrice:buyPrice,sellPrice:sellPrice,
     stopPrice:(stopPrice!=null&&stopPrice>0)?stopPrice:null, // 損切り価格（任意）
     shares:shares>0?shares:1,
-    buyDirection:curPrice!=null?(buyPrice<=curPrice?"down":"up"):"down",
+    buyDirection:buyDirection==="up"?"up":"down", // 登録画面のスイッチで指定された値をそのまま使用（自動判定はしない）
     status:"waiting", // waiting(待機中) → active(進行中) → done(完了)
     startPrice:null,startAt:null,endPrice:null,endAt:null,
     pnl:null,pnlPercent:null,exitReason:null, // take_profit(利確) / stop_loss(損切り) / time_exit(引けで強制決済) / forced(強制完了)
@@ -1975,6 +1975,7 @@ function TradeAddModal(p){
   var s=p.s;
   var isMobile=useIsMobile();
   var buyS=useState(p.prefill?String(p.prefill.buy):(s.rawPrice!=null?String(s.rawPrice):""));var buyVal=buyS[0],setBuyVal=buyS[1];
+  var buyDirS=useState("down");var buyDir=buyDirS[0],setBuyDir=buyDirS[1]; // 指値(down)／逆指値(up)。常に「指値」を初期値にし、必要な時だけ手動で切り替える
   var sellS=useState(p.prefill?String(p.prefill.sell):"");var sellVal=sellS[0],setSellVal=sellS[1];
   var stopS=useState(p.prefill&&p.prefill.stop!=null?String(p.prefill.stop):"");var stopVal=stopS[0],setStopVal=stopS[1];
   var sharesS=useState("100");var sharesVal=sharesS[0],setSharesVal=sharesS[1];
@@ -1988,7 +1989,7 @@ function TradeAddModal(p){
   }
   function add(kind){
     if(!valid())return;
-    p.onAddTrade(kind,s,parseFloat(buyVal),parseFloat(sellVal),parseInt(sharesVal),stopVal!==""?parseFloat(stopVal):null);
+    p.onAddTrade(kind,s,parseFloat(buyVal),parseFloat(sellVal),parseInt(sharesVal),stopVal!==""?parseFloat(stopVal):null,buyDir);
     p.onClose();
   }
   return(
@@ -2004,7 +2005,14 @@ function TradeAddModal(p){
           <button onClick={function(){setSellVal(String(s.profitLoss.target));setStopVal(String(s.profitLoss.stop));}} style={{width:"100%",background:"#0a1a3a",border:"1px solid #0ea5e950",borderRadius:8,color:"#0ea5e9",padding:"7px",fontSize:12,fontWeight:700,cursor:"pointer",marginBottom:10}}>📐 標準ライン(ATR)を使う（利確{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}／損切り{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}）</button>
         )}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
-          <div><div style={{fontSize:11,color:"#22d3a0",marginBottom:3}}>買い価格</div><input style={inp} type="number" value={buyVal} onChange={function(e){setBuyVal(e.target.value);}}/></div>
+          <div>
+            <div style={{fontSize:11,color:"#22d3a0",marginBottom:3}}>買い価格</div>
+            <input style={inp} type="number" value={buyVal} onChange={function(e){setBuyVal(e.target.value);}}/>
+            <div style={{display:"flex",gap:4,marginTop:4}}>
+              <button type="button" onClick={function(){setBuyDir("down");}} style={{flex:1,padding:"4px 2px",fontSize:10,fontWeight:700,borderRadius:5,cursor:"pointer",border:"1px solid "+(buyDir==="down"?"#22d3a0":"#1e3050"),background:buyDir==="down"?"#22d3a020":"transparent",color:buyDir==="down"?"#22d3a0":"#4a6080"}}>指値(下値待ち)</button>
+              <button type="button" onClick={function(){setBuyDir("up");}} style={{flex:1,padding:"4px 2px",fontSize:10,fontWeight:700,borderRadius:5,cursor:"pointer",border:"1px solid "+(buyDir==="up"?"#f59e0b":"#1e3050"),background:buyDir==="up"?"#f59e0b20":"transparent",color:buyDir==="up"?"#f59e0b":"#4a6080"}}>逆指値(上抜け待ち)</button>
+            </div>
+          </div>
           <div><div style={{fontSize:11,color:"#f43f5e",marginBottom:3}}>売り価格（利確）</div><input style={inp} type="number" value={sellVal} onChange={function(e){setSellVal(e.target.value);}}/></div>
           <div><div style={{fontSize:11,color:"#4a7090",marginBottom:3}}>株数</div><input style={inp} type="number" value={sharesVal} onChange={function(e){setSharesVal(e.target.value);}}/></div>
         </div>
@@ -3896,8 +3904,8 @@ export default function App(){
   var atS=useState(function(){return loadTrades("app");});var appTrades=atS[0],setAppTrades=atS[1];
   var ptS=useState(function(){return loadTrades("personal");});var personalTrades=ptS[0],setPersonalTrades=ptS[1];
   var tradeRefreshingS=useState(false);var tradeRefreshing=tradeRefreshingS[0],setTradeRefreshing=tradeRefreshingS[1];
-  function addTradeHandler(kind,s,buyPrice,sellPrice,shares,stopPrice){
-    var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice);
+  function addTradeHandler(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection){
+    var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection);
     if(kind==="app"){setAppTrades(next);syncToServer(favs,favGroups,groupNames,next,undefined);}
     else{setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,undefined,next);}
   }
