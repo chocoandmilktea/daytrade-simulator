@@ -602,24 +602,6 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
     "各銘柄について「買い」「売り」「見送り」のいずれかを判定し、理由を1〜2文で日本語で答えてください。\n"+
     "出力形式:\n銘柄コード: 判定（買い/売り/見送り） — 理由";
 }
-// B案フォールバック：AI_DATAタグも末尾JSONも無い場合、本文中の「Entry」「Target」「Stop」の
-// 見出し付近に書かれた価格（例:「7,590〜7,610円」「7,800円」）を正規表現で拾う。
-// これが成功すれば、AIがJSON出力を忘れた回でも登録ボタンだけは表示できる。
-function extractTradeLevelsFromText(text){
-  function pickPrice(section){
-    if(!section) return null;
-    var m=section.match(/([\d,]+(?:\.\d+)?)\s*(?:[〜～-]\s*([\d,]+(?:\.\d+)?))?\s*円/);
-    if(!m) return null;
-    var a=parseFloat(m[1].replace(/,/g,"")),b=m[2]?parseFloat(m[2].replace(/,/g,"")):null;
-    return b!=null?(a+b)/2:a;
-  }
-  function section(label){
-    var m=text.match(new RegExp(label+"[\\s\\S]{0,120}?(?=##|$)","i"));
-    return m?m[0]:null;
-  }
-  var entry=pickPrice(section("Entry")),target=pickPrice(section("Target")),stop=pickPrice(section("Stop"));
-  return (entry==null&&target==null&&stop==null)?null:{entry:entry,target:target,stop:stop};
-}
 async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
   try{
     var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -644,10 +626,6 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
       if(braceIdx!==-1){
         try{parsed=JSON.parse(stripped.slice(braceIdx));cleanText=stripped.slice(0,braceIdx);}catch(je2){}
       }
-    }
-    if(!parsed||typeof parsed.entry==="undefined"){
-      var textLevels=extractTradeLevelsFromText(cleanText);
-      if(textLevels) parsed=textLevels;
     }
     if(parsed&&typeof parsed.entry!=="undefined") setAiEntry(parsed);
     if(parsed&&parsed.forecast) recordAiForecast(s.ticker,s.price,parsed.forecast);
@@ -943,6 +921,22 @@ function getSignalWeight(sigKey){
   var quality=signalQuality(s,sigKey);
   var mult=1+(quality-0.5)*2*maxAdjust;
   return Math.max(1-maxAdjust,Math.min(1+maxAdjust,mult));
+}
+// ── お気に入り並び替え用：利確確率の推定 ─────────────────────────────────
+// 今発火中のシグナルについて、過去実績の的中率(サンプル10件以上のみ)を平均し、
+// スコア(sc)と組み合わせて0〜100の「利確確率」を返す。実績データが無い銘柄は
+// スコアのみで代用する（並び替えから外れないようにするため）。
+function calcProfitProb(s){
+  var stats=getUniverseSignalStats();
+  var total=0,count=0;
+  (s.signals||[]).forEach(function(sig){
+    var key=baseSigLabel(sig.label)+"#"+sig.state;
+    var st=stats[key];
+    if(st&&st.t>=10){total+=signalQuality(st,key);count++;}
+  });
+  if(count===0) return s.score;
+  var histProb=(total/count)*100;
+  return s.score*0.4+histProb*0.6;
 }
 // breakdown表示名 → 実際に積み上がるシグナルラベル群のマッピング（重み適用用）
 var CATEGORY_SIGNAL_MAP={
@@ -2734,7 +2728,7 @@ function FavPanel(p){
   }
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
   var groupedStocks=groupFilter===0?favStocks:favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
-  var displayStocks=(filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){return b.score-a.score;});
+  var displayStocks=(filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){return calcProfitProb(b)-calcProfitProb(a);});
   function fBtn(val,label,activeColor){
     var active=filterMkt===val;
     return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
