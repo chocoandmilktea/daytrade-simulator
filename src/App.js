@@ -602,6 +602,24 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
     "各銘柄について「買い」「売り」「見送り」のいずれかを判定し、理由を1〜2文で日本語で答えてください。\n"+
     "出力形式:\n銘柄コード: 判定（買い/売り/見送り） — 理由";
 }
+// B案フォールバック：AI_DATAタグも末尾JSONも無い場合、本文中の「Entry」「Target」「Stop」の
+// 見出し付近に書かれた価格（例:「7,590〜7,610円」「7,800円」）を正規表現で拾う。
+// これが成功すれば、AIがJSON出力を忘れた回でも登録ボタンだけは表示できる。
+function extractTradeLevelsFromText(text){
+  function pickPrice(section){
+    if(!section) return null;
+    var m=section.match(/([\d,]+(?:\.\d+)?)\s*(?:[〜～-]\s*([\d,]+(?:\.\d+)?))?\s*円/);
+    if(!m) return null;
+    var a=parseFloat(m[1].replace(/,/g,"")),b=m[2]?parseFloat(m[2].replace(/,/g,"")):null;
+    return b!=null?(a+b)/2:a;
+  }
+  function section(label){
+    var m=text.match(new RegExp(label+"[\\s\\S]{0,120}?(?=##|$)","i"));
+    return m?m[0]:null;
+  }
+  var entry=pickPrice(section("Entry")),target=pickPrice(section("Target")),stop=pickPrice(section("Stop"));
+  return (entry==null&&target==null&&stop==null)?null:{entry:entry,target:target,stop:stop};
+}
 async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
   try{
     var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -626,6 +644,10 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
       if(braceIdx!==-1){
         try{parsed=JSON.parse(stripped.slice(braceIdx));cleanText=stripped.slice(0,braceIdx);}catch(je2){}
       }
+    }
+    if(!parsed||typeof parsed.entry==="undefined"){
+      var textLevels=extractTradeLevelsFromText(cleanText);
+      if(textLevels) parsed=textLevels;
     }
     if(parsed&&typeof parsed.entry!=="undefined") setAiEntry(parsed);
     if(parsed&&parsed.forecast) recordAiForecast(s.ticker,s.price,parsed.forecast);
