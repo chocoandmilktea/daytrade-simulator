@@ -2629,7 +2629,8 @@ function AllStocksPanel(p){
 
   function isFavRef(t){return favs.indexOf(t)>=0;}
 
-  var displayStocks=stocks.slice().sort(function(a,b){return b.score-a.score;});
+  var sortModeS=useState("score");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "score"=スコア順(既定) / "prob"=利確確率順
+  var displayStocks=stocks.slice().sort(sortMode==="prob"?function(a,b){return calcProfitProb(b)-calcProfitProb(a);}:function(a,b){return b.score-a.score;});
 
 
   if(loading){
@@ -2671,7 +2672,8 @@ function AllStocksPanel(p){
             <span>/{stocks.length}</span>
           </span>
           {ts&&<span style={{fontSize:10,color:"#2a6090",flexShrink:0,whiteSpace:"nowrap"}}>{ts}</span>}
-          <button onClick={onScan} style={{marginLeft:"auto",flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
+          <button onClick={function(){setSortMode(function(m){return m==="prob"?"score":"prob";});}} style={{marginLeft:"auto",flexShrink:0,background:sortMode==="prob"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="prob"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="prob"?"#fbbf24":"#4a6080",padding:"4px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="prob"?700:400,whiteSpace:"nowrap"}}>🎯利確確率順{sortMode==="prob"?"✓":""}</button>
+          <button onClick={onScan} style={{flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
         </div>
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8}}>
