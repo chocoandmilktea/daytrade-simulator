@@ -2703,7 +2703,9 @@ function FavPanel(p){
   var favGroups=p.favGroups,groupNames=p.groupNames,renameGroup=p.renameGroup;
   var isMobile=useIsMobile();
   var extraH=isMobile?MOBILE_TABBAR_H:0; // スマホ用タブバー分の高さを差し引く
-  var favStocks=stocks.filter(function(s){return favs.indexOf(s.ticker)>=0;});
+  // お気に入り登録順（新しく登録した銘柄が先頭）をデフォルト順にする
+  var favStocks=favs.slice().reverse().map(function(t){return stocks.find(function(s){return s.ticker===t;});}).filter(Boolean);
+  var sortModeS=useState("reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "reg"=登録順(新しい順) / "prob"=利確確率順
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
   var filterS=useState("ALL");var filterMkt=filterS[0],setFilterMkt=filterS[1];
@@ -2728,7 +2730,8 @@ function FavPanel(p){
   }
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
   var groupedStocks=groupFilter===0?favStocks:favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
-  var displayStocks=(filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;})).slice().sort(function(a,b){return calcProfitProb(b)-calcProfitProb(a);});
+  var mktFiltered=filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;});
+  var displayStocks=sortMode==="prob"?mktFiltered.slice().sort(function(a,b){return calcProfitProb(b)-calcProfitProb(a);}):mktFiltered;
   function fBtn(val,label,activeColor){
     var active=filterMkt===val;
     return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
@@ -2784,7 +2787,8 @@ function FavPanel(p){
             {fBtn("ALL","全て","#60a5fa")}
             {fBtn("US","US","#3b82f6")}
             {fBtn("JP","JP","#f87171")}
-            <button onClick={function(){setShowAcc(true);}} style={{marginLeft:"auto",background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
+            <button onClick={function(){setSortMode(function(m){return m==="prob"?"reg":"prob";});}} style={{marginLeft:"auto",background:sortMode==="prob"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="prob"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="prob"?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="prob"?700:400}}>🎯利確確率順{sortMode==="prob"?"✓":""}</button>
+            <button onClick={function(){setShowAcc(true);}} style={{background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
           </div>
         )}
         </div>
