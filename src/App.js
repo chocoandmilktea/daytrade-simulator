@@ -2229,12 +2229,12 @@ function OrderBookTendency(p){
     <div style={box}>
       {title}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-        <span style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>売 {sellPct.toFixed(2)}%</span>
-        <span style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>買 {buyPct.toFixed(2)}%</span>
+        <span style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>売 {sellPct.toFixed(2)}%</span>
+        <span style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>買 {buyPct.toFixed(2)}%</span>
       </div>
       <div style={{display:"flex",height:6,borderRadius:3,overflow:"hidden",marginBottom:4}}>
-        <div style={{width:sellPct+"%",background:"#22d3a0"}}/>
-        <div style={{width:buyPct+"%",background:"#f43f5e"}}/>
+        <div style={{width:sellPct+"%",background:"#f43f5e"}}/>
+        <div style={{width:buyPct+"%",background:"#22d3a0"}}/>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#8aa4c0"}}>
         <span>{sellVol.toLocaleString()}株</span>
