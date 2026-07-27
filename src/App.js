@@ -2507,14 +2507,8 @@ function StockDetailPanel(p){
 // スマホ用：詳細パネルを全画面モーダルで表示（全銘柄／お気に入りタブ共通）
 function MobileStockDetailModal(p){
   if(!p.s) return null;
-  var touchS=useState({y:0,atTop:true});var touch=touchS[0],setTouch=touchS[1];
-  function onTouchStart(e){setTouch({y:e.touches[0].clientY,atTop:e.currentTarget.scrollTop<=0});}
-  function onTouchEnd(e){
-    var dy=e.changedTouches[0].clientY-touch.y;
-    if(touch.atTop&&dy>90) p.onClose();
-  }
   return createPortal(
-    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{position:"fixed",inset:0,zIndex:1500,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:10}}>
+    <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",inset:0,zIndex:1500,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:10}}>
       <StockDetailPanel key={p.s&&p.s.ticker} s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading} allStocks={p.allStocks} onAddTrade={p.onAddTrade} onClose={p.onClose} appTrades={p.appTrades} personalTrades={p.personalTrades}/>
     </div>,
     document.body
