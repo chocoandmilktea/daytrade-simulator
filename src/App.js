@@ -223,21 +223,29 @@ async function fetchDaily(ticker){
 }
 
 // 出来高ランキング取得（sector API失敗時の最終フォールバック用に残置）
+// 通信が一時的に不安定な場合に備え、失敗時は1回だけ自動で再試行する
 async function fetchRanking(market){
-  try{
+  async function attempt(){
     var res=await fetch(RANKING_API+"?market="+market,{signal:AbortSignal.timeout(15000),cache:"no-store"});
     if(!res.ok) throw new Error("ranking "+res.status);
     var json=await res.json();
     // ハイブリッド方式：volume・changeも受け取る
     var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume||0,change:s.change||0};});
     return stocks.length>0?stocks:null;
-  }catch(e){return null;}
+  }
+  try{return await attempt();}
+  catch(e){
+    console.warn("[fetchRanking] 1回目失敗、再試行します: "+e.message);
+    try{return await attempt();}
+    catch(e2){console.error("[fetchRanking] 2回目も失敗: "+e2.message);return null;}
+  }
 }
 
 // AI業種選定→J-Quants絞り込みランキング取得（メインの取得経路）
 // manualSectors指定時はAIのweb_search選定をスキップし、指定業種のランキングのみ取得（トークン節約）
+// 通信が一時的に不安定な場合に備え、失敗時は1回だけ自動で再試行する
 async function fetchSectorRanking(manualSectors){
-  try{
+  async function attempt(){
     var url=SECTOR_API;
     if(manualSectors&&manualSectors.length){url+="?sectors="+encodeURIComponent(manualSectors.join(","));}
     var res=await fetch(url,{signal:AbortSignal.timeout(25000),cache:"no-store"});
@@ -245,7 +253,13 @@ async function fetchSectorRanking(manualSectors){
     var json=await res.json();
     var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume||0,change:s.change||0};});
     return{stocks:stocks.length>0?stocks:null,sectors:json.sectors||[]};
-  }catch(e){return{stocks:null,sectors:[]};}
+  }
+  try{return await attempt();}
+  catch(e){
+    console.warn("[fetchSectorRanking] 1回目失敗、再試行します: "+e.message);
+    try{return await attempt();}
+    catch(e2){console.error("[fetchSectorRanking] 2回目も失敗: "+e2.message);return{stocks:null,sectors:[]};}
+  }
 }
 
 // 立花証券システムのログイン可能時間は8:30〜27:00(=翌3:00)。この時間外は
@@ -3976,8 +3990,15 @@ export default function App(){
       var sectorLabel=uResult.sectors&&uResult.sectors.length?uResult.sectors.map(function(s){return s.name;}).join("/"):"通常ランキング";
       // メンテナンス時間帯かつ0件（＝保存データも無かった）の場合だけ、その旨を伝える
       var maintenance=isTachibanaMaintenance();
-      setProgress({done:0,total:0,msg:(maintenance&&jpCount===0)?"⏰ 立花証券システムメンテナンス中(3:00〜8:30)。保存データも無いためお気に入り銘柄のみ表示します":("JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始...")});
-      await new Promise(function(r){setTimeout(r,800);}); // ↑のメッセージが一瞬で上書きされて表示されないのを防ぐため少し待つ
+      // メンテナンス時間外なのに0件＝2回試しても通信が失敗したということなので、はっきり警告を出す
+      var rankingFailed=(!maintenance&&jpCount===0);
+      var progressMsg=(maintenance&&jpCount===0)
+        ?"⏰ 立花証券システムメンテナンス中(3:00〜8:30)。保存データも無いためお気に入り銘柄のみ表示します"
+        :rankingFailed
+        ?"⚠️ ランキング取得に失敗しました（通信エラー）。お気に入り銘柄のみ表示しています。再スキャンをお試しください"
+        :("JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始...");
+      setProgress({done:0,total:0,msg:progressMsg});
+      await new Promise(function(r){setTimeout(r,rankingFailed?2500:800);}); // 警告時は気づけるよう長めに表示
       // 次回「前回の業種を表示」で使えるよう、実際に読み込んだ業種を保存
       if(uResult.sectors&&uResult.sectors.length){
         try{localStorage.setItem("last_sectors",JSON.stringify(uResult.sectors.map(function(s){return s.name;})));}catch(e){}
