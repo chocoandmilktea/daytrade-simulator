@@ -2328,9 +2328,9 @@ function SupportZonePanel(p){
   var unit=p.isJP?"¥":"$";
   var ob=parseOrderBookLevels(p.quote);
   var thickBuy=findThickLevels(ob.buyLevels);
-  var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"};
+  var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px",cursor:"pointer"};
   return(
-    <div style={box}>
+    <div style={box} onClick={p.onInfoClick}>
       <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:4}}>🎯 サポートゾーン</div>
       <SupportZoneRow label="S1(20日安値)" price={support.s1} unit={unit} match={findBoardMatch(support.s1,thickBuy)}/>
       <SupportZoneRow label="S2(60日安値)" price={support.s2} unit={unit} match={findBoardMatch(support.s2,thickBuy)}/>
@@ -2386,6 +2386,7 @@ function StockDetailPanel(p){
   var simTargetInputS=useState("3");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
   var simStopInputS=useState("-5");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
   var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
+  var showSupportInfoS=useState(false);var showSupportInfo=showSupportInfoS[0],setShowSupportInfo=showSupportInfoS[1];
   var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
 
@@ -2486,7 +2487,7 @@ function StockDetailPanel(p){
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:10}}>
           <OrderBookTendency quote={tachibanaQuote}/>
-          <SupportZonePanel support={s.support} quote={tachibanaQuote} isJP={s.market==="JP"}/>
+          <SupportZonePanel support={s.support} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
           {s.profitLoss&&(
             <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン</div>
@@ -2536,6 +2537,32 @@ function StockDetailPanel(p){
             )}
             {!aiLoading&&aiEntry&&ForecastBox(aiEntry.forecast)}
             {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
+          </div>
+        </div>
+      ,document.body)}
+      {showSupportInfo&&createPortal(
+        <div onClick={function(e){if(e.target===e.currentTarget)setShowSupportInfo(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
+          <div style={{background:"#040c18",border:"1px solid #4a90c050",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:"#4a90c0"}}>🎯 サポートゾーンの見方</div>
+              <button onClick={function(){setShowSupportInfo(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+            </div>
+            <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.7}}>
+              <div style={{marginBottom:10}}>板の厚い注文だけだと分かるのは「今この瞬間、板のどこかに大きな買い注文がある」ということだけです。それが意味のある値段なのか、たまたまそこにあるだけなのかは分かりません。</div>
+              <div style={{marginBottom:10}}>サポートゾーンだけだと分かるのは「チャート上でこの値段は過去に何度も意識されてきた節目（S1・S2・ATR下限）」ということだけです。でも今まさに買いたい人がそこにいるかは分かりません。</div>
+              <div style={{marginBottom:10,color:"#d8eeff",fontWeight:700}}>この2つを重ねることで、「過去の実績」と「今の需給」が同じ値段で一致しているかどうかが分かります。「下げ止まりそうな場所」の根拠の強さです。</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:8,padding:"8px 10px"}}>
+                  <b style={{color:"#22d3a0"}}>🧱重なりバッジが出る</b><br/>節目と厚い買い注文が重なっている → 過去にも意識され、今も買いたい人がいる値段。根拠が2つ揃っているので、支えとして信頼度が高い
+                </div>
+                <div style={{background:"#1c1400",border:"1px solid #fbbf2440",borderRadius:8,padding:"8px 10px"}}>
+                  <b style={{color:"#fbbf24"}}>バッジなし</b><br/>節目はあるが厚い注文が重なっていない → チャート的には節目でも、今この瞬間に買いが入っているわけではない。支えとしてはやや弱い、または見せ板の可能性も考慮した方がいい
+                </div>
+                <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:8,padding:"8px 10px"}}>
+                  <b style={{color:"#f43f5e"}}>節目と無関係な厚い注文</b><br/>なぜそこに注文があるのか根拠が薄い。理由がわからない厚い注文は警戒対象
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       ,document.body)}
