@@ -442,7 +442,8 @@ function editTradeRecord(kind,id,updates){
   var list=loadTrades(kind).map(function(t){
     if(t.id!==id)return t;
     var next=Object.assign({},t,updates);
-    if(t.status==="waiting"&&updates.buyPrice!=null&&t.lastPrice!=null){
+    if(t.status==="waiting"&&updates.buyDirection==null&&updates.buyPrice!=null&&t.lastPrice!=null){
+      // 指値/逆指値が手動指定されなかった場合のみ、価格変更から自動判定する
       next.buyDirection=updates.buyPrice<=t.lastPrice?"down":"up";
     }
     if(t.status!=="waiting"&&updates.buyPrice!=null)next.startPrice=updates.buyPrice;
@@ -1923,6 +1924,8 @@ function displaySignalLabel(label){return label==="寄り付きレンジ"?"ORB":
 
 // ── シグナル詳細（カードの展開パネルとチャートモーダルで共通利用）────────
 function SignalDetailList(p){
+  var isMobile=useIsMobile();
+  var labelFs=isMobile?10:12,valFs=isMobile?10:12,stateFs=isMobile?6:8;
   var weightOpenS=useState(false);var weightOpen=weightOpenS[0],setWeightOpen=weightOpenS[1];
   var sortedSignals=(p.signals||[])
     .filter(function(sig){return sig.label==="BB"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");})
@@ -1935,10 +1938,10 @@ function SignalDetailList(p){
         {sortedSignals.map(function(sig,i){
           return(
             <div key={i} onClick={function(){setWeightOpen(true);}} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040",cursor:"pointer"}}>
-              <span style={{fontSize:12,color:"#4a7090"}}>{displaySignalLabel(sig.label)}</span>
+              <span style={{fontSize:labelFs,color:"#4a7090"}}>{displaySignalLabel(sig.label)}</span>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                <span style={{fontSize:12,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
-                <span style={{fontSize:8,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
+                <span style={{fontSize:valFs,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
+                <span style={{fontSize:stateFs,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
               </div>
             </div>
           );
@@ -2423,7 +2426,7 @@ function StockDetailPanel(p){
           <OrderBookTendency quote={tachibanaQuote}/>
           {s.profitLoss&&(
             <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン（標準型）</div>
+              <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
                 <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}>
                   <div style={{fontSize:9,color:"#22d3a0",marginBottom:2}}>💰 利確目標(ATR×1.5)</div>
@@ -2852,13 +2855,18 @@ function TradePanel(p){
   var showAccS=useState(!isMobile);var showAccuracy=showAccS[0],setShowAccuracy=showAccS[1];
   var selTrade=selId?list.find(function(t){return t.id===selId;}):null;
   var selStock=selTrade?stocks.find(function(x){return x.ticker===selTrade.ticker;}):null;
+  // 「完了」セクションの開閉状態（初期状態は閉じておく）
+  var doneOpenS=useState(false);var doneOpen=doneOpenS[0],setDoneOpen=doneOpenS[1];
 
-  function Section(title,items,color,useScoreColor){
+  function Section(title,items,color,useScoreColor,collapsible){
     if(!items.length)return null;
+    var open=collapsible?doneOpen:true;
     return(
       <div>
-        <div style={{fontSize:11,fontWeight:700,color:color,margin:"2px 0 6px"}}>● {title}（{items.length}）</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
+        <div onClick={collapsible?function(){setDoneOpen(function(v){return !v;});}:undefined} style={{fontSize:11,fontWeight:700,color:color,margin:"2px 0 6px",cursor:collapsible?"pointer":"default",userSelect:"none"}}>
+          {collapsible?(open?"▼":"▶"):"●"} {title}（{items.length}）
+        </div>
+        {open&&<div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
           {items.slice().reverse().map(function(t){
             var tickerColor=null;
             if(useScoreColor){
@@ -2867,7 +2875,7 @@ function TradePanel(p){
             }
             return <TradeMiniTile key={t.id} t={t} tickerColor={tickerColor} onClick={function(){setSelId(t.id);}}/>;
           })}
-        </div>
+        </div>}
       </div>
     );
   }
@@ -2905,7 +2913,7 @@ function TradePanel(p){
 
           {Section("進行中",activeList,"#0ea5e9")}
           {Section("待機中",waitingList,"#4a7090",true)}
-          {Section("完了",doneList,"#22d3a0")}
+          {Section("完了",doneList,"#22d3a0",false,true)}
         </div>
 
         {showAccuracy&&(
@@ -2959,19 +2967,22 @@ function TradeDetailModal(p){
   var sellS=useState(String(t.sellPrice));var sellVal=sellS[0],setSellVal=sellS[1];
   var stopS=useState(t.stopPrice!=null?String(t.stopPrice):"");var stopVal=stopS[0],setStopVal=stopS[1];
   var sharesS=useState(String(t.shares||1));var sharesVal=sharesS[0],setSharesVal=sharesS[1];
+  var buyDirS=useState(getBuyDirection(t));var buyDir=buyDirS[0],setBuyDir=buyDirS[1]; // 指値(down)／逆指値(up)。待機中のみ編集可能
   var STATUS_LABEL={waiting:"待機中",active:"進行中",done:"完了"};
   var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0"};
   var EXIT_LABEL={take_profit:"利確で完了",stop_loss:"損切りで完了",time_exit:"引けで強制完了（持ち越しなし）",forced:"強制完了"};
   var unrealized=(t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?((t.lastPrice-t.startPrice)*(t.shares||1)):null;
   var editInp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
 
-  function startEdit(){setBuyVal(String(t.buyPrice));setSellVal(String(t.sellPrice));setStopVal(t.stopPrice!=null?String(t.stopPrice):"");setSharesVal(String(t.shares||1));setEditing(true);}
+  function startEdit(){setBuyVal(String(t.buyPrice));setSellVal(String(t.sellPrice));setStopVal(t.stopPrice!=null?String(t.stopPrice):"");setSharesVal(String(t.shares||1));setBuyDir(getBuyDirection(t));setEditing(true);}
   function saveEdit(){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
     if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return;
     var sp=stopVal!==""?parseFloat(stopVal):null;
     if(sp!=null&&(isNaN(sp)||sp<=0))return;
-    p.onEditTrade(kind,t.id,{buyPrice:b,sellPrice:se,shares:sh,stopPrice:sp});
+    var updates={buyPrice:b,sellPrice:se,shares:sh,stopPrice:sp};
+    if(t.status==="waiting")updates.buyDirection=buyDir; // 待機中のみ手動指定を反映
+    p.onEditTrade(kind,t.id,updates);
     setEditing(false);
   }
   function forceComplete(){
@@ -3001,6 +3012,15 @@ function TradeDetailModal(p){
               <div><div style={{fontSize:10,color:"#4a7090",marginBottom:2}}>株数</div><input type="number" value={sharesVal} onChange={function(e){setSharesVal(e.target.value);}} style={editInp}/></div>
             </div>
             <div><div style={{fontSize:10,color:"#fbbf24",marginBottom:2}}>損切り（任意）</div><input type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} style={editInp} placeholder="未設定でもOK"/></div>
+            {t.status==="waiting"&&(
+              <div>
+                <div style={{fontSize:10,color:"#4a7090",marginBottom:2}}>買い方向</div>
+                <div style={{display:"flex",gap:6}}>
+                  <button type="button" onClick={function(){setBuyDir("down");}} style={{flex:1,padding:"6px 2px",fontSize:11,fontWeight:700,borderRadius:5,cursor:"pointer",border:"1px solid "+(buyDir==="down"?"#22d3a0":"#1e3050"),background:buyDir==="down"?"#22d3a020":"transparent",color:buyDir==="down"?"#22d3a0":"#4a6080"}}>指値(下値待ち)</button>
+                  <button type="button" onClick={function(){setBuyDir("up");}} style={{flex:1,padding:"6px 2px",fontSize:11,fontWeight:700,borderRadius:5,cursor:"pointer",border:"1px solid "+(buyDir==="up"?"#f59e0b":"#1e3050"),background:buyDir==="up"?"#f59e0b20":"transparent",color:buyDir==="up"?"#f59e0b":"#4a6080"}}>逆指値(上抜け待ち)</button>
+                </div>
+              </div>
+            )}
           </div>
         ):(
           <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>
