@@ -2335,7 +2335,6 @@ function SupportZonePanel(p){
       <SupportZoneRow label="S1(20日安値)" price={support.s1} unit={unit} match={findBoardMatch(support.s1,thickBuy)}/>
       <SupportZoneRow label="S2(60日安値)" price={support.s2} unit={unit} match={findBoardMatch(support.s2,thickBuy)}/>
       <SupportZoneRow label="ATR下限(×1.5)" price={support.atrFloor} unit={unit} match={findBoardMatch(support.atrFloor,thickBuy)}/>
-      <div style={{fontSize:9,color:"#2a5070",marginTop:5}}>節目の近く（±1%）に板の厚い買い注文があると「重なり」を表示</div>
     </div>
   );
 }
