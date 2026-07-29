@@ -2238,35 +2238,46 @@ function TachibanaQuoteModal(p){
 // 立花証券リアルタイム中継の生データ（TachibanaQuoteModalと同じ元データ）から
 // 売気配(GAV)・買気配(GBV)の数量を合計し、iSPEEDの「売買傾向」と同じ考え方で
 // 比率（%）を出す。板の一覧やグラフは出さず、比率と合計株数だけのシンプル表示。
+// 気配値(quote)から板の各段（買い・売り）の値段と株数を取り出す共通処理
+function parseOrderBookLevels(quote){
+  var result={found:false,sellLevels:[],buyLevels:[],sellVol:0,buyVol:0};
+  if(!quote||!quote.fields) return result;
+  var f=quote.fields;
+  for(var n=1;n<=10;n++){
+    var av=f["p_1_GAV"+n],bv=f["p_1_GBV"+n];
+    var ap=f["p_1_GAP"+n],bp=f["p_1_GBP"+n];
+    if(av!=null){var avn=Number(av)||0;result.sellVol+=avn;result.found=true;result.sellLevels.push({n:n,price:ap!=null?Number(ap):null,vol:avn});}
+    if(bv!=null){var bvn=Number(bv)||0;result.buyVol+=bvn;result.found=true;result.buyLevels.push({n:n,price:bp!=null?Number(bp):null,vol:bvn});}
+  }
+  return result;
+}
 // 板の中で最も注文量が多い1本を返す（株数ではなく「値段」を見せたい時に使う）
 function maxLevel(levels){
   var valid=levels.filter(function(l){return l.vol>0;});
   if(valid.length===0) return null;
   return valid.reduce(function(best,l){return(!best||l.vol>best.vol)?l:best;},null);
 }
+// 板の中で「周辺の値段に比べて極端に多い注文」を検出する（平均のTHICK_ORDER_MULTIPLIER倍以上）
+var THICK_ORDER_MULTIPLIER=4;
+function findThickLevels(levels){
+  var valid=levels.filter(function(l){return l.vol>0&&l.price!=null;});
+  if(valid.length<2) return [];
+  var avg=valid.reduce(function(s,l){return s+l.vol;},0)/valid.length;
+  if(avg<=0) return [];
+  return valid.filter(function(l){return l.vol>=avg*THICK_ORDER_MULTIPLIER;});
+}
 function OrderBookTendency(p){
   var q=p.quote;
   var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"};
   var title=<div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 売買傾向</div>;
-  if(!q||!q.fields){
+  var ob=parseOrderBookLevels(q);
+  if(!ob.found){
     return <div style={box}>{title}<div style={{fontSize:11,color:"#4a7090"}}>気配値取得中…</div></div>;
   }
-  var f=q.fields;
-  var sellVol=0,buyVol=0,found=false;
-  var sellLevels=[],buyLevels=[];
-  for(var n=1;n<=10;n++){
-    var av=f["p_1_GAV"+n],bv=f["p_1_GBV"+n];
-    var ap=f["p_1_GAP"+n],bp=f["p_1_GBP"+n];
-    if(av!=null){var avn=Number(av)||0;sellVol+=avn;found=true;sellLevels.push({n:n,price:ap!=null?Number(ap):null,vol:avn});}
-    if(bv!=null){var bvn=Number(bv)||0;buyVol+=bvn;found=true;buyLevels.push({n:n,price:bp!=null?Number(bp):null,vol:bvn});}
-  }
-  if(!found){
-    return <div style={box}>{title}<div style={{fontSize:11,color:"#4a7090"}}>気配値取得中…</div></div>;
-  }
-  var total=sellVol+buyVol;
-  var sellPct=total>0?sellVol/total*100:50;
-  var buyPct=total>0?buyVol/total*100:50;
-  var maxSell=maxLevel(sellLevels),maxBuy=maxLevel(buyLevels);
+  var total=ob.sellVol+ob.buyVol;
+  var sellPct=total>0?ob.sellVol/total*100:50;
+  var buyPct=total>0?ob.buyVol/total*100:50;
+  var maxSell=maxLevel(ob.sellLevels),maxBuy=maxLevel(ob.buyLevels);
   function levelLabel(l){return l?(l.price!=null?l.price.toLocaleString()+"円":l.n+"本目"):"—";}
   return(
     <div style={box}>
@@ -2283,6 +2294,48 @@ function OrderBookTendency(p){
         <span>最多 {levelLabel(maxSell)}</span>
         <span>最多 {levelLabel(maxBuy)}</span>
       </div>
+    </div>
+  );
+}
+
+// ── サポートゾーン可視化：チャート由来の節目（S1/S2/ATR下限）と、板の厚い買い注文が
+// 近い値段で重なっているかを照合する。二階堂式「節目＋厚い買い注文＝支えが強い」の考え方。
+var SUPPORT_MATCH_TOLERANCE=0.01; // 節目からこの割合以内に厚い注文があれば「重なり」とみなす（1%）
+function findBoardMatch(targetPrice,thickLevels){
+  if(targetPrice==null) return null;
+  var best=null,bestDiff=Infinity;
+  thickLevels.forEach(function(l){
+    if(l.price==null) return;
+    var diff=Math.abs(l.price-targetPrice)/targetPrice;
+    if(diff<=SUPPORT_MATCH_TOLERANCE&&diff<bestDiff){best=l;bestDiff=diff;}
+  });
+  return best;
+}
+function SupportZoneRow(p){
+  return(
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,padding:"4px 0",borderBottom:"1px solid #0e2038"}}>
+      <span style={{color:"#8aa4c0"}}>{p.label}</span>
+      <span style={{display:"flex",alignItems:"center",gap:6}}>
+        <b style={{color:"#d8eeff"}}>{p.unit}{p.price.toLocaleString()}</b>
+        {p.match&&<span style={{fontSize:9,color:"#22d3a0",background:"#052e16",border:"1px solid #22d3a050",borderRadius:4,padding:"1px 5px",whiteSpace:"nowrap"}}>🧱重なり {p.match.vol.toLocaleString()}株</span>}
+      </span>
+    </div>
+  );
+}
+function SupportZonePanel(p){
+  var support=p.support;
+  if(!support) return null;
+  var unit=p.isJP?"¥":"$";
+  var ob=parseOrderBookLevels(p.quote);
+  var thickBuy=findThickLevels(ob.buyLevels);
+  var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"};
+  return(
+    <div style={box}>
+      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:4}}>🎯 サポートゾーン</div>
+      <SupportZoneRow label="S1(20日安値)" price={support.s1} unit={unit} match={findBoardMatch(support.s1,thickBuy)}/>
+      <SupportZoneRow label="S2(60日安値)" price={support.s2} unit={unit} match={findBoardMatch(support.s2,thickBuy)}/>
+      <SupportZoneRow label="ATR下限(×1.5)" price={support.atrFloor} unit={unit} match={findBoardMatch(support.atrFloor,thickBuy)}/>
+      <div style={{fontSize:9,color:"#2a5070",marginTop:5}}>節目の近く（±1%）に板の厚い買い注文があると「重なり」を表示</div>
     </div>
   );
 }
@@ -2433,6 +2486,7 @@ function StockDetailPanel(p){
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:10}}>
           <OrderBookTendency quote={tachibanaQuote}/>
+          <SupportZonePanel support={s.support} quote={tachibanaQuote} isJP={s.market==="JP"}/>
           {s.profitLoss&&(
             <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン</div>
