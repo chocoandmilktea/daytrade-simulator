@@ -2244,41 +2244,6 @@ function maxLevel(levels){
   if(valid.length===0) return null;
   return valid.reduce(function(best,l){return(!best||l.vol>best.vol)?l:best;},null);
 }
-// 板の中で「周辺の値段に比べて極端に多い注文」を検出する。
-// 固定の倍率ではなく、その板の平均株数に対する相対倍率で判定する（THICK_ORDER_MULTIPLIER倍以上＝厚いとみなす）。
-var THICK_ORDER_MULTIPLIER=4;
-function findThickLevels(levels){
-  var valid=levels.filter(function(l){return l.vol>0;});
-  if(valid.length<2) return [];
-  var avg=valid.reduce(function(s,l){return s+l.vol;},0)/valid.length;
-  if(avg<=0) return [];
-  return valid.filter(function(l){return l.vol>=avg*THICK_ORDER_MULTIPLIER;})
-    .sort(function(a,b){return b.vol-a.vol;});
-}
-// 厚い注文の値段と数量を表示する小パーツ（買い＝支えの目安／売り＝上値の重さの目安）
-// 金額を万円・億円単位の読みやすい表記にする（例: 35,058,800円 → 3,506万円）
-function formatYenCompact(yen){
-  if(yen>=100000000) return (yen/100000000).toFixed(2)+"億円";
-  if(yen>=10000) return Math.round(yen/10000).toLocaleString()+"万円";
-  return Math.round(yen).toLocaleString()+"円";
-}
-function ThickLevelList(p){
-  if(!p.levels||p.levels.length===0) return null;
-  return(
-    <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #0e2038"}}>
-      <div style={{fontSize:10,fontWeight:700,color:p.color,marginBottom:3}}>🧱 {p.label}（周辺平均の{THICK_ORDER_MULTIPLIER}倍以上）</div>
-      {p.levels.slice(0,2).map(function(l){
-        return(
-          <div key={l.n} style={{fontSize:11,color:"#a8c4e0",display:"flex",justifyContent:"space-between"}}>
-            <span>{l.price!=null?l.price.toLocaleString()+"円":(l.n+"本目")}</span>
-            <span style={{color:p.color,fontWeight:700}}>{l.price!=null?formatYenCompact(l.price*l.vol):l.vol.toLocaleString()+"株"}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function OrderBookTendency(p){
   var q=p.quote;
   var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"};
@@ -2291,7 +2256,6 @@ function OrderBookTendency(p){
   var sellLevels=[],buyLevels=[];
   for(var n=1;n<=10;n++){
     var av=f["p_1_GAV"+n],bv=f["p_1_GBV"+n];
-    // 値段フィールド名は未確認のため候補を試す（見つからなければ「N本目」表示にフォールバック）
     var ap=f["p_1_GAP"+n],bp=f["p_1_GBP"+n];
     if(av!=null){var avn=Number(av)||0;sellVol+=avn;found=true;sellLevels.push({n:n,price:ap!=null?Number(ap):null,vol:avn});}
     if(bv!=null){var bvn=Number(bv)||0;buyVol+=bvn;found=true;buyLevels.push({n:n,price:bp!=null?Number(bp):null,vol:bvn});}
@@ -2302,8 +2266,6 @@ function OrderBookTendency(p){
   var total=sellVol+buyVol;
   var sellPct=total>0?sellVol/total*100:50;
   var buyPct=total>0?buyVol/total*100:50;
-  var thickBuy=findThickLevels(buyLevels);
-  var thickSell=findThickLevels(sellLevels);
   var maxSell=maxLevel(sellLevels),maxBuy=maxLevel(buyLevels);
   function levelLabel(l){return l?(l.price!=null?l.price.toLocaleString()+"円":l.n+"本目"):"—";}
   return(
@@ -2321,9 +2283,6 @@ function OrderBookTendency(p){
         <span>最多 {levelLabel(maxSell)}</span>
         <span>最多 {levelLabel(maxBuy)}</span>
       </div>
-      <ThickLevelList levels={thickBuy} label="厚い買い注文（支えの目安）" color="#22d3a0"/>
-      <ThickLevelList levels={thickSell} label="厚い売り注文（上値の重さの目安）" color="#f43f5e"/>
-      <div style={{fontSize:9,color:"#2a5070",marginTop:5}}>立花証券リアルタイム中継・気配値合計から算出（数秒遅延あり）</div>
     </div>
   );
 }
@@ -2487,7 +2446,6 @@ function StockDetailPanel(p){
                   <div style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}</div>
                 </div>
               </div>
-              <div style={{fontSize:10,color:"#2a5070",marginTop:5}}>現在値からの目安値幅（リスクリワード比1:2の標準型）</div>
             </div>
           )}
         </div>
