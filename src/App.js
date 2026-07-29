@@ -1925,7 +1925,7 @@ function displaySignalLabel(label){return label==="寄り付きレンジ"?"ORB":
 // ── シグナル詳細（カードの展開パネルとチャートモーダルで共通利用）────────
 function SignalDetailList(p){
   var isMobile=useIsMobile();
-  var labelFs=isMobile?10:12,valFs=isMobile?10:12,stateFs=isMobile?6:8;
+  var labelFs=isMobile?10:12,valFs=isMobile?10:12;
   var weightOpenS=useState(false);var weightOpen=weightOpenS[0],setWeightOpen=weightOpenS[1];
   var sortedSignals=(p.signals||[])
     .filter(function(sig){return sig.label==="BB"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");})
@@ -1941,7 +1941,6 @@ function SignalDetailList(p){
               <span style={{fontSize:labelFs,color:"#4a7090"}}>{displaySignalLabel(sig.label)}</span>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                 <span style={{fontSize:valFs,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
-                <span style={{fontSize:stateFs,color:stateColor(sig.state)}}>{stateLabel(sig.state)}</span>
               </div>
             </div>
           );
@@ -2283,8 +2282,8 @@ function OrderBookTendency(p){
     <div style={box}>
       {title}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-        <span style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>売 {sellPct.toFixed(2)}%</span>
-        <span style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>買 {buyPct.toFixed(2)}%</span>
+        <span style={{fontSize:12,fontWeight:800,color:"#f43f5e"}}>売 {sellPct.toFixed(2)}%</span>
+        <span style={{fontSize:12,fontWeight:800,color:"#22d3a0"}}>買 {buyPct.toFixed(2)}%</span>
       </div>
       <div style={{display:"flex",height:6,borderRadius:3,overflow:"hidden",marginBottom:4}}>
         <div style={{width:sellPct+"%",background:"#f43f5e"}}/>
@@ -2313,10 +2312,10 @@ function findBoardMatch(targetPrice,thickLevels){
 }
 function SupportZoneRow(p){
   return(
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,padding:"4px 0",borderBottom:"1px solid #0e2038"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,padding:"4px 0",borderBottom:"1px solid #0e2038"}}>
       <span style={{color:"#8aa4c0"}}>{p.label}</span>
       <span style={{display:"flex",alignItems:"center",gap:6}}>
-        <b style={{color:"#d8eeff"}}>{p.unit}{p.price.toLocaleString()}</b>
+        <b style={{color:"#d8eeff",fontSize:11}}>{p.unit}{p.price.toLocaleString()}</b>
         {p.match&&<span style={{fontSize:9,color:"#22d3a0",background:"#052e16",border:"1px solid #22d3a050",borderRadius:4,padding:"1px 5px",whiteSpace:"nowrap"}}>🧱重なり {p.match.vol.toLocaleString()}株</span>}
       </span>
     </div>
@@ -2484,7 +2483,7 @@ function StockDetailPanel(p){
         <div style={{minWidth:0}}>
           <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
-        <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
           <OrderBookTendency quote={tachibanaQuote}/>
           <SupportZonePanel support={s.support} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
           {s.profitLoss&&(
@@ -2492,11 +2491,11 @@ function StockDetailPanel(p){
               <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
                 <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}>
-                  <div style={{fontSize:9,color:"#22d3a0",marginBottom:2}}>💰 利確目標(ATR×1.5)</div>
+                  <div style={{fontSize:9,color:"#22d3a0",marginBottom:2}}>💰 ATR×1.5</div>
                   <div style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}</div>
                 </div>
                 <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"5px 8px"}}>
-                  <div style={{fontSize:9,color:"#f43f5e",marginBottom:2}}>🛑 損切り(ATR×0.75)</div>
+                  <div style={{fontSize:9,color:"#f43f5e",marginBottom:2}}>🛑 ATR×0.75</div>
                   <div style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}</div>
                 </div>
               </div>
