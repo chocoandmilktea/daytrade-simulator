@@ -2238,6 +2238,12 @@ function TachibanaQuoteModal(p){
 // 立花証券リアルタイム中継の生データ（TachibanaQuoteModalと同じ元データ）から
 // 売気配(GAV)・買気配(GBV)の数量を合計し、iSPEEDの「売買傾向」と同じ考え方で
 // 比率（%）を出す。板の一覧やグラフは出さず、比率と合計株数だけのシンプル表示。
+// 板の中で最も注文量が多い1本を返す（株数ではなく「値段」を見せたい時に使う）
+function maxLevel(levels){
+  var valid=levels.filter(function(l){return l.vol>0;});
+  if(valid.length===0) return null;
+  return valid.reduce(function(best,l){return(!best||l.vol>best.vol)?l:best;},null);
+}
 // 板の中で「周辺の値段に比べて極端に多い注文」を検出する。
 // 固定の倍率ではなく、その板の平均株数に対する相対倍率で判定する（THICK_ORDER_MULTIPLIER倍以上＝厚いとみなす）。
 var THICK_ORDER_MULTIPLIER=4;
@@ -2250,6 +2256,12 @@ function findThickLevels(levels){
     .sort(function(a,b){return b.vol-a.vol;});
 }
 // 厚い注文の値段と数量を表示する小パーツ（買い＝支えの目安／売り＝上値の重さの目安）
+// 金額を万円・億円単位の読みやすい表記にする（例: 35,058,800円 → 3,506万円）
+function formatYenCompact(yen){
+  if(yen>=100000000) return (yen/100000000).toFixed(2)+"億円";
+  if(yen>=10000) return Math.round(yen/10000).toLocaleString()+"万円";
+  return Math.round(yen).toLocaleString()+"円";
+}
 function ThickLevelList(p){
   if(!p.levels||p.levels.length===0) return null;
   return(
@@ -2259,7 +2271,7 @@ function ThickLevelList(p){
         return(
           <div key={l.n} style={{fontSize:11,color:"#a8c4e0",display:"flex",justifyContent:"space-between"}}>
             <span>{l.price!=null?l.price.toLocaleString()+"円":(l.n+"本目")}</span>
-            <span style={{color:p.color,fontWeight:700}}>{l.vol.toLocaleString()}株</span>
+            <span style={{color:p.color,fontWeight:700}}>{l.price!=null?formatYenCompact(l.price*l.vol):l.vol.toLocaleString()+"株"}</span>
           </div>
         );
       })}
@@ -2292,6 +2304,8 @@ function OrderBookTendency(p){
   var buyPct=total>0?buyVol/total*100:50;
   var thickBuy=findThickLevels(buyLevels);
   var thickSell=findThickLevels(sellLevels);
+  var maxSell=maxLevel(sellLevels),maxBuy=maxLevel(buyLevels);
+  function levelLabel(l){return l?(l.price!=null?l.price.toLocaleString()+"円":l.n+"本目"):"—";}
   return(
     <div style={box}>
       {title}
@@ -2304,8 +2318,8 @@ function OrderBookTendency(p){
         <div style={{width:buyPct+"%",background:"#22d3a0"}}/>
       </div>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#8aa4c0"}}>
-        <span>{sellVol.toLocaleString()}株</span>
-        <span>{buyVol.toLocaleString()}株</span>
+        <span>最多 {levelLabel(maxSell)}</span>
+        <span>最多 {levelLabel(maxBuy)}</span>
       </div>
       <ThickLevelList levels={thickBuy} label="厚い買い注文（支えの目安）" color="#22d3a0"/>
       <ThickLevelList levels={thickSell} label="厚い売り注文（上値の重さの目安）" color="#f43f5e"/>
