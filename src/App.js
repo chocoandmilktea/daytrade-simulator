@@ -1940,7 +1940,7 @@ function SignalDetailList(p){
             <div key={i} onClick={function(){setWeightOpen(true);}} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040",cursor:"pointer"}}>
               <span style={{fontSize:labelFs,color:"#4a7090"}}>{displaySignalLabel(sig.label)}</span>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                <span style={{fontSize:valFs,fontWeight:700,color:stateColor(sig.state)}}>{sig.val}</span>
+                <span style={{fontSize:valFs,fontWeight:700,color:stateColor(sig.state),textAlign:"right"}}>{sig.val}</span>
               </div>
             </div>
           );
@@ -2315,8 +2315,8 @@ function SupportZoneRow(p){
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,padding:"4px 0",borderBottom:"1px solid #0e2038"}}>
       <span style={{color:"#8aa4c0"}}>{p.label}</span>
       <span style={{display:"flex",alignItems:"center",gap:6}}>
+        {p.match&&<span style={{fontSize:9,color:"#22d3a0",background:"#052e16",border:"1px solid #22d3a050",borderRadius:4,padding:"1px 5px",whiteSpace:"nowrap"}}>🧱重なり</span>}
         <b style={{color:"#d8eeff",fontSize:11}}>{p.unit}{p.price.toLocaleString()}</b>
-        {p.match&&<span style={{fontSize:9,color:"#22d3a0",background:"#052e16",border:"1px solid #22d3a050",borderRadius:4,padding:"1px 5px",whiteSpace:"nowrap"}}>🧱重なり {p.match.vol.toLocaleString()}株</span>}
       </span>
     </div>
   );
@@ -2413,7 +2413,7 @@ function StockDetailPanel(p){
           <div style={{minWidth:0}}>
             <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
               <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
-              <span style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{s.ticker.replace(".T","")}</span>
+              <span style={{fontSize:isMobile?12:15,fontWeight:800,color:"#d8eeff"}}>{s.ticker.replace(".T","")}</span>
               {s.tradeLabel&&<span style={bStyle("#0a0a1a","1px solid "+s.tradeColor,s.tradeColor)}>{s.tradeLabel}</span>}
               {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
               {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
@@ -2431,7 +2431,7 @@ function StockDetailPanel(p){
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:8,padding:"10px 14px"}}>
         <div onClick={function(){if(s.market==="JP") setShowTachibana(true);}} style={s.market==="JP"?{cursor:"pointer"}:null}>
-          <span style={{fontSize:18,fontWeight:800,color:"#d8eeff"}}>{liveTick&&liveTick.price!=null?fmtMoney(liveTick.price,true):s.price}</span>
+          <span style={{fontSize:isMobile?14:18,fontWeight:800,color:"#d8eeff"}}>{liveTick&&liveTick.price!=null?fmtMoney(liveTick.price,true):s.price}</span>
           {liveTick&&liveTick.price!=null&&<span style={{fontSize:9,fontWeight:700,color:"#22d3a0",marginLeft:6}}>● LIVE</span>}
           {s.market==="JP"&&<span style={{fontSize:9,color:"#4a7090",marginLeft:6}}>📡詳細</span>}
           {s.market==="US"&&p.usdJpy&&<div style={{fontSize:13,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>}
@@ -2441,7 +2441,7 @@ function StockDetailPanel(p){
           {s.real!==false&&(function(){
             var pct=liveTick&&liveTick.changePct!=null?liveTick.changePct:parseFloat(s.change);
             var up=pct>=0;
-            return <span style={{fontSize:15,fontWeight:700,color:up?"#22d3a0":"#f43f5e"}}>{up?"▲":"▼"}{Math.abs(pct).toFixed(2)}%</span>;
+            return <span style={{fontSize:isMobile?12:15,fontWeight:700,color:up?"#22d3a0":"#f43f5e"}}>{up?"▲":"▼"}{Math.abs(pct).toFixed(2)}%</span>;
           })()}
         </div>
       </div>
@@ -2491,11 +2491,11 @@ function StockDetailPanel(p){
               <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
                 <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}>
-                  <div style={{fontSize:9,color:"#22d3a0",marginBottom:2}}>💰 ATR×1.5</div>
+                  <div style={{fontSize:9,color:"#22d3a0",marginBottom:2}}>ATR×1.5</div>
                   <div style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}</div>
                 </div>
                 <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"5px 8px"}}>
-                  <div style={{fontSize:9,color:"#f43f5e",marginBottom:2}}>🛑 ATR×0.75</div>
+                  <div style={{fontSize:9,color:"#f43f5e",marginBottom:2}}>ATR×0.75</div>
                   <div style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}</div>
                 </div>
               </div>
