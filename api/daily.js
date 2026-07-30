@@ -1,9 +1,12 @@
 // api/daily.js
-// 直近の日足終値を返すエンドポイント（カードのミニチャート用）
+// 直近の日足終値・出来高を返すエンドポイント（カードのミニチャート、および
+// 「出来高急増後の値動き」パターン分析用）
 // データ取得元: Yahoo Finance（intraday.jsと同じ非公式チャートAPI）
 //
 // リクエスト例: /api/daily?ticker=7203.T
-// レスポンス: { closes:[...], dates:[...] }（直近3ヶ月分、JSTの日付文字列）
+// レスポンス: { closes:[...], dates:[...], volumes:[...] }（直近1年分、JSTの日付文字列）
+// ※パターン分析は「出来高が急増した日」がある程度の回数無いと意味が無いため、
+// 　3ヶ月から1年に延長（母数を増やして信頼度を上げるため）
 
 const YAHOO_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -23,7 +26,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=1y`;
     const r = await fetch(url, { headers: YAHOO_HEADERS, signal: AbortSignal.timeout(9000) });
     if (r.status === 429) {
       return res.status(200).json({ closes: [], dates: [], rateLimited: true });
@@ -37,8 +40,10 @@ export default async function handler(req, res) {
     }
 
     const closesRaw = result.indicators?.quote?.[0]?.close || [];
+    const volumesRaw = result.indicators?.quote?.[0]?.volume || [];
     const closes = [];
     const dates = [];
+    const volumes = [];
     for (let i = 0; i < result.timestamp.length; i++) {
       if (closesRaw[i] == null) continue;
       // 日足のtimestampは既にその取引日を指すUTC時刻なので、シフトせずそのまま読む
@@ -47,11 +52,12 @@ export default async function handler(req, res) {
       const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
       closes.push(closesRaw[i]);
       dates.push(dateStr);
+      volumes.push(volumesRaw[i] == null ? 0 : volumesRaw[i]);
     }
 
     // 日足は値の変化が緩やかなので、分足より長めにキャッシュしてよい
     res.setHeader("Cache-Control", "public, max-age=1800");
-    return res.status(200).json({ closes, dates });
+    return res.status(200).json({ closes, dates, volumes });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
