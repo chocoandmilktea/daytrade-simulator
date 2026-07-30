@@ -1803,7 +1803,7 @@ function dailyVWAPSeries(closes,highs,lows,volumes,dates){
   return result;
 }
 function IntradayChart1m(p){
-  var data=p.data,H=p.height||140,BUCKET=5,CANDLE_W=8,RIGHT_GUTTER=52;
+  var data=p.data,H=p.height||140,BUCKET=1,CANDLE_W=8,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   var scrollRef=useRef(null);
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
@@ -1824,8 +1824,7 @@ function IntradayChart1m(p){
   }
   var candles=aggregateCandles(fullOpens,fullHighs,fullLows,fullCloses,fullVolumes,fullTimes,fullDates,BUCKET);
   var n=candles.length;
-  // MAは表示中の足（5分足）の終値ベースで計算する。以前は1分足25本(=5分足5本相当)で
-  // 計算していたため、5分足チャート上では実質MA5のような短い動きになってしまっていた。
+  // MAは表示中の足（1分足）の終値ベースで計算する。
   var candleCloses=candles.map(function(c){return c.close;});
   var ma25=trailingSMA(candleCloses,25),ma75=trailingSMA(candleCloses,75);
   var hasVolume=!!fullVolumes;
@@ -1902,7 +1901,7 @@ function IntradayChart1m(p){
     <div>
       <div style={{display:"flex",justifyContent:"flex-end",gap:8,fontSize:10,color:"#6a90b0",marginBottom:2}}>
         <span>{rangeLabel}</span>
-        <span>5分足</span>
+        <span>1分足</span>
       </div>
       <div style={{display:"flex",gap:6}}>
         <div style={{position:"relative",flex:1,minWidth:0}}>
