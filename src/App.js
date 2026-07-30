@@ -203,8 +203,8 @@ async function fetchIntraday(ticker){
   return p;
 }
 
-// ── 日足（カードのミニチャート用）────────────────────────────────────────
-// 直近3ヶ月の日足終値。値の変化が緩やかなので30分キャッシュ、分足用の直列
+// ── 日足（カードのミニチャート・出来高急増後の値動きパターン分析用）───────
+// 直近1年分の日足終値・出来高。値の変化が緩やかなので30分キャッシュ、分足用の直列
 // キューとは別枠で（軽いデータなので待たせる必要が薄いため）直接取得する。
 var DAILY_CACHE={}, DAILY_TTL=30*60*1000, DAILY_INFLIGHT={};
 async function fetchDaily(ticker){
@@ -217,7 +217,7 @@ async function fetchDaily(ticker){
       if(!res.ok) throw new Error("HTTP "+res.status);
       var json=await res.json();
       if(!json||!json.closes||json.closes.length<2) return null;
-      var result={closes:json.closes,dates:json.dates||[]};
+      var result={closes:json.closes,dates:json.dates||[],volumes:json.volumes||[]};
       DAILY_CACHE[ticker]={ts:now,data:result};
       return result;
     }catch(e){return null;}
@@ -1807,6 +1807,57 @@ function dailyVWAPSeries(closes,highs,lows,volumes,dates){
   }
   return result;
 }
+// ── 「銘柄の癖」パターン分析：出来高急増後の値動き ───────────────────────
+// 過去1年の日足から「出来高が平均の1.5倍を超えた日」を探し、その翌営業日・
+// 翌々営業日の平均騰落率を集計する。材料に強く伸びやすい銘柄か、逆に
+// 急騰後は剥落しやすい銘柄かの目安になる。サンプルが少なすぎる場合は
+// 参考にならないためnullを返し、表示側で「非表示」扱いにする。
+var VOLUME_SPIKE_RATIO=1.5;
+function computeVolumeSpikePattern(daily){
+  if(!daily||!daily.closes||!daily.volumes||daily.closes.length<20) return null;
+  var closes=daily.closes,volumes=daily.volumes,n=closes.length;
+  var sum=0,cnt=0;
+  for(var i=0;i<n;i++){if(volumes[i]>0){sum+=volumes[i];cnt++;}}
+  if(cnt<10) return null;
+  var avgVol=sum/cnt;
+  var next1=[],next2=[];
+  for(var i=0;i<n-1;i++){
+    if(volumes[i]>avgVol*VOLUME_SPIKE_RATIO){
+      next1.push((closes[i+1]-closes[i])/closes[i]*100);
+      if(i+2<n) next2.push((closes[i+2]-closes[i])/closes[i]*100);
+    }
+  }
+  if(next1.length<3) return null; // 該当日が少なすぎる場合はたまたまの可能性が高いため非表示
+  function avg(arr){return arr.reduce(function(a,b){return a+b;},0)/arr.length;}
+  return{count1:next1.length,avgNext1:avg(next1),count2:next2.length,avgNext2:next2.length?avg(next2):null};
+}
+function VolumeSpikeStatBox(p){
+  var val=p.value,color=val==null?"#4a7090":val>=0?"#22d3a0":"#f43f5e";
+  return(
+    <div style={{flex:1,background:"#071428",borderRadius:6,padding:"8px 10px",textAlign:"center"}}>
+      <div style={{fontSize:9,color:"#6a90b0",marginBottom:2}}>{p.label}</div>
+      <div style={{fontSize:15,fontWeight:800,color:color}}>{val==null?"—":(val>=0?"+":"")+val.toFixed(1)+"%"}</div>
+      <div style={{fontSize:9,color:"#4a7090",marginTop:2}}>{p.count}回</div>
+    </div>
+  );
+}
+function VolumeSpikePattern(p){
+  var data=p.data; // undefined=読込中, null=取得失敗
+  var wrapStyle={fontSize:10,color:"#4a7090",padding:"6px 2px"};
+  if(data===undefined) return <div style={wrapStyle}>📊 出来高急増後の値動き：読込中…</div>;
+  if(data===null) return null; // 取得失敗時は静かに非表示（他情報の邪魔をしない）
+  var pat=computeVolumeSpikePattern(data);
+  if(!pat) return <div style={wrapStyle}>📊 出来高急増後の値動き：サンプル不足のため非表示</div>;
+  return(
+    <div>
+      <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>📊 出来高急増後の値動き（平均出来高の{VOLUME_SPIKE_RATIO}倍超え・過去1年）</div>
+      <div style={{display:"flex",gap:6}}>
+        <VolumeSpikeStatBox label="翌営業日" value={pat.avgNext1} count={pat.count1}/>
+        <VolumeSpikeStatBox label="翌々営業日" value={pat.avgNext2} count={pat.count2}/>
+      </div>
+    </div>
+  );
+}
 function IntradayChart1m(p){
   var data=p.data,H=p.height||140,BUCKET=1,CANDLE_W=8,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
@@ -2454,11 +2505,14 @@ function StockDetailPanel(p){
   var liveTickS=useState(null);var liveTick=liveTickS[0],setLiveTick=liveTickS[1]; // 立花証券リアルタイム値をチャートにも反映
   var tachibanaQuoteS=useState(null);var tachibanaQuote=tachibanaQuoteS[0],setTachibanaQuote=tachibanaQuoteS[1]; // 株価タップ時のモーダル表示用の生データ
   var showTachibanaS=useState(false);var showTachibana=showTachibanaS[0],setShowTachibana=showTachibanaS[1];
+  var dailyS=useState(undefined);var daily=dailyS[0],setDaily=dailyS[1]; // 出来高急増後の値動きパターン分析用（過去1年日足）
   useEffect(function(){
     setIntraday(undefined);
     setLiveTick(null);
     setTachibanaQuote(null);
+    setDaily(undefined);
     fetchIntraday(s.ticker).then(function(r){setIntraday(r);});
+    fetchDaily(s.ticker).then(function(r){setDaily(r);});
     if(onRescan) onRescan(s.ticker); // カードの価格・判定バッジもチャートと同様に毎回最新化
   },[s.ticker]);
 
@@ -2566,6 +2620,9 @@ function StockDetailPanel(p){
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
         <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340} aiEntry={aiEntry}/>
       </div>
+
+      {/* 銘柄の癖：出来高急増後の値動き */}
+      <VolumeSpikePattern data={daily}/>
 
             {/* シグナル詳細（左）／板情報・利確損切りライン（右） */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignItems:"start"}}>
