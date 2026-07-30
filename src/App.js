@@ -1833,9 +1833,9 @@ function IntradayChart1m(p){
     :formatChartDateLabel(data.date);
   return(
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
-        <span>5分足（←スクロールで過去を表示）</span>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8,fontSize:10,color:"#6a90b0",marginBottom:2}}>
         <span>{rangeLabel}</span>
+        <span>5分足</span>
       </div>
       <div style={{display:"flex",gap:6}}>
         <div ref={scrollRef} onScroll={updateVisibleRange} style={{flex:1,minWidth:0,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
