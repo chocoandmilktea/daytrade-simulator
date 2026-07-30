@@ -1832,7 +1832,7 @@ function VolumeSpikeStatBox(p){
   return(
     <div style={{flex:1,background:"#071428",borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
       <div style={{fontSize:9,color:"#6a90b0",marginBottom:2}}>{p.label} <span style={{color:"#4a7090"}}>{p.count}回</span></div>
-      <div style={{fontSize:15,fontWeight:800,color:color}}>{val==null?"—":(val>=0?"+":"")+val.toFixed(1)+"%"}</div>
+      <div style={{fontSize:13,fontWeight:800,color:color}}>{val==null?"—":(val>=0?"+":"")+val.toFixed(1)+"%"}</div>
     </div>
   );
 }
@@ -1845,10 +1845,10 @@ function VolumeSpikePattern(p){
   if(!pat) return <div style={wrapStyle}>📊 出来高急増後の値動き：サンプル不足のため非表示</div>;
   return(
     <div style={{marginBottom:8}}>
-      <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>📊 出来高急増後の値動き（直近{VOLUME_SPIKE_LOOKBACK}営業日平均の{VOLUME_SPIKE_RATIO}倍超え・過去1年で集計）</div>
+      <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>📊 出来高急増後の値動き</div>
       <div style={{display:"flex",gap:6}}>
-        <VolumeSpikeStatBox label="翌営業日" value={pat.avgNext1} count={pat.count1}/>
-        <VolumeSpikeStatBox label="翌々営業日" value={pat.avgNext2} count={pat.count2}/>
+        <VolumeSpikeStatBox label="翌日営業" value={pat.avgNext1} count={pat.count1}/>
+        <VolumeSpikeStatBox label="翌々日営業" value={pat.avgNext2} count={pat.count2}/>
       </div>
     </div>
   );
@@ -1870,6 +1870,18 @@ function IntradayChart1m(p){
   var m1=hasData?data.m1:{closes:[],opens:[],highs:[],lows:[],times:[],volumes:null,dates:null};
   var fullOpens=m1.opens||m1.closes,fullHighs=m1.highs||m1.closes,fullLows=m1.lows||m1.closes;
   var fullCloses=m1.closes,fullTimes=m1.times||[],fullVolumes=m1.volumes||null,fullDates=m1.dates||null; // volumesが無ければVWAPは非表示
+  // チャートの表示範囲は「当日を含む直近2営業日」までに絞る（それより古いデータは切り捨てる）
+  if(fullDates&&fullDates.length){
+    var uniqDates=[];
+    fullDates.forEach(function(d){if(uniqDates.indexOf(d)===-1)uniqDates.push(d);});
+    var keepDates=uniqDates.slice(-2);
+    var cutIdx=fullDates.findIndex(function(d){return keepDates.indexOf(d)>=0;});
+    if(cutIdx>0){
+      fullOpens=fullOpens.slice(cutIdx);fullHighs=fullHighs.slice(cutIdx);fullLows=fullLows.slice(cutIdx);
+      fullCloses=fullCloses.slice(cutIdx);fullTimes=fullTimes.slice(cutIdx);fullDates=fullDates.slice(cutIdx);
+      if(fullVolumes)fullVolumes=fullVolumes.slice(cutIdx);
+    }
+  }
   if(hasData&&p.liveTick&&p.liveTick.price!=null){ // 立花証券リアルタイム値を直近の1点として継ぎ足す
     var lv=p.liveTick.price;
     fullOpens=fullOpens.concat([lv]);fullHighs=fullHighs.concat([lv]);fullLows=fullLows.concat([lv]);
@@ -1924,6 +1936,17 @@ function IntradayChart1m(p){
   }
   var mn=Math.min.apply(null,allVals),mx=Math.max.apply(null,allVals);
   var rng=mx-mn||1;
+  // AI分析ライン（エントリー/利確/損切り）が値動きから遠い価格だと、そこまで軸を広げてローソク足が潰れてしまうため、
+  // ローソク足本来の値幅の2倍までしか軸を広げないようにする（それより遠いラインは端で見切れる形で表示）
+  if(aiLevels){
+    var aiVals=[aiLevels.entry,aiLevels.target,aiLevels.stop].filter(function(v){return v!=null;});
+    if(aiVals.length){
+      var maxExpand=rng*2;
+      mn=Math.max(mn-maxExpand,Math.min(mn,Math.min.apply(null,aiVals)));
+      mx=Math.min(mx+maxExpand,Math.max(mx,Math.max.apply(null,aiVals)));
+      rng=mx-mn||1;
+    }
+  }
   var pad=rng*0.1;
   mn-=pad;mx+=pad;rng=mx-mn||1;
   function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
