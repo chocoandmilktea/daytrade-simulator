@@ -1964,9 +1964,17 @@ function IntradayChart1m(p){
     :formatChartDateLabel(data.date);
   return(
     <div>
-      <div style={{display:"flex",justifyContent:"flex-end",gap:8,fontSize:10,color:"#6a90b0",marginBottom:2}}>
-        <span>{rangeLabel}</span>
-        <span>1分足</span>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,color:"#6a90b0",marginBottom:2}}>
+        <span style={{display:"flex",alignItems:"center",gap:6}}>
+          {obSellPct!=null&&<>
+            <span style={{fontSize:12,fontWeight:700,color:"#f43f5e"}}>売{obSellPct.toFixed(0)}%</span>
+            <span style={{fontSize:12,fontWeight:700,color:"#22d3a0"}}>買{obBuyPct.toFixed(0)}%</span>
+          </>}
+        </span>
+        <span style={{display:"flex",gap:8}}>
+          <span>{rangeLabel}</span>
+          <span>1分足</span>
+        </span>
       </div>
       <div style={{display:"flex",gap:6}}>
         <div style={{position:"relative",flex:1,minWidth:0}}>
@@ -1975,15 +1983,6 @@ function IntradayChart1m(p){
             <span style={{fontSize:9,color:"#f472b6",whiteSpace:"nowrap"}}>75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
             {hasVolume?<span style={{fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{fontSize:9,color:"#2a4060",whiteSpace:"nowrap"}}>VWAP未対応</span>}
           </div>
-          {obSellPct!=null&&
-          <div style={{position:"absolute",top:4,left:"50%",transform:"translateX(-50%)",zIndex:2,background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"2px 6px",display:"flex",alignItems:"center",gap:5,pointerEvents:"none"}}>
-            <span style={{fontSize:9,color:"#f43f5e",fontWeight:700,whiteSpace:"nowrap"}}>売{obSellPct.toFixed(0)}%</span>
-            <div style={{display:"flex",width:30,height:4,borderRadius:2,overflow:"hidden"}}>
-              <div style={{width:obSellPct+"%",background:"#f43f5e"}}/>
-              <div style={{width:obBuyPct+"%",background:"#22d3a0"}}/>
-            </div>
-            <span style={{fontSize:9,color:"#22d3a0",fontWeight:700,whiteSpace:"nowrap"}}>買{obBuyPct.toFixed(0)}%</span>
-          </div>}
         <div ref={scrollRef} onScroll={updateVisibleRange} style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <div style={{width:chartWidth}}>
             <svg width={chartWidth} height={H} style={{display:"block",overflow:"hidden"}}>
@@ -2395,6 +2394,12 @@ function parseOrderBookLevels(quote){
   }
   return result;
 }
+// 板の中で最も注文量が多い1本を返す（S1/R1の上に「厚い価格帯」として表示する）
+function maxLevel(levels){
+  var valid=levels.filter(function(l){return l.vol>0&&l.price!=null;});
+  if(valid.length===0) return null;
+  return valid.reduce(function(best,l){return(!best||l.vol>best.vol)?l:best;},null);
+}
 // 板の中で「周辺の値段に比べて極端に多い注文」を検出する（平均のTHICK_ORDER_MULTIPLIER倍以上）
 var THICK_ORDER_MULTIPLIER=4;
 function findThickLevels(levels){
@@ -2437,17 +2442,21 @@ function SupportZonePanel(p){
   var ob=parseOrderBookLevels(p.quote);
   var thickBuy=findThickLevels(ob.buyLevels);
   var thickSell=findThickLevels(ob.sellLevels);
+  var maxBuy=maxLevel(ob.buyLevels),maxSell=maxLevel(ob.sellLevels);
+  var thickPriceStyle={fontSize:9,color:"#fbbf24",padding:"2px 0"};
   var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px",cursor:"pointer"};
   return(
     <div style={box} onClick={p.onInfoClick}>
       <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:4}}>🎯 サポートゾーン</div>
       {support&&(<>
+        {maxBuy&&<div style={thickPriceStyle}>🟡 買い厚め {unit}{maxBuy.price.toLocaleString()}</div>}
         <SupportZoneRow label="S1(20日安値)" price={support.s1} unit={unit} color="#22d3a0" match={findBoardMatch(support.s1,thickBuy)}/>
         <SupportZoneRow label="ATR下限(×1.5)" price={support.atrFloor} unit={unit} color="#22d3a0" match={findBoardMatch(support.atrFloor,thickBuy)}/>
         {profitLoss&&<SupportZoneRow label="ATR損切(×0.75)" price={profitLoss.stop} unit={unit} priceColor="#f43f5e"/>}
       </>)}
       {resistance&&(<>
         <div style={{fontSize:9,color:"#4a7090",margin:"6px 0 2px"}}>▲ レジスタンス（上値目安）</div>
+        {maxSell&&<div style={thickPriceStyle}>🟡 売り厚め {unit}{maxSell.price.toLocaleString()}</div>}
         <SupportZoneRow label="R1(20日高値)" price={resistance.r1} unit={unit} color="#f43f5e" match={findBoardMatch(resistance.r1,thickSell)}/>
         {profitLoss
           ?<SupportZoneRow label="ATR利確(×1.5)" price={profitLoss.target} unit={unit} priceColor="#22d3a0"/>
