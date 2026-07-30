@@ -1882,7 +1882,7 @@ function computeGapFillPattern(daily){
   return{up:up,down:down};
 }
 function GapFillBar(p){
-  var d=p.data,color=p.color;
+  var d=p.data,color=p.color,isMobile=p.isMobile;
   if(!d) return(
     <div style={{flex:1,background:"#071428",borderRadius:6,padding:"8px 10px"}}>
       <div style={{fontSize:9,color:"#6a90b0",marginBottom:6}}>{p.label}</div>
@@ -1893,9 +1893,9 @@ function GapFillBar(p){
     <div style={{flex:1,background:"#071428",borderRadius:6,padding:"8px 10px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
         <div style={{fontSize:9,color:"#6a90b0"}}>{p.label}</div>
-        <div style={{fontSize:9,color:"#4a7090"}}>{d.total}回中{d.filled}回</div>
+        {!isMobile&&<div style={{fontSize:9,color:"#4a7090"}}>{d.total}回中{d.filled}回</div>}
       </div>
-      <div style={{fontSize:15,fontWeight:800,color:color,marginBottom:4}}>{d.rate.toFixed(0)}%<span style={{fontSize:9,color:"#6a90b0",fontWeight:400}}> 当日中に埋まる</span></div>
+      <div style={{fontSize:15,fontWeight:800,color:color,marginBottom:4}}>{d.rate.toFixed(0)}%{!isMobile&&<span style={{fontSize:9,color:"#6a90b0",fontWeight:400}}> 当日中に埋まる</span>}</div>
       <div style={{height:6,background:"#0a1830",borderRadius:3,overflow:"hidden"}}>
         <div style={{height:"100%",width:d.rate+"%",background:color}}/>
       </div>
@@ -1903,7 +1903,7 @@ function GapFillBar(p){
   );
 }
 function GapFillPattern(p){
-  var data=p.data; // undefined=読込中, null=取得失敗
+  var data=p.data,isMobile=p.isMobile; // undefined=読込中, null=取得失敗
   var wrapStyle={fontSize:10,color:"#4a7090",padding:"6px 2px"};
   if(data===undefined) return <div style={wrapStyle}>🎯 ギャップ埋まり率：読込中…</div>;
   if(data===null) return null; // 取得失敗時は静かに非表示
@@ -1911,10 +1911,10 @@ function GapFillPattern(p){
   if(!pat) return <div style={wrapStyle}>🎯 ギャップ埋まり率：サンプル不足のため非表示</div>;
   return(
     <div>
-      <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>🎯 ギャップ埋まり率（前日終値比・過去1年）</div>
+      <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>🎯 ギャップ埋まり率{!isMobile&&"（前日終値比・過去1年）"}</div>
       <div style={{display:"flex",gap:6}}>
-        <GapFillBar label="上ギャップ" data={pat.up} color="#f43f5e"/>
-        <GapFillBar label="下ギャップ" data={pat.down} color="#22d3a0"/>
+        <GapFillBar label="上ギャップ" data={pat.up} color="#f43f5e" isMobile={isMobile}/>
+        <GapFillBar label="下ギャップ" data={pat.down} color="#22d3a0" isMobile={isMobile}/>
       </div>
     </div>
   );
@@ -2689,7 +2689,7 @@ function StockDetailPanel(p){
           <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
-          <GapFillPattern data={daily}/>
+          <GapFillPattern data={daily} isMobile={isMobile}/>
           <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
         </div>
       </div>
