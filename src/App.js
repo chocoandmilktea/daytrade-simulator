@@ -2960,6 +2960,8 @@ function FavPanel(p){
   return(
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(50+extraH)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4}}>
+        {isMobile?(
+        <>
         <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
           <div style={{display:"flex",gap:6,flexWrap:"nowrap"}}>
             <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 8px",fontSize:16,fontFamily:"monospace",flex:"1 1 auto",minWidth:0}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
@@ -2994,6 +2996,25 @@ function FavPanel(p){
           </div>
         )}
         </div>
+        )}
+        </>
+        ):(
+        <>
+        <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 8px",fontSize:16,fontFamily:"monospace",flex:"1 1 auto",minWidth:120}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
+            <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",flex:"0 0 auto"}}>追加</button>
+            <span style={{width:1,alignSelf:"stretch",background:"#1e3050",flexShrink:0}}/>
+            <span style={{fontSize:11,color:"#2a6090"}}>グループ:</span>
+            {gBtn(0,"全体")}
+            {[1,2,3,4,5].map(function(n){return <span key={n} style={{display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
+            <button onClick={function(){setSortMode(function(m){return m==="lowPrice"?"reg":"lowPrice";});}} title="株価100〜800円＋出来高急増(自分比2倍以上)のJP銘柄を上位に、株価が低い順に並べます（非該当の銘柄も下に表示されます）" style={{background:sortMode==="lowPrice"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="lowPrice"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="lowPrice"?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="lowPrice"?700:400}}>🪙低株価順{sortMode==="lowPrice"?"✓":""}</button>
+            <button onClick={function(){setShowAcc(true);}} style={{background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
+          </div>
+          {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
+        </div>
+        {showAcc&&createPortal(<SignalAccuracyModal onClose={function(){setShowAcc(false);}}/>,document.body)}
+        </>
         )}
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8,paddingLeft:10,paddingRight:10,paddingBottom:120}}>
