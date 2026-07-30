@@ -2320,7 +2320,6 @@ function SupportZonePanel(p){
     <div style={box} onClick={p.onInfoClick}>
       <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:4}}>🎯 サポートゾーン</div>
       <SupportZoneRow label="S1(20日安値)" price={support.s1} unit={unit} match={findBoardMatch(support.s1,thickBuy)}/>
-      <SupportZoneRow label="S2(60日安値)" price={support.s2} unit={unit} match={findBoardMatch(support.s2,thickBuy)}/>
       <SupportZoneRow label="ATR下限(×1.5)" price={support.atrFloor} unit={unit} match={findBoardMatch(support.atrFloor,thickBuy)}/>
     </div>
   );
@@ -2721,9 +2720,15 @@ function AllStocksPanel(p){
 
   function isFavRef(t){return favs.indexOf(t)>=0;}
 
-  var sortModeS=useState("score");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "score"=スコア順(既定) / "lowPrice"=銘柄選定フィルター(低株価順)
+  var sortModeS=useState("score");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "score"=スコア順(既定) / "lowPrice"=低株価順(株価100〜800円＋出来高急増を上位に並べる)
+  var lowPriceMatchCount=stocks.filter(isLowPriceSurge).length;
   var displayStocks=sortMode==="lowPrice"
-    ?stocks.filter(isLowPriceSurge).slice().sort(function(a,b){return a.rawPrice-b.rawPrice;})
+    ?stocks.slice().sort(function(a,b){
+        var am=isLowPriceSurge(a)?0:1,bm=isLowPriceSurge(b)?0:1;
+        if(am!==bm) return am-bm;
+        var ap=a.rawPrice!=null?a.rawPrice:Infinity,bp=b.rawPrice!=null?b.rawPrice:Infinity;
+        return ap-bp;
+      })
     :stocks.slice().sort(function(a,b){return b.score-a.score;});
 
 
@@ -2752,10 +2757,12 @@ function AllStocksPanel(p){
   var stickyTop=50+extraH;
   var cardGrid=(
     <>
-      {sortMode==="lowPrice"&&displayStocks.length===0&&<div style={{textAlign:"center",padding:"24px 12px",color:"#4a7090",fontSize:12}}>条件（株価100〜800円・出来高急増）に合う銘柄がありません</div>}
+      {sortMode==="lowPrice"&&lowPriceMatchCount===0&&<div style={{textAlign:"center",padding:"24px 12px",color:"#4a7090",fontSize:12}}>条件（株価100〜800円・出来高急増）に合う銘柄がありません</div>}
       <div style={{display:"grid",gridTemplateColumns:"repeat("+cols+",1fr)",gap:8}}>
-        {displayStocks.map(function(s){
-          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/>;
+        {displayStocks.map(function(s,i){
+          var divider=sortMode==="lowPrice"&&i===lowPriceMatchCount&&lowPriceMatchCount>0&&lowPriceMatchCount<displayStocks.length
+            ?<div key="lowprice-divider" style={{gridColumn:"1/-1",fontSize:10,color:"#2a5070",textAlign:"center",padding:"4px 0",borderTop:"1px dashed #1e3050"}}>── ここから条件対象外 ──</div>:null;
+          return <div key={s.ticker} style={{display:"contents"}}>{divider}<StockCard s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/></div>;
         })}
       </div>
     </>
@@ -2769,7 +2776,7 @@ function AllStocksPanel(p){
             <span>/{stocks.length}</span>
           </span>
           {ts&&<span style={{fontSize:10,color:"#2a6090",flexShrink:0,whiteSpace:"nowrap"}}>{ts}</span>}
-          <button onClick={function(){setSortMode(function(m){return m==="lowPrice"?"score":"lowPrice";});}} title="株価100〜800円＋出来高急増(自分比2倍以上)のJP銘柄のみ表示し、株価が低い順に並べます" style={{marginLeft:"auto",flexShrink:0,background:sortMode==="lowPrice"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="lowPrice"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="lowPrice"?"#fbbf24":"#4a6080",padding:"4px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="lowPrice"?700:400,whiteSpace:"nowrap"}}>🪙低株価順{sortMode==="lowPrice"?"✓":""}</button>
+          <button onClick={function(){setSortMode(function(m){return m==="lowPrice"?"score":"lowPrice";});}} title="株価100〜800円＋出来高急増(自分比2倍以上)のJP銘柄を上位に、株価が低い順に並べます（非該当の銘柄も下に表示されます）" style={{marginLeft:"auto",flexShrink:0,background:sortMode==="lowPrice"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="lowPrice"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="lowPrice"?"#fbbf24":"#4a6080",padding:"4px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="lowPrice"?700:400,whiteSpace:"nowrap"}}>🪙低株価順{sortMode==="lowPrice"?"✓":""}</button>
           <button onClick={onScan} style={{flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
         </div>
       </div>
@@ -2830,8 +2837,14 @@ function FavPanel(p){
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
   var groupedStocks=groupFilter===0?favStocks:favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
   var mktFiltered=filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;});
+  var lowPriceMatchCount=mktFiltered.filter(isLowPriceSurge).length;
   var displayStocks=sortMode==="lowPrice"
-    ?mktFiltered.filter(isLowPriceSurge).slice().sort(function(a,b){return a.rawPrice-b.rawPrice;})
+    ?mktFiltered.slice().sort(function(a,b){
+        var am=isLowPriceSurge(a)?0:1,bm=isLowPriceSurge(b)?0:1;
+        if(am!==bm) return am-bm;
+        var ap=a.rawPrice!=null?a.rawPrice:Infinity,bp=b.rawPrice!=null?b.rawPrice:Infinity;
+        return ap-bp;
+      })
     :mktFiltered;
   function fBtn(val,label,activeColor){
     var active=filterMkt===val;
@@ -2849,11 +2862,13 @@ function FavPanel(p){
   var favCols=2; // 常に2列固定
   var cardGrid=(
     <>
-      {sortMode==="lowPrice"&&displayStocks.length===0&&<div style={{textAlign:"center",padding:"24px 12px",color:"#4a7090",fontSize:12}}>条件（株価100〜800円・出来高急増）に合うお気に入り銘柄がありません</div>}
+      {sortMode==="lowPrice"&&lowPriceMatchCount===0&&<div style={{textAlign:"center",padding:"24px 12px",color:"#4a7090",fontSize:12}}>条件（株価100〜800円・出来高急増）に合うお気に入り銘柄がありません</div>}
       <div style={{display:"grid",gridTemplateColumns:"repeat("+favCols+",1fr)",gap:8}}>
-        {displayStocks.map(function(s){
+        {displayStocks.map(function(s,i){
           var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-          return <StockCard key={s.ticker} s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/>;
+          var divider=sortMode==="lowPrice"&&i===lowPriceMatchCount&&lowPriceMatchCount>0&&lowPriceMatchCount<displayStocks.length
+            ?<div key="lowprice-divider" style={{gridColumn:"1/-1",fontSize:10,color:"#2a5070",textAlign:"center",padding:"4px 0",borderTop:"1px dashed #1e3050"}}>── ここから条件対象外 ──</div>:null;
+          return <div key={s.ticker} style={{display:"contents"}}>{divider}<StockCard s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/></div>;
         })}
       </div>
     </>
@@ -2891,7 +2906,7 @@ function FavPanel(p){
             {fBtn("ALL","全て","#60a5fa")}
             {fBtn("US","US","#3b82f6")}
             {fBtn("JP","JP","#f87171")}
-            <button onClick={function(){setSortMode(function(m){return m==="lowPrice"?"reg":"lowPrice";});}} title="株価100〜800円＋出来高急増(自分比2倍以上)のJP銘柄のみ表示し、株価が低い順に並べます" style={{marginLeft:"auto",background:sortMode==="lowPrice"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="lowPrice"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="lowPrice"?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="lowPrice"?700:400}}>🪙低株価順{sortMode==="lowPrice"?"✓":""}</button>
+            <button onClick={function(){setSortMode(function(m){return m==="lowPrice"?"reg":"lowPrice";});}} title="株価100〜800円＋出来高急増(自分比2倍以上)のJP銘柄を上位に、株価が低い順に並べます（非該当の銘柄も下に表示されます）" style={{marginLeft:"auto",background:sortMode==="lowPrice"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="lowPrice"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="lowPrice"?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="lowPrice"?700:400}}>🪙低株価順{sortMode==="lowPrice"?"✓":""}</button>
             <button onClick={function(){setShowAcc(true);}} style={{background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
           </div>
         )}
