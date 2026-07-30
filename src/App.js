@@ -1838,7 +1838,13 @@ function IntradayChart1m(p){
         <span>5分足</span>
       </div>
       <div style={{display:"flex",gap:6}}>
-        <div ref={scrollRef} onScroll={updateVisibleRange} style={{flex:1,minWidth:0,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <div style={{position:"relative",flex:1,minWidth:0}}>
+          <div style={{position:"absolute",top:4,left:4,zIndex:2,background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px",display:"flex",flexDirection:"column",gap:2,pointerEvents:"none"}}>
+            <span style={{fontSize:9,color:"#a3e635",whiteSpace:"nowrap"}}>25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
+            <span style={{fontSize:9,color:"#f472b6",whiteSpace:"nowrap"}}>75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
+            {hasVolume?<span style={{fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{fontSize:9,color:"#2a4060",whiteSpace:"nowrap"}}>VWAP未対応</span>}
+          </div>
+        <div ref={scrollRef} onScroll={updateVisibleRange} style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <div style={{width:chartWidth}}>
             <svg width={chartWidth} height={H} style={{display:"block",overflow:"hidden"}}>
               {priceLevels.map(function(v,i){
@@ -1898,14 +1904,12 @@ function IntradayChart1m(p){
             </div>
           </div>
         </div>
+        </div>
         <div style={{width:RIGHT_GUTTER,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
           {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v,rng)}</span>;})}
         </div>
       </div>
       <div style={{display:"flex",gap:10,fontSize:10,marginTop:3,flexWrap:"wrap"}}>
-        <span style={{color:"#a3e635"}}>― 25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
-        <span style={{color:"#f472b6"}}>― 75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
-        {hasVolume?<span style={{color:"#38bdf8"}}>― VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{color:"#2a4060"}}>VWAP: 出来高データ未対応のため非表示</span>}
         {aiLevels&&<span style={{color:"#fbbf24"}}>┈ AI分析ライン（エントリー/利確/損切り）</span>}
         {hasForecast&&<span style={{color:"#8a9bb0"}}>┈ AI予想トレンド（{aiLevels.forecast.direction}・確信度{aiLevels.forecast.confidence}%）</span>}
       </div>
