@@ -134,15 +134,18 @@ function enqueueIntraday(fn){
   });
 }
 
-// ── メイン株価取得（/api/stock）用の直列キュー ──────────────────────────
-// 同時並行ではなく一定間隔で1件ずつ順番に呼び出すことで、Yahoo Finance・
-// 立花証券API双方への負荷を抑える。429を検知したらキュー全体を一時停止し、
-// レート制限が収まってから再開する。
-// ※旧J-Quants時代の60件/分制限を基準に1.5秒間隔にしていたが、立花証券API
-// 　移行後は制限が緩和されている可能性があるため段階的に短縮してテスト中（Step1）。
-// 　429エラーが増える場合は下の数値を1500付近に戻せば元通りになる。
+// ── メイン株価取得（/api/stock）用のキュー ──────────────────────────
+// 一定間隔ごとに、まとめてSTOCK_CONCURRENCY件ずつ呼び出すことで、
+// Yahoo Finance・立花証券API双方への負荷を抑えつつスキャンを高速化する。
+// 429を検知したらキュー全体を一時停止し、レート制限が収まってから再開する。
+// ※旧J-Quants時代の60件/分制限を基準に「1.5秒に1件」だったが、立花証券API
+// 　移行後は制限が緩和されている可能性があるため段階的に短縮してテスト中。
+// 　Step1: 間隔を1.5秒→0.6秒に短縮（問題なし）
+// 　Step2: 1件ずつ→3件ずつ同時実行に変更（今回）
+// 　429エラーが増える場合はSTOCK_CONCURRENCYを1に、間隔を1500付近に戻せば元通り。
 var STOCK_QUEUE=[], STOCK_TIMER=null, STOCK_LAST_DISPATCH=0;
-var STOCK_MIN_INTERVAL=600; // Step1: 1.5秒→0.6秒に短縮（安全重視・様子見）
+var STOCK_MIN_INTERVAL=600; // バッチ発火の最短間隔
+var STOCK_CONCURRENCY=3; // Step2: 1回の発火で同時に呼び出す件数
 var STOCK_PAUSED_UNTIL=0;
 function scheduleStockQueue(){
   if(STOCK_TIMER||STOCK_QUEUE.length===0) return;
@@ -150,9 +153,11 @@ function scheduleStockQueue(){
   var wait=Math.max(0,STOCK_MIN_INTERVAL-(now-STOCK_LAST_DISPATCH),STOCK_PAUSED_UNTIL-now);
   STOCK_TIMER=setTimeout(function(){
     STOCK_TIMER=null;
-    var job=STOCK_QUEUE.shift();
     STOCK_LAST_DISPATCH=Date.now();
-    if(job) job();
+    for(var i=0;i<STOCK_CONCURRENCY;i++){
+      var job=STOCK_QUEUE.shift();
+      if(job) job();
+    }
     scheduleStockQueue();
   },wait);
 }
@@ -4239,7 +4244,7 @@ export default function App(){
         }
       });
       setProgress({done:0,total:universe.length,msg:null});
-      // 実際の同時実行制御はSTOCK_QUEUE（直列キュー）側で行うため、ここでは
+      // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
       // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
       var results=[];
       await Promise.all(universe.map(async function(stock){
@@ -4277,7 +4282,7 @@ export default function App(){
     var universe=stocks.map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol};});
     setProgress({done:0,total:universe.length,msg:null});
     try{
-      // 実際の同時実行制御はSTOCK_QUEUE（直列キュー）側で行うため、ここでは
+      // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
       // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
       var results=[];
       await Promise.all(universe.map(async function(stock){
