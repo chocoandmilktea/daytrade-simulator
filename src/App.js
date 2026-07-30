@@ -1840,10 +1840,9 @@ function computeVolumeSpikePattern(daily){
 function VolumeSpikeStatBox(p){
   var val=p.value,color=val==null?"#4a7090":val>=0?"#22d3a0":"#f43f5e";
   return(
-    <div style={{flex:1,background:"#071428",borderRadius:6,padding:"8px 10px",textAlign:"center"}}>
-      <div style={{fontSize:9,color:"#6a90b0",marginBottom:2}}>{p.label}</div>
+    <div style={{flex:1,background:"#071428",borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
+      <div style={{fontSize:9,color:"#6a90b0",marginBottom:2}}>{p.label} <span style={{color:"#4a7090"}}>{p.count}回</span></div>
       <div style={{fontSize:15,fontWeight:800,color:color}}>{val==null?"—":(val>=0?"+":"")+val.toFixed(1)+"%"}</div>
-      <div style={{fontSize:9,color:"#4a7090",marginTop:2}}>{p.count}回</div>
     </div>
   );
 }
@@ -1855,7 +1854,7 @@ function VolumeSpikePattern(p){
   var pat=computeVolumeSpikePattern(data);
   if(!pat) return <div style={wrapStyle}>📊 出来高急増後の値動き：サンプル不足のため非表示</div>;
   return(
-    <div>
+    <div style={{marginBottom:8}}>
       <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>📊 出来高急増後の値動き（直近{VOLUME_SPIKE_LOOKBACK}営業日平均の{VOLUME_SPIKE_RATIO}倍超え・過去1年で集計）</div>
       <div style={{display:"flex",gap:6}}>
         <VolumeSpikeStatBox label="翌営業日" value={pat.avgNext1} count={pat.count1}/>
@@ -1869,6 +1868,10 @@ function IntradayChart1m(p){
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   var scrollRef=useRef(null);
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
+
+  var obTendency=p.quote?parseOrderBookLevels(p.quote):null; // 売買傾向（チャート中央上部に小さく重ねて表示）
+  var obTotal=obTendency?obTendency.sellVol+obTendency.buyVol:0;
+  var obSellPct=obTotal>0?obTendency.sellVol/obTotal*100:null,obBuyPct=obTotal>0?obTendency.buyVol/obTotal*100:null;
 
   var aiLevels=p.aiEntry||null; // AI分析のentry/target/stop/forecast
   var hasForecast=!!(aiLevels&&aiLevels.forecast&&aiLevels.forecast.direction);
@@ -1972,6 +1975,15 @@ function IntradayChart1m(p){
             <span style={{fontSize:9,color:"#f472b6",whiteSpace:"nowrap"}}>75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
             {hasVolume?<span style={{fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{fontSize:9,color:"#2a4060",whiteSpace:"nowrap"}}>VWAP未対応</span>}
           </div>
+          {obSellPct!=null&&
+          <div style={{position:"absolute",top:4,left:"50%",transform:"translateX(-50%)",zIndex:2,background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"2px 6px",display:"flex",alignItems:"center",gap:5,pointerEvents:"none"}}>
+            <span style={{fontSize:9,color:"#f43f5e",fontWeight:700,whiteSpace:"nowrap"}}>売{obSellPct.toFixed(0)}%</span>
+            <div style={{display:"flex",width:30,height:4,borderRadius:2,overflow:"hidden"}}>
+              <div style={{width:obSellPct+"%",background:"#f43f5e"}}/>
+              <div style={{width:obBuyPct+"%",background:"#22d3a0"}}/>
+            </div>
+            <span style={{fontSize:9,color:"#22d3a0",fontWeight:700,whiteSpace:"nowrap"}}>買{obBuyPct.toFixed(0)}%</span>
+          </div>}
         <div ref={scrollRef} onScroll={updateVisibleRange} style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <div style={{width:chartWidth}}>
             <svg width={chartWidth} height={H} style={{display:"block",overflow:"hidden"}}>
@@ -2383,12 +2395,6 @@ function parseOrderBookLevels(quote){
   }
   return result;
 }
-// 板の中で最も注文量が多い1本を返す（株数ではなく「値段」を見せたい時に使う）
-function maxLevel(levels){
-  var valid=levels.filter(function(l){return l.vol>0;});
-  if(valid.length===0) return null;
-  return valid.reduce(function(best,l){return(!best||l.vol>best.vol)?l:best;},null);
-}
 // 板の中で「周辺の値段に比べて極端に多い注文」を検出する（平均のTHICK_ORDER_MULTIPLIER倍以上）
 var THICK_ORDER_MULTIPLIER=4;
 function findThickLevels(levels){
@@ -2398,38 +2404,6 @@ function findThickLevels(levels){
   if(avg<=0) return [];
   return valid.filter(function(l){return l.vol>=avg*THICK_ORDER_MULTIPLIER;});
 }
-function OrderBookTendency(p){
-  var q=p.quote;
-  var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"};
-  var title=<div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 売買傾向</div>;
-  var ob=parseOrderBookLevels(q);
-  if(!ob.found){
-    return <div style={box}>{title}<div style={{fontSize:11,color:"#4a7090"}}>気配値取得中…</div></div>;
-  }
-  var total=ob.sellVol+ob.buyVol;
-  var sellPct=total>0?ob.sellVol/total*100:50;
-  var buyPct=total>0?ob.buyVol/total*100:50;
-  var maxSell=maxLevel(ob.sellLevels),maxBuy=maxLevel(ob.buyLevels);
-  function levelLabel(l){return l?(l.price!=null?l.price.toLocaleString()+"円":l.n+"本目"):"—";}
-  return(
-    <div style={box}>
-      {title}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-        <span style={{fontSize:12,fontWeight:800,color:"#f43f5e"}}>売 {sellPct.toFixed(2)}%</span>
-        <span style={{fontSize:12,fontWeight:800,color:"#22d3a0"}}>買 {buyPct.toFixed(2)}%</span>
-      </div>
-      <div style={{display:"flex",height:6,borderRadius:3,overflow:"hidden",marginBottom:4}}>
-        <div style={{width:sellPct+"%",background:"#f43f5e"}}/>
-        <div style={{width:buyPct+"%",background:"#22d3a0"}}/>
-      </div>
-      <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#8aa4c0"}}>
-        <span>最多 {levelLabel(maxSell)}</span>
-        <span>最多 {levelLabel(maxBuy)}</span>
-      </div>
-    </div>
-  );
-}
-
 // ── サポートゾーン可視化：チャート由来の節目（S1/S2/ATR下限）と、板の厚い買い注文が
 // 近い値段で重なっているかを照合する。二階堂式「節目＋厚い買い注文＝支えが強い」の考え方。
 var SUPPORT_MATCH_TOLERANCE=0.01; // 節目からこの割合以内に厚い注文があれば「重なり」とみなす（1%）
@@ -2622,21 +2596,18 @@ function StockDetailPanel(p){
         <button onClick={function(){setTradePrefill(null);setShowTrade(function(v){return !v;});}} title="トレード登録" style={{flexShrink:0,background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
       </div>
 
-      {/* チャート（1分足＋週足MA） */}
+      {/* チャート（1分足＋週足MA、売買傾向はチャート中央上部に重ねて表示） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
-        <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340} aiEntry={aiEntry}/>
+        <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340} aiEntry={aiEntry} quote={tachibanaQuote}/>
       </div>
 
-      {/* 銘柄の癖：出来高急増後の値動き */}
-      <VolumeSpikePattern data={daily}/>
-
-            {/* シグナル詳細（左）／板情報・利確損切りライン（右） */}
+            {/* シグナル詳細（左・上に出来高急増後の値動き）／板情報・利確損切りライン（右） */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignItems:"start"}}>
         <div style={{minWidth:0}}>
+          <VolumeSpikePattern data={daily}/>
           <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
-          <OrderBookTendency quote={tachibanaQuote}/>
           <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
         </div>
       </div>
