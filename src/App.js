@@ -1692,6 +1692,73 @@ function DailyMiniChart(p){
     </div>
   );
 }
+// ── カードのミニチャート用：5分足（当日分のみ、1分足を5本ずつ束ねて集約） ──
+function CardMiniChart5m(p){
+  var data=p.data,H=96;
+  var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
+  if(data===false){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>タップして詳細を見ると表示</span></div>;
+  }
+  if(data===undefined){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
+  }
+  if(data===null||!data.m1||!data.m1.closes||data.m1.closes.length<2){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
+  }
+  var m1=data.m1,latestDate=data.date;
+  var idxs=[];
+  for(var i=0;i<m1.closes.length;i++){ if(!m1.dates||m1.dates[i]===latestDate) idxs.push(i); }
+  if(idxs.length<2){ idxs=m1.closes.map(function(_,i){return i;}); } // 当日分が拾えない時は全体を使う
+  var srcOpens=m1.opens||m1.closes,srcHighs=m1.highs||m1.closes,srcLows=m1.lows||m1.closes;
+  var opens=idxs.map(function(i){return srcOpens[i];}),highs=idxs.map(function(i){return srcHighs[i];});
+  var lows=idxs.map(function(i){return srcLows[i];}),closesArr=idxs.map(function(i){return m1.closes[i];});
+  var times=idxs.map(function(i){return(m1.times||[])[i];});
+  var candles=aggregateCandles(opens,highs,lows,closesArr,null,times,null,5); // 1分足5本→5分足1本
+  if(candles.length<2){
+    return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>データなし</span></div>;
+  }
+  var closes=candles.map(function(c){return c.close;});
+  var cHighs=candles.map(function(c){return c.high;}),cLows=candles.map(function(c){return c.low;});
+  var cTimes=candles.map(function(c){return c.time;});
+  var ma25=trailingSMA(closes,25),ma75=trailingSMA(closes,75);
+  var vwapProxy=closes.map(function(c,i){return(cHighs[i]!=null&&cLows[i]!=null)?(cHighs[i]+cLows[i]+c)/3:null;});
+  var W=100;
+  var allVals=closes.concat(ma25.filter(function(v){return v!=null;})).concat(ma75.filter(function(v){return v!=null;})).concat(vwapProxy.filter(function(v){return v!=null;}));
+  var mn=Math.min.apply(null,allVals),mx=Math.max.apply(null,allVals);
+  var rng=mx-mn||1;
+  function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
+  function toX(i){return(i/(closes.length-1))*(W-1);}
+  function toPts(arr){return arr.map(function(v,i){return v==null?null:toX(i)+","+toY(v);}).filter(function(v){return v!=null;}).join(" ");}
+  var pts=toPts(closes);
+  var pts25=toPts(ma25),pts75=toPts(ma75),ptsVwap=toPts(vwapProxy);
+  var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
+  var timeLabels=pickTimeLabels(cTimes,4);
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#6a90b0",marginBottom:2}}>
+        <span>5分足</span>
+      </div>
+      <div style={{display:"flex",gap:6}}>
+        <div style={{flex:1,minWidth:0}}>
+          <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
+            {priceLevels.map(function(v,i){
+              var y=toY(v);
+              return <line key={i} x1={0} y1={y} x2={W} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
+            })}
+            <polyline points={pts} fill="none" stroke="#e8eef5" strokeWidth={0.4} strokeLinejoin="round" strokeLinecap="round"/>
+            {ptsVwap&&<polyline points={ptsVwap} fill="none" stroke="#38bdf8" strokeWidth={0.3}/>}
+            {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={0.3}/>}
+            {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={0.3}/>}
+          </svg>
+        </div>
+        <div style={{width:52,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
+          {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v,rng)}</span>;})}
+        </div>
+      </div>
+      {timeLabels.length>0&&<TimeLabelRow timeLabels={timeLabels} toX={toX} W={W} rightGutter={58}/>}
+    </div>
+  );
+}
 // ── チャート詳細用：1分足＋25期・75期の短期移動平均（iSPEED等と同じ考え方）───
 // MAは「週足」ではなく、1分足そのものを25本・75本分で平均した短期MA。
 // 同じ1分足データ・同じX軸（今日の時刻）から計算するので、価格の折れ線と
@@ -2098,8 +2165,8 @@ function StockCard(p){
   var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var isMobile=useIsMobile(); // スマホはカード内チャートを非表示（詳細モーダル側で確認する運用）
   // ── チャート（カードが選択された時だけ取得＝体感速度・API負荷を改善）───
-  // daily: カードのミニチャート用（日足）。false=未取得, undefined=読込中, null=データなし
-  var dailyS=useState(false);var daily=dailyS[0],setDaily=dailyS[1];
+  // cardIntraday: カードのミニチャート用（5分足）。false=未取得, undefined=読込中, null=データなし
+  var cardIntradayS=useState(false);var cardIntraday=cardIntradayS[0],setCardIntraday=cardIntradayS[1];
 
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
@@ -2110,12 +2177,12 @@ function StockCard(p){
   function stopProp(e){e.stopPropagation();}
   var isSelected=p.selectedStock&&p.selectedStock.ticker===s.ticker;
 
-  // 選択中の銘柄だけ日足を取得（スマホはカード内チャートを表示しないため取得自体をスキップ）
+  // 選択中の銘柄だけ5分足を取得（スマホはカード内チャートを表示しないため取得自体をスキップ）
   useEffect(function(){
     if(!isSelected) return;
-    if(!isMobile&&(daily===false||daily===null)){
-      setDaily(undefined);
-      fetchDaily(s.ticker).then(function(r){setDaily(r);});
+    if(!isMobile&&(cardIntraday===false||cardIntraday===null)){
+      setCardIntraday(undefined);
+      fetchIntraday(s.ticker).then(function(r){setCardIntraday(r);});
     }
     if(onRescan) onRescan(s.ticker); // 価格・判定バッジもチャートと同様に毎回最新化
   },[isSelected]);
@@ -2164,7 +2231,7 @@ function StockCard(p){
 
       {!isMobile&&(
         <div style={{background:"#03080f",borderRadius:6,padding:"2px 4px"}}>
-          <DailyMiniChart data={daily}/>
+          <CardMiniChart5m data={cardIntraday}/>
         </div>
       )}
 
