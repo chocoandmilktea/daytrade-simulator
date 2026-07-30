@@ -1432,6 +1432,19 @@ function analyzeStock(stock,pd,vixVal){
       };
     }
   }
+  // ── レジスタンスレベル（上値目安：サポートの逆＝20日高値＋ATR上限）───────────
+  var resistance=null;
+  if(highs.length>=BB_P){
+    var validHighs=highs.filter(function(v){return v!=null&&v>0&&!isNaN(v)&&isFinite(v);});
+    var r1v=validHighs.length>=BB_P?Math.max.apply(null,validHighs.slice(-BB_P)):null; // 20日相当
+    var atrCv=price+atr*1.5;
+    if(r1v!==null&&isFinite(r1v)){
+      resistance={
+        r1:isJPmkt?Math.round(r1v):parseFloat(r1v.toFixed(2)),
+        atrCeil:isJPmkt?Math.round(atrCv):parseFloat(atrCv.toFixed(2))
+      };
+    }
+  }
   // ────────────────────────────────────────────────────────────────────────
 
   // ── スコア履歴をlocalStorageに蓄積（自動・最大40日分）────────────────────
@@ -1486,7 +1499,7 @@ function analyzeStock(stock,pd,vixVal){
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
     aptScore:aptScore,
-    atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,profitLoss:profitLoss,
+    atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,resistance:resistance,profitLoss:profitLoss,
     scoreHist:scoreHist,
     actualWinRate:calcActualWinRate(scoreHist),
     vwap:vwap?parseFloat(vwap.toFixed(stock.market==="JP"?0:2)):null,
@@ -2299,28 +2312,37 @@ function findBoardMatch(targetPrice,thickLevels){
   return best;
 }
 function SupportZoneRow(p){
+  var c=p.color||"#22d3a0";
   return(
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:10,padding:"4px 0",borderBottom:"1px solid #0e2038"}}>
       <span style={{color:"#8aa4c0"}}>{p.label}</span>
       <span style={{display:"flex",alignItems:"center",gap:6}}>
-        {p.match&&<span style={{fontSize:9,color:"#22d3a0",background:"#052e16",border:"1px solid #22d3a050",borderRadius:4,padding:"1px 5px",whiteSpace:"nowrap"}}>🧱重なり</span>}
+        {p.match&&<span style={{fontSize:9,color:c,background:c+"18",border:"1px solid "+c+"50",borderRadius:4,padding:"1px 5px",whiteSpace:"nowrap"}}>🧱重なり</span>}
         <b style={{color:"#d8eeff",fontSize:11}}>{p.unit}{p.price.toLocaleString()}</b>
       </span>
     </div>
   );
 }
 function SupportZonePanel(p){
-  var support=p.support;
-  if(!support) return null;
+  var support=p.support,resistance=p.resistance;
+  if(!support&&!resistance) return null;
   var unit=p.isJP?"¥":"$";
   var ob=parseOrderBookLevels(p.quote);
   var thickBuy=findThickLevels(ob.buyLevels);
+  var thickSell=findThickLevels(ob.sellLevels);
   var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px",cursor:"pointer"};
   return(
     <div style={box} onClick={p.onInfoClick}>
       <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:4}}>🎯 サポートゾーン</div>
-      <SupportZoneRow label="S1(20日安値)" price={support.s1} unit={unit} match={findBoardMatch(support.s1,thickBuy)}/>
-      <SupportZoneRow label="ATR下限(×1.5)" price={support.atrFloor} unit={unit} match={findBoardMatch(support.atrFloor,thickBuy)}/>
+      {support&&(<>
+        <SupportZoneRow label="S1(20日安値)" price={support.s1} unit={unit} color="#22d3a0" match={findBoardMatch(support.s1,thickBuy)}/>
+        <SupportZoneRow label="ATR下限(×1.5)" price={support.atrFloor} unit={unit} color="#22d3a0" match={findBoardMatch(support.atrFloor,thickBuy)}/>
+      </>)}
+      {resistance&&(<>
+        <div style={{fontSize:9,color:"#4a7090",margin:"6px 0 2px"}}>▲ レジスタンス（上値目安）</div>
+        <SupportZoneRow label="R1(20日高値)" price={resistance.r1} unit={unit} color="#f43f5e" match={findBoardMatch(resistance.r1,thickSell)}/>
+        <SupportZoneRow label="ATR上限(×1.5)" price={resistance.atrCeil} unit={unit} color="#f43f5e" match={findBoardMatch(resistance.atrCeil,thickSell)}/>
+      </>)}
     </div>
   );
 }
@@ -2472,7 +2494,7 @@ function StockDetailPanel(p){
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
           <OrderBookTendency quote={tachibanaQuote}/>
-          <SupportZonePanel support={s.support} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
+          <SupportZonePanel support={s.support} resistance={s.resistance} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
           {s.profitLoss&&(
             <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン</div>
@@ -2534,7 +2556,8 @@ function StockDetailPanel(p){
             </div>
             <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.7}}>
               <div style={{marginBottom:10}}>板の厚い注文だけだと分かるのは「今この瞬間、板のどこかに大きな買い注文がある」ということだけです。それが意味のある値段なのか、たまたまそこにあるだけなのかは分かりません。</div>
-              <div style={{marginBottom:10}}>サポートゾーンだけだと分かるのは「チャート上でこの値段は過去に何度も意識されてきた節目（S1・S2・ATR下限）」ということだけです。でも今まさに買いたい人がそこにいるかは分かりません。</div>
+              <div style={{marginBottom:10}}>サポートゾーンだけだと分かるのは「チャート上でこの値段は過去に何度も意識されてきた節目（S1・ATR下限）」ということだけです。でも今まさに買いたい人がそこにいるかは分かりません。</div>
+              <div style={{marginBottom:10}}>レジスタンス（R1・ATR上限）はこの逆で、直近高値やATR上限に、板の厚い<b>売り</b>注文が重なっているかを見ます。上値が重いかどうか＝戻り売りや利確の目安になります。</div>
               <div style={{marginBottom:10,color:"#d8eeff",fontWeight:700}}>この2つを重ねることで、「過去の実績」と「今の需給」が同じ値段で一致しているかどうかが分かります。「下げ止まりそうな場所」の根拠の強さです。</div>
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:8,padding:"8px 10px"}}>
