@@ -1847,8 +1847,8 @@ function VolumeSpikePattern(p){
     <div style={{marginBottom:8}}>
       <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>📊 出来高急増後の値動き</div>
       <div style={{display:"flex",gap:6}}>
-        <VolumeSpikeStatBox label="翌日営業" value={pat.avgNext1} count={pat.count1}/>
-        <VolumeSpikeStatBox label="翌々日営業" value={pat.avgNext2} count={pat.count2}/>
+        <VolumeSpikeStatBox label="1日営業" value={pat.avgNext1} count={pat.count1}/>
+        <VolumeSpikeStatBox label="2日営業" value={pat.avgNext2} count={pat.count2}/>
       </div>
     </div>
   );
