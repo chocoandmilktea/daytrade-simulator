@@ -1882,22 +1882,23 @@ function computeGapFillPattern(daily){
   return{up:up,down:down};
 }
 function GapFillBar(p){
-  var d=p.data;
+  var d=p.data,color=p.color;
   if(!d) return(
     <div style={{flex:1,background:"#071428",borderRadius:6,padding:"8px 10px"}}>
       <div style={{fontSize:9,color:"#6a90b0",marginBottom:6}}>{p.label}</div>
       <div style={{fontSize:11,color:"#4a7090"}}>サンプル不足</div>
     </div>
   );
-  var color=d.rate>=50?"#22d3a0":"#f43f5e";
   return(
     <div style={{flex:1,background:"#071428",borderRadius:6,padding:"8px 10px"}}>
-      <div style={{fontSize:9,color:"#6a90b0",marginBottom:4}}>{p.label}</div>
-      <div style={{fontSize:17,fontWeight:800,color:color,marginBottom:4}}>{d.rate.toFixed(0)}%<span style={{fontSize:9,color:"#6a90b0",fontWeight:400}}> 当日中に埋まる</span></div>
-      <div style={{height:6,background:"#0a1830",borderRadius:3,overflow:"hidden",marginBottom:4}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+        <div style={{fontSize:9,color:"#6a90b0"}}>{p.label}</div>
+        <div style={{fontSize:9,color:"#4a7090"}}>{d.total}回中{d.filled}回</div>
+      </div>
+      <div style={{fontSize:15,fontWeight:800,color:color,marginBottom:4}}>{d.rate.toFixed(0)}%<span style={{fontSize:9,color:"#6a90b0",fontWeight:400}}> 当日中に埋まる</span></div>
+      <div style={{height:6,background:"#0a1830",borderRadius:3,overflow:"hidden"}}>
         <div style={{height:"100%",width:d.rate+"%",background:color}}/>
       </div>
-      <div style={{fontSize:9,color:"#4a7090"}}>{d.total}回中{d.filled}回</div>
     </div>
   );
 }
@@ -1912,8 +1913,8 @@ function GapFillPattern(p){
     <div>
       <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>🎯 ギャップ埋まり率（前日終値比・過去1年）</div>
       <div style={{display:"flex",gap:6}}>
-        <GapFillBar label="上ギャップ" data={pat.up}/>
-        <GapFillBar label="下ギャップ" data={pat.down}/>
+        <GapFillBar label="上ギャップ" data={pat.up} color="#f43f5e"/>
+        <GapFillBar label="下ギャップ" data={pat.down} color="#22d3a0"/>
       </div>
     </div>
   );
