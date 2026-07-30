@@ -2502,23 +2502,6 @@ function StockDetailPanel(p){
           <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
         </div>
       </div>
-          {s.profitLoss&&(
-            <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}>
-                  <div style={{fontSize:9,color:"#22d3a0",marginBottom:2}}>ATR×1.5</div>
-                  <div style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}</div>
-                </div>
-                <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"5px 8px"}}>
-                  <div style={{fontSize:9,color:"#f43f5e",marginBottom:2}}>ATR×0.75</div>
-                  <div style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}</div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
 
       {showAi&&createPortal(
         <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
