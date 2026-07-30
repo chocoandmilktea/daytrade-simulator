@@ -2492,14 +2492,16 @@ function StockDetailPanel(p){
         <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340} aiEntry={aiEntry}/>
       </div>
 
-      {/* シグナル詳細（左）／板情報・利確損切りライン（右） */}
+            {/* シグナル詳細（左）／板情報・利確損切りライン（右） */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignItems:"start"}}>
         <div style={{minWidth:0}}>
           <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
           <OrderBookTendency quote={tachibanaQuote}/>
-         <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
+          <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
+        </div>
+      </div>
           {s.profitLoss&&(
             <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
               <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 利確/損切りライン</div>
