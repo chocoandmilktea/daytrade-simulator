@@ -217,7 +217,7 @@ async function fetchDaily(ticker){
       if(!res.ok) throw new Error("HTTP "+res.status);
       var json=await res.json();
       if(!json||!json.closes||json.closes.length<2) return null;
-      var result={closes:json.closes,dates:json.dates||[],volumes:json.volumes||[]};
+      var result={closes:json.closes,dates:json.dates||[],volumes:json.volumes||[],opens:json.opens||[],highs:json.highs||[],lows:json.lows||[]};
       DAILY_CACHE[ticker]={ts:now,data:result};
       return result;
     }catch(e){return null;}
@@ -1853,6 +1853,71 @@ function VolumeSpikePattern(p){
     </div>
   );
 }
+// ── 「銘柄の癖」パターン分析：ギャップ埋まり率 ──────────────────────────
+// 前日終値と当日始値の差（ギャップ）が、その日のうちに前日終値の水準まで
+// 戻ってきた（＝埋まった）かどうかを過去1年分の日足から集計する。
+// 上ギャップ埋まり率が高い→寄り付き後に下がって戻りやすい、
+// 下ギャップ埋まり率が高い→寄り付き後に上がって戻りやすい、という目安になる。
+// GAP_MIN_PCT未満の僅かな差はノイズとみなし、ギャップとしてカウントしない。
+var GAP_MIN_PCT=0.3;
+function computeGapFillPattern(daily){
+  if(!daily||!daily.closes||!daily.opens||!daily.highs||!daily.lows||daily.closes.length<30) return null;
+  var closes=daily.closes,opens=daily.opens,highs=daily.highs,lows=daily.lows,n=closes.length;
+  var upTotal=0,upFilled=0,downTotal=0,downFilled=0;
+  for(var i=1;i<n;i++){
+    var prevClose=closes[i-1];
+    if(!prevClose||opens[i]==null) continue;
+    var gapPct=(opens[i]-prevClose)/prevClose*100;
+    if(gapPct>=GAP_MIN_PCT){
+      upTotal++;
+      if(lows[i]<=prevClose) upFilled++;
+    }else if(gapPct<=-GAP_MIN_PCT){
+      downTotal++;
+      if(highs[i]>=prevClose) downFilled++;
+    }
+  }
+  var up=upTotal>=3?{total:upTotal,filled:upFilled,rate:upFilled/upTotal*100}:null;
+  var down=downTotal>=3?{total:downTotal,filled:downFilled,rate:downFilled/downTotal*100}:null;
+  if(!up&&!down) return null;
+  return{up:up,down:down};
+}
+function GapFillBar(p){
+  var d=p.data;
+  if(!d) return(
+    <div style={{flex:1,background:"#071428",borderRadius:6,padding:"8px 10px"}}>
+      <div style={{fontSize:9,color:"#6a90b0",marginBottom:6}}>{p.label}</div>
+      <div style={{fontSize:11,color:"#4a7090"}}>サンプル不足</div>
+    </div>
+  );
+  var color=d.rate>=50?"#22d3a0":"#f43f5e";
+  return(
+    <div style={{flex:1,background:"#071428",borderRadius:6,padding:"8px 10px"}}>
+      <div style={{fontSize:9,color:"#6a90b0",marginBottom:4}}>{p.label}</div>
+      <div style={{fontSize:17,fontWeight:800,color:color,marginBottom:4}}>{d.rate.toFixed(0)}%<span style={{fontSize:9,color:"#6a90b0",fontWeight:400}}> 当日中に埋まる</span></div>
+      <div style={{height:6,background:"#0a1830",borderRadius:3,overflow:"hidden",marginBottom:4}}>
+        <div style={{height:"100%",width:d.rate+"%",background:color}}/>
+      </div>
+      <div style={{fontSize:9,color:"#4a7090"}}>{d.total}回中{d.filled}回</div>
+    </div>
+  );
+}
+function GapFillPattern(p){
+  var data=p.data; // undefined=読込中, null=取得失敗
+  var wrapStyle={fontSize:10,color:"#4a7090",padding:"6px 2px"};
+  if(data===undefined) return <div style={wrapStyle}>🎯 ギャップ埋まり率：読込中…</div>;
+  if(data===null) return null; // 取得失敗時は静かに非表示
+  var pat=computeGapFillPattern(data);
+  if(!pat) return <div style={wrapStyle}>🎯 ギャップ埋まり率：サンプル不足のため非表示</div>;
+  return(
+    <div>
+      <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>🎯 ギャップ埋まり率（前日終値比・過去1年）</div>
+      <div style={{display:"flex",gap:6}}>
+        <GapFillBar label="上ギャップ" data={pat.up}/>
+        <GapFillBar label="下ギャップ" data={pat.down}/>
+      </div>
+    </div>
+  );
+}
 function IntradayChart1m(p){
   var data=p.data,H=p.height||140,BUCKET=1,CANDLE_W=8,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
@@ -2623,6 +2688,7 @@ function StockDetailPanel(p){
           <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
+          <GapFillPattern data={daily}/>
           <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
         </div>
       </div>
