@@ -1808,21 +1808,27 @@ function dailyVWAPSeries(closes,highs,lows,volumes,dates){
   return result;
 }
 // ── 「銘柄の癖」パターン分析：出来高急増後の値動き ───────────────────────
-// 過去1年の日足から「出来高が平均の1.5倍を超えた日」を探し、その翌営業日・
-// 翌々営業日の平均騰落率を集計する。材料に強く伸びやすい銘柄か、逆に
-// 急騰後は剥落しやすい銘柄かの目安になる。サンプルが少なすぎる場合は
-// 参考にならないためnullを返し、表示側で「非表示」扱いにする。
+// 過去1年の日足から「出来高が急増した日」を探し、その翌営業日・翌々営業日の
+// 平均騰落率を集計する。材料に強く伸びやすい銘柄か、逆に急騰後は剥落しやすい
+// 銘柄かの目安になる。
+// 「急増」の判定基準は、その日を含まない直近20営業日（約1ヶ月）の平均出来高。
+// デイトレ・スキャル用途では「今の水準からして多いかどうか」が知りたいため、
+// 半年前の閑散期・活況期まで含めた1年間まるごとの平均だと基準が鈍ってしまう。
+// 直近20日の移動平均にすることで、時期による偏りを受けにくくしている。
+// サンプル（急増日）が少なすぎる場合は参考にならないためnullを返し、
+// 表示側で「非表示」扱いにする。
 var VOLUME_SPIKE_RATIO=1.5;
+var VOLUME_SPIKE_LOOKBACK=20; // 何営業日分の平均出来高と比較するか
 function computeVolumeSpikePattern(daily){
-  if(!daily||!daily.closes||!daily.volumes||daily.closes.length<20) return null;
+  if(!daily||!daily.closes||!daily.volumes||daily.closes.length<VOLUME_SPIKE_LOOKBACK+10) return null;
   var closes=daily.closes,volumes=daily.volumes,n=closes.length;
-  var sum=0,cnt=0;
-  for(var i=0;i<n;i++){if(volumes[i]>0){sum+=volumes[i];cnt++;}}
-  if(cnt<10) return null;
-  var avgVol=sum/cnt;
   var next1=[],next2=[];
-  for(var i=0;i<n-1;i++){
-    if(volumes[i]>avgVol*VOLUME_SPIKE_RATIO){
+  for(var i=VOLUME_SPIKE_LOOKBACK;i<n-1;i++){
+    var sum=0,cnt=0;
+    for(var j=i-VOLUME_SPIKE_LOOKBACK;j<i;j++){if(volumes[j]>0){sum+=volumes[j];cnt++;}}
+    if(cnt<10) continue; // 直近の出来高データが乏しい期間は判定をスキップ
+    var trailingAvg=sum/cnt;
+    if(volumes[i]>trailingAvg*VOLUME_SPIKE_RATIO){
       next1.push((closes[i+1]-closes[i])/closes[i]*100);
       if(i+2<n) next2.push((closes[i+2]-closes[i])/closes[i]*100);
     }
@@ -1850,7 +1856,7 @@ function VolumeSpikePattern(p){
   if(!pat) return <div style={wrapStyle}>📊 出来高急増後の値動き：サンプル不足のため非表示</div>;
   return(
     <div>
-      <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>📊 出来高急増後の値動き（平均出来高の{VOLUME_SPIKE_RATIO}倍超え・過去1年）</div>
+      <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>📊 出来高急増後の値動き（直近{VOLUME_SPIKE_LOOKBACK}営業日平均の{VOLUME_SPIKE_RATIO}倍超え・過去1年で集計）</div>
       <div style={{display:"flex",gap:6}}>
         <VolumeSpikeStatBox label="翌営業日" value={pat.avgNext1} count={pat.count1}/>
         <VolumeSpikeStatBox label="翌々営業日" value={pat.avgNext2} count={pat.count2}/>
