@@ -2160,6 +2160,7 @@ function SignalDetailList(p){
   return(
     <div>
       <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
+      <VolumeSpikePattern data={p.daily}/>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
         {sortedSignals.map(function(sig,i){
           return(
@@ -2558,7 +2559,7 @@ function StatForecastPanel(p){
   function renderRow(titleLabel,f,withRange){
     if(!f.ready){
       return(
-        <div key={titleLabel} style={{fontSize:11,color:"#4a7090",marginBottom:6}}>{titleLabel}：📥 データ蓄積中（実績10件以上のシグナルが{f.used}/3種類）。スキャンを重ねると自動で表示が始まります</div>
+        <div key={titleLabel} style={{fontSize:10,color:"#4a7090",marginBottom:6}}>{titleLabel}：📥 データ蓄積中（実績10件以上のシグナルが{f.used}/3種類）。スキャンを重ねると自動で表示が始まります</div>
       );
     }
     var d=dirInfo(f.upRate);
@@ -2569,24 +2570,24 @@ function StatForecastPanel(p){
     return(
       <div key={titleLabel} style={{marginBottom:6}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontSize:11,color:"#8aa8c8"}}>{titleLabel}</span>
-          <span style={{fontSize:11,fontWeight:700,color:d.color}}>{d.label}（過去傾向 上昇{f.upRate}%・{f.totalN}件）</span>
+          <span style={{fontSize:10,color:"#8aa8c8"}}>{titleLabel}</span>
+          <span style={{fontSize:10,fontWeight:700,color:d.color}}>{d.label}（過去傾向 上昇{f.upRate}%・{f.totalN}件）</span>
         </div>
-        <div style={{fontSize:12,color:"#d8eeff",fontWeight:700,marginTop:2}}>
+        <div style={{fontSize:11,color:"#d8eeff",fontWeight:700,marginTop:2}}>
           目安 {(f.expPct>=0?"+":"")+f.expPct.toFixed(1)}%（{fmtP(target)}前後）
-          {lo!=null&&<span style={{fontSize:10,color:"#4a7090",fontWeight:400}}>　レンジ {fmtP(lo)}〜{fmtP(hi)}</span>}
+          {lo!=null&&<span style={{fontSize:9,color:"#4a7090",fontWeight:400}}>　レンジ {fmtP(lo)}〜{fmtP(hi)}</span>}
         </div>
-        {warn&&<div style={{fontSize:10,color:"#fbbf24",marginTop:2}}>{warn}</div>}
+        {warn&&<div style={{fontSize:9,color:"#fbbf24",marginTop:2}}>{warn}</div>}
       </div>
     );
   }
   return(
     <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
-      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🔮 統計ベースの目安（過去実績のみで算出・AI不使用）</div>
+      <div style={{fontSize:10,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🔮 統計ベースの目安（過去実績のみで算出・AI不使用）</div>
       <div style={{display:"flex",gap:10}}>
         <div style={{flex:1,minWidth:0}}>
           {today?renderRow("今日の引けまで",today,false):(
-            <div style={{fontSize:10,color:"#2a6090",marginBottom:4}}>「今日の引けまで」版は取引時間中（9:00〜15:30）のみ表示されます</div>
+            <div style={{fontSize:9,color:"#2a6090",marginBottom:4}}>「今日の引けまで」版は取引時間中（9:00〜15:30）のみ表示されます</div>
           )}
         </div>
         <div style={{flex:1,minWidth:0}}>
@@ -2771,15 +2772,14 @@ function StockDetailPanel(p){
       </div>
 
             {/* 統計ベースの目安（全幅・出来高急増後の値動きより上） */}
-      <div style={{marginBottom:10}}>
+      <div style={{marginBottom:4}}>
         <StatForecastPanel s={s}/>
       </div>
 
-            {/* シグナル詳細（左・上に出来高急増後の値動き）／板情報・利確損切りライン（右） */}
+            {/* シグナル詳細（出来高急増後の値動きを内包）／板情報・利確損切りライン（右） */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignItems:"start"}}>
         <div style={{minWidth:0}}>
-          <VolumeSpikePattern data={daily}/>
-          <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
+          <SignalDetailList signals={s.signals} breakdown={s.breakdown} daily={daily}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
           <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
