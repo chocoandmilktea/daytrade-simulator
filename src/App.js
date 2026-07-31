@@ -406,6 +406,12 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection)
   // 登録時点で「過去実績に基づく重み補正」が何点効いていたか（検証パネル用）
   var wAdjItem=(s.breakdown||[]).find(function(b){return b.label==="実績反映調整";});
   var weightAdjustAtAdd=wAdjItem?wAdjItem.delta:0;
+  // 登録時点のスコア・点灯シグナル・🔮統計予想を記録（実トレード結果とシグナルを紐付けるため）
+  // → 将来「自分の勝ちトレードに実際に効いていたシグナル」を分析できるようにする土台。今は記録のみ
+  var sigKeysAtAdd=(s.signals||[]).map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
+  var forecastAtAdd=(function(){
+    try{var f=calcStatForecast(s.signals,getUniverseSignalStats());return f.ready?{expPct:f.expPct,upRate:f.upRate}:null;}catch(e){return null;}
+  })();
   list.push({
     id:"t"+Date.now()+Math.random().toString(36).slice(2,6),
     ticker:s.ticker,name:s.name,market:s.market,
@@ -418,6 +424,9 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection)
     pnl:null,pnlPercent:null,exitReason:null, // take_profit(利確) / stop_loss(損切り) / time_exit(引けで強制決済) / forced(強制完了)
     signalAtAdd:s.timing||null, // 登録時点のアプリ判定（BUY/WATCH/SKIP）＝後から検証するための記録
     weightAdjustAtAdd:weightAdjustAtAdd, // 登録時点の実績反映調整の点数（検証パネル用）
+    scoreAtAdd:s.score!=null?s.score:null, // 登録時点のスコア
+    sigKeysAtAdd:sigKeysAtAdd, // 登録時点で点灯していたシグナル一覧
+    forecastAtAdd:forecastAtAdd, // 登録時点の🔮翌営業日予想（期待変化率・上昇確率）
     lastPrice:curPrice,
     addedAt:new Date().toISOString()
   });
@@ -525,7 +534,9 @@ function applyPricesToTrades(kind,priceMap){
 var AI_API_URL="https://daytrade-simulator.vercel.app/api/ai";
 // 対象銘柄の各シグナルについて、スキャン銘柄全体での過去的中率をAIへの参考情報として整形
 // （サンプル10件未満のシグナルは参考にならないため含めない）
-function buildAccuracyPart(signals){
+// あわせて🔮統計ベース予想（翌営業日の期待変化率・上昇確率）とスコア帯実績も渡し、
+// AIの見通しが実データに基づくようにする
+function buildAccuracyPart(signals,score){
   var stats=getUniverseSignalStats();
   var lines=[];
   (signals||[]).forEach(function(sig){
@@ -533,7 +544,14 @@ function buildAccuracyPart(signals){
     var s=stats[key];
     if(s&&s.t>=10) lines.push("  "+sig.label+": 過去的中率"+Math.round(signalQuality(s,key)*100)+"%("+s.t+"件, 予想方向が翌営業日に当たった率)");
   });
-  return lines.length?("過去のシグナル的中率(参考・スキャン銘柄全体集計):\n"+lines.join("\n")+"\n"):"";
+  var out=lines.length?("過去のシグナル的中率(参考・スキャン銘柄全体集計):\n"+lines.join("\n")+"\n"):"";
+  var fc=calcStatForecast(signals,stats);
+  if(fc.ready) out+="🔮統計ベース翌営業日予想(過去実績のみで算出): 期待変化率"+(fc.expPct>=0?"+":"")+fc.expPct.toFixed(1)+"% / 上昇した割合"+fc.upRate+"%("+fc.totalN+"件)\n";
+  if(score!=null){
+    var band=getUniverseBandStats().find(function(b){return b.band===bandLabelFor(score);});
+    if(band&&band.total>=5) out+="スコア帯"+band.band+"点の過去実績: 翌営業日的中率"+band.winRate+"%("+band.total+"件)\n";
+  }
+  return out;
 }
 function buildAiPrompt(s){
   var isJP=s.market==="JP";
@@ -549,7 +567,7 @@ function buildAiPrompt(s){
       "スコアトレンド: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"\n"+
       "ATRトレンド: "+(atrTrend>0?"↑拡大中(ボラ増)":"↓縮小中(ボラ減)")+"\n";
   }
-  var accPart=buildAccuracyPart(s.signals);
+  var accPart=buildAccuracyPart(s.signals,s.score);
   return "あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
     "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
     "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
@@ -1580,7 +1598,7 @@ function analyzeStock(stock,pd,vixVal){
       var sigKeys=signals.map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
       // 地合い情報（対TOPIX前日比・VIX・時間帯）も一緒に記録しておく（Cの機能）
       // → 「上げ相場ではこのシグナルが効く」等の分析に後日使うための記録のみ。現時点では集計には使わない
-      var ctx={topix:topixChange!=null?topixChange:null,vix:vixVal!=null?parseFloat(vixVal):null,session:currentSessionLabel()};
+      var ctx={topix:topixChange!=null?topixChange:null,vix:vixVal!=null?parseFloat(vixVal):null,session:currentSessionLabel(),market:stock.market};
       if(hist.length&&hist[hist.length-1].d===today){
         hist[hist.length-1]={d:today,s:sc,atr:atr,p:price,sig:sigKeys,ctx:ctx};
       }else{
