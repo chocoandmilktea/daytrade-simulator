@@ -1917,32 +1917,6 @@ function computeVolumeSpikePattern(daily){
   function avg(arr){return arr.reduce(function(a,b){return a+b;},0)/arr.length;}
   return{count1:next1.length,avgNext1:avg(next1),count2:next2.length,avgNext2:next2.length?avg(next2):null};
 }
-function VolumeSpikeStatBox(p){
-  var val=p.value,color=val==null?"#4a7090":val>=0?"#22d3a0":"#f43f5e";
-  return(
-    <div style={{flex:1,background:"#071428",borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
-      <div style={{fontSize:9,color:"#6a90b0",marginBottom:2}}>{p.label} <span style={{color:"#4a7090"}}>{p.count}回</span></div>
-      <div style={{fontSize:13,fontWeight:800,color:color}}>{val==null?"—":(val>=0?"+":"")+val.toFixed(1)+"%"}</div>
-    </div>
-  );
-}
-function VolumeSpikePattern(p){
-  var data=p.data; // undefined=読込中, null=取得失敗
-  var wrapStyle={fontSize:10,color:"#4a7090",padding:"6px 2px"};
-  if(data===undefined) return <div style={wrapStyle}>📊 出来高急増後の値動き：読込中…</div>;
-  if(data===null) return null; // 取得失敗時は静かに非表示（他情報の邪魔をしない）
-  var pat=computeVolumeSpikePattern(data);
-  if(!pat) return <div style={wrapStyle}>📊 出来高急増後の値動き：サンプル不足のため非表示</div>;
-  return(
-    <div style={{marginBottom:8}}>
-      <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>📊 出来高急増後の値動き</div>
-      <div style={{display:"flex",gap:6}}>
-        <VolumeSpikeStatBox label="1日営業" value={pat.avgNext1} count={pat.count1}/>
-        <VolumeSpikeStatBox label="2日営業" value={pat.avgNext2} count={pat.count2}/>
-      </div>
-    </div>
-  );
-}
 function IntradayChart1m(p){
   var data=p.data,H=p.height||140,BUCKET=1,CANDLE_W=8,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
@@ -2157,11 +2131,24 @@ function SignalDetailList(p){
     .filter(function(sig){return sig.label==="BB"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");})
     .slice()
     .sort(function(a,b){return signalWeightRank(a.label)-signalWeightRank(b.label);});
+  var volPat=computeVolumeSpikePattern(p.daily); // 出来高急増後の値動き（翌営業日・翌々営業日の平均騰落率）
+  function volRow(key,label,val){
+    var color=val==null?"#4a7090":val>=0?"#22d3a0":"#f43f5e";
+    return(
+      <div key={key} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
+        <span style={{fontSize:labelFs,color:"#4a7090"}}>{label}</span>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <span style={{fontSize:valFs,fontWeight:700,color:color,textAlign:"right"}}>{val==null?"—":(val>=0?"+":"")+val.toFixed(1)+"%"}</span>
+        </div>
+      </div>
+    );
+  }
   return(
     <div>
-      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
-      <VolumeSpikePattern data={p.daily}/>
+      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル+出来高急増後</div>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
+        {volPat&&volRow("volNext1","翌日営業日",volPat.avgNext1)}
+        {volPat&&volRow("volNext2","翌々日営業日",volPat.avgNext2)}
         {sortedSignals.map(function(sig,i){
           return(
             <div key={i} onClick={function(){setWeightOpen(true);}} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040",cursor:"pointer"}}>
