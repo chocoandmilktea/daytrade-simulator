@@ -2098,6 +2098,8 @@ function IntradayChart1m(p){
   var data=p.data,H=p.height||140,BUCKET=1,CANDLE_W=8,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   var scrollRef=useRef(null);
+  var isMobile=useIsMobile();
+  var maInfoOpenS=useState(false);var maInfoOpen=maInfoOpenS[0],setMaInfoOpen=maInfoOpenS[1]; // 左上「MA/VWAP」タップ時の説明モーダル
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
 
   var aiLevels=p.aiEntry||null; // AI分析のentry/target/stop/forecast
@@ -2210,7 +2212,7 @@ function IntradayChart1m(p){
     <div>
       <div style={{display:"flex",gap:6}}>
         <div style={{position:"relative",flex:1,minWidth:0}}>
-          <div style={{position:"absolute",top:4,left:4,zIndex:2,background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px",display:"flex",flexDirection:"column",gap:2,pointerEvents:"none"}}>
+          <div onClick={function(){setMaInfoOpen(true);}} style={{position:"absolute",top:4,left:4,zIndex:2,background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px",display:"flex",flexDirection:"column",gap:2,cursor:"pointer"}}>
             <span style={{fontSize:9,color:"#a3e635",whiteSpace:"nowrap"}}>25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
             <span style={{fontSize:9,color:"#f472b6",whiteSpace:"nowrap"}}>75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
             {hasVolume?<span style={{fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{fontSize:9,color:"#2a4060",whiteSpace:"nowrap"}}>VWAP未対応</span>}
@@ -2285,6 +2287,21 @@ function IntradayChart1m(p){
         {aiLevels&&<span style={{color:"#fbbf24"}}>┈ AI分析ライン（エントリー/利確/損切り）</span>}
         {hasForecast&&<span style={{color:"#8a9bb0"}}>┈ AI予想トレンド（{aiLevels.forecast.direction}・確信度{aiLevels.forecast.confidence}%）</span>}
       </div>
+      {maInfoOpen&&createPortal(
+        <div onClick={function(){setMaInfoOpen(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
+          <div onClick={function(e){e.stopPropagation();}} style={{background:"#0a1628",border:"1px solid #2a4060",borderRadius:10,maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",padding:"16px 18px",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>📈 MA・VWAPについて</div>
+              <button onClick={function(){setMaInfoOpen(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",padding:0}}>✕</button>
+            </div>
+            <div style={{fontSize:12,color:"#a8c4e0",lineHeight:1.7}}>
+              <div>・<b>25期MA</b>：直近25本分の終値をならした短期の移動平均線。直近の値動きの方向感をつかむ目安です</div>
+              <div style={{marginTop:6}}>・<b>75期MA</b>：直近75本分の終値をならした中期の移動平均線。25期MAがこの線を上に抜けると上昇トレンド転換（ゴールデンクロス）、下に抜けると下降トレンド転換（デッドクロス）のサインとして意識されます</div>
+              <div style={{marginTop:6}}>・<b>VWAP</b>（出来高加重平均価格）：その日の出来高で重み付けした平均取引価格。日が変わるとリセットされ、その日だけの累積値です。価格がVWAPより上なら「その日の平均より高く買われている」＝強い、下なら「弱い」の目安として使えます</div>
+            </div>
+          </div>
+        </div>
+      ,document.body)}
     </div>
   );
 }
@@ -2303,6 +2320,8 @@ function displaySignalLabel(label){return label==="寄り付きレンジ"?"ORB":
 function SignalDetailList(p){
   var isMobile=useIsMobile();
   var labelFs=isMobile?9:11,valFs=isMobile?9:11;
+  var rowPad=isMobile?"6px 10px":"3px 8px"; // PC版のみ各項目の上下左右の余白を縮小
+  var rowGap=isMobile?4:2; // PC版のみ項目間の間隔を縮小
   var weightOpenS=useState(false);var weightOpen=weightOpenS[0],setWeightOpen=weightOpenS[1];
   var sortedSignals=(p.signals||[])
     .filter(function(sig){return sig.label==="BB"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");})
@@ -2312,7 +2331,7 @@ function SignalDetailList(p){
   function volRow(key,label,val){
     var color=val==null?"#4a7090":val>=0?"#22d3a0":"#f43f5e";
     return(
-      <div key={key} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
+      <div key={key} style={{background:"#071428",borderRadius:6,padding:rowPad,display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040"}}>
         <span style={{fontSize:labelFs,color:"#4a7090"}}>{label}</span>
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
           <span style={{fontSize:valFs,fontWeight:700,color:color,textAlign:"right"}}>{val==null?"—":(val>=0?"+":"")+val.toFixed(1)+"%"}</span>
@@ -2322,12 +2341,12 @@ function SignalDetailList(p){
   }
   return(
     <div>
-      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+      <div style={{display:"flex",flexDirection:"column",gap:rowGap}}>
         {volPat&&volRow("volNext1","翌日営業日",volPat.avgNext1)}
         {volPat&&volRow("volNext2","翌々日営業日",volPat.avgNext2)}
         {sortedSignals.map(function(sig,i){
           return(
-            <div key={i} onClick={function(){setWeightOpen(true);}} style={{background:"#071428",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040",cursor:"pointer"}}>
+            <div key={i} onClick={function(){setWeightOpen(true);}} style={{background:"#071428",borderRadius:6,padding:rowPad,display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040",cursor:"pointer"}}>
               <span style={{fontSize:labelFs,color:"#4a7090"}}>{displaySignalLabel(sig.label)}</span>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                 <span style={{fontSize:valFs,fontWeight:700,color:stateColor(sig.state),textAlign:"right"}}>{sig.val}</span>
@@ -2367,6 +2386,9 @@ function SignalWeightModal(p){
 
           <div style={{fontWeight:700,color:"#94a3b8",marginTop:14,marginBottom:4}}>補助的な項目（±3〜7点）</div>
           <div>・BB収束（値幅が狭まっている＝この後の値動き拡大の予兆）、ATR消化率（すでに値幅を使い切っていないか＝追いかけ買いの危険度）、Pivot、VWAP傾きなど</div>
+
+          <div style={{fontWeight:700,color:"#38bdf8",marginTop:14,marginBottom:4}}>翌日営業日／翌々日営業日について（スコアには含まれません）</div>
+          <div>・過去1年の日足から「出来高が直近20営業日平均の1.5倍以上に急増した日」を探し、その翌営業日・翌々営業日の株価が平均何%動いたかを集計した、その銘柄の「値動きの癖」の参考値です。材料に強く反応して伸びやすい銘柄か、逆に急騰後は反落しやすい銘柄かを見る目安になります。過去の統計であり、今後の値動きを保証するものではありません（該当日が3回未満の場合は非表示になります）</div>
 
           <div style={{fontWeight:700,color:"#22d3a0",marginTop:14,marginBottom:4}}>実際の見方の目安</div>
           <div>1つの指標だけで判断せず、「コンフルエンスが強気/弱気で一致 → EMA整列やBBの方向も同じ → 出来高も伴っている」という3つが揃ったときが、このアプリの設計上いちばん重視されている状況です。逆に出来高が「低調」なのに他が強気、というときは騙しの可能性を疑う、という使い方が理にかなっています。</div>
@@ -2722,7 +2744,7 @@ function StatForecastPanel(p){
   function renderRow(titleLabel,f,withRange){
     if(!f.ready){
       return(
-        <div key={titleLabel} style={{fontSize:10,color:"#4a7090",marginBottom:6}}>{titleLabel}：📥 データ蓄積中（実績が十分＝10件かつ5営業日以上のシグナルが{f.used}/3種類）。スキャンを重ねると自動で表示が始まります</div>
+        <div key={titleLabel} style={{fontSize:10,color:"#4a7090",marginBottom:3}}>{titleLabel}：📥 データ蓄積中（実績が十分＝10件かつ5営業日以上のシグナルが{f.used}/3種類）。スキャンを重ねると自動で表示が始まります</div>
       );
     }
     var d=dirInfo(f.upRate);
@@ -2731,22 +2753,22 @@ function StatForecastPanel(p){
     var lo=withRange&&dailyVol!=null?price*(1+(f.expPct-dailyVol)/100):null;
     var hi=withRange&&dailyVol!=null?price*(1+(f.expPct+dailyVol)/100):null;
     return(
-      <div key={titleLabel} style={{marginBottom:6}}>
+      <div key={titleLabel} style={{marginBottom:3}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontSize:10,color:"#8aa8c8"}}>{titleLabel}</span>
           <span style={{fontSize:10,fontWeight:700,color:d.color}}>{d.label}（過去傾向 上昇{f.upRate}%・{f.totalN}件）</span>
         </div>
-        <div style={{fontSize:11,color:"#d8eeff",fontWeight:700,marginTop:2}}>
+        <div style={{fontSize:11,color:"#d8eeff",fontWeight:700,marginTop:1}}>
           目安 {(f.expPct>=0?"+":"")+f.expPct.toFixed(1)}%（{fmtP(target)}前後）
           {lo!=null&&<span style={{fontSize:9,color:"#4a7090",fontWeight:400}}>　レンジ {fmtP(lo)}〜{fmtP(hi)}</span>}
         </div>
-        {warn&&<div style={{fontSize:9,color:"#fbbf24",marginTop:2}}>{warn}</div>}
+        {warn&&<div style={{fontSize:9,color:"#fbbf24",marginTop:1}}>{warn}</div>}
       </div>
     );
   }
   return(
-    <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
-      <div style={{fontSize:10,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🔮 統計ベースの目安（過去実績のみで算出・AI不使用）</div>
+    <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"5px 8px"}}>
+      <div style={{fontSize:10,fontWeight:700,color:"#4a90c0",marginBottom:3}}>🔮 統計ベースの目安（過去実績のみで算出・AI不使用）</div>
       <div style={{display:"flex",gap:10}}>
         <div style={{flex:1,minWidth:0}}>
           {today?renderRow("今日の引けまで",today,false):(
@@ -2935,7 +2957,7 @@ function StockDetailPanel(p){
       </div>
 
             {/* 統計ベースの目安（全幅・出来高急増後の値動きより上） */}
-      <div style={{marginBottom:4}}>
+      <div style={{marginBottom:2}}>
         <StatForecastPanel s={s}/>
       </div>
 
