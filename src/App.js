@@ -687,7 +687,9 @@ function calcAiForecastAccuracy(){
         horizons.forEach(function(h){
           var base=hist[idx],nxt=hist[idx+h];
           if(!nxt||nxt.p==null||base.p==null) return;
-          var won=pr.dir.indexOf("上昇")!==-1?(nxt.p>base.p):(nxt.p<base.p);
+          var move=priceMoveState(base.p,nxt.p);
+          if(move===0) return; // 誤差レベルの値動きは集計対象外
+          var won=pr.dir.indexOf("上昇")!==-1?(move>0):(move<0);
           byHorizon[h].t++;if(won)byHorizon[h].w++;
           if(h===1){
             var band=pr.conf>=90?"90+":pr.conf>=70?"70-89":"50-69";
@@ -738,6 +740,19 @@ function calcATR(closes,highs,lows,period){var trs=[];for(var i=1;i<closes.lengt
 // 上位足の方向判定。factor本ごとに間引いた擬似終値列でEMA5/13クロスを見る（1:上昇 -1:下降 0:横ばい/データ不足）
 function resampleDir(closes,factor){var arr=[];for(var i=closes.length-1;i>=0&&arr.length<40;i-=factor){arr.unshift(closes[i]);}if(arr.length<14)return 0;var e5=calcEMA(arr,5),e13=calcEMA(arr,13),m=arr.length-1;return e5[m]>e13[m]?1:(e5[m]<e13[m]?-1:0);}
 
+// ── 勝敗判定の共通しきい値 ──────────────────────────────────────────────
+// スキャン時刻が日によってバラバラなため、極小の値動き（誤差レベル）まで
+// 勝ち/負けとして数えると統計がブレる。しきい値未満の変動は「引き分け」として
+// 集計対象から除外する（的中率の分母・分子どちらにも数えない）
+var WIN_THRESHOLD_PCT=0.3;
+// basePrice→nextPriceの変化率がしきい値以上なら1(上昇)/-1(下降)、しきい値未満は0(判定対象外)
+function priceMoveState(basePrice,nextPrice){
+  if(basePrice==null||nextPrice==null||basePrice===0) return null;
+  var changePct=(nextPrice-basePrice)/basePrice*100;
+  if(Math.abs(changePct)<WIN_THRESHOLD_PCT) return 0;
+  return changePct>0?1:-1;
+}
+
 // スコア高銘柄の翌日実績を算出
 // scoreHist: [{d,s,p},...] pは記録日の終値
 // threshold: 対象スコア下限（デフォルト60）
@@ -749,7 +764,9 @@ function calcActualWinRate(scoreHist,threshold){
   for(var i=0;i<scoreHist.length-1;i++){
     var cur=scoreHist[i],nxt=scoreHist[i+1];
     if(cur.s<threshold||cur.p==null||nxt.p==null) continue;
-    var won=nxt.p>cur.p;
+    var move=priceMoveState(cur.p,nxt.p);
+    if(move===0) continue; // 誤差レベルの値動きは集計対象外
+    var won=move>0;
     wins+=won?1:0;
     total++;
     var band=cur.s>=100?"100":cur.s>=80?"80":"60";
@@ -783,7 +800,9 @@ function accumulateSignalStats(hist,daysAfter,stats){
   for(var i=0;i<hist.length-daysAfter;i++){
     var cur=hist[i],nxt=hist[i+daysAfter];
     if(cur.p==null||nxt.p==null||!cur.sig) continue;
-    var won=nxt.p>cur.p;
+    var move=priceMoveState(cur.p,nxt.p);
+    if(move===0) continue; // 誤差レベルの値動きは集計対象外
+    var won=move>0;
     cur.sig.forEach(function(key){
       if(!stats[key])stats[key]={w:0,t:0};
       stats[key].t++;
@@ -874,10 +893,12 @@ function getUniverseBandStats(){
       for(var i=0;i<hist.length-1;i++){
         var cur=hist[i],nxt=hist[i+1];
         if(cur.p==null||nxt.p==null) continue;
+        var move=priceMoveState(cur.p,nxt.p);
+        if(move===0) continue; // 誤差レベルの値動きは集計対象外
         var band=bandLabelFor(cur.s);
         if(!stats[band])stats[band]={w:0,t:0};
         stats[band].t++;
-        if(nxt.p>cur.p)stats[band].w++;
+        if(move>0)stats[band].w++;
       }
     });
   }catch(e){}
@@ -911,8 +932,10 @@ function calcIntradayAccuracy(){
         entries.forEach(function(e){
           if(e===closeEntry||e.p==null||e.s<60) return;
           if(INTRADAY_SESSIONS.indexOf(e.session)===-1) return;
+          var move=priceMoveState(e.p,closeEntry.p);
+          if(move===0) return; // 誤差レベルの値動きは集計対象外
           scoreStats[e.session].t++;
-          if(closeEntry.p>e.p) scoreStats[e.session].w++;
+          if(move>0) scoreStats[e.session].w++;
         });
       });
     });
