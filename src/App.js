@@ -803,9 +803,11 @@ function accumulateSignalStats(hist,daysAfter,stats){
     var move=priceMoveState(cur.p,nxt.p);
     if(move===0) continue; // 誤差レベルの値動きは集計対象外
     var won=move>0;
+    var changePct=(nxt.p-cur.p)/cur.p*100; // Dの機能：平均騰落率の算出用
     cur.sig.forEach(function(key){
-      if(!stats[key])stats[key]={w:0,t:0};
+      if(!stats[key])stats[key]={w:0,t:0,sumPct:0};
       stats[key].t++;
+      stats[key].sumPct+=changePct;
       if(won)stats[key].w++;
     });
   }
@@ -821,7 +823,7 @@ function calcSignalAccuracy(tickers){
   });
   return Object.keys(stats).map(function(k){
     var s=stats[k];
-    return{signal:k,winRate:s.t>0?Math.round(signalQuality(s,k)*100):null,total:s.t};
+    return{signal:k,winRate:s.t>0?Math.round(signalQuality(s,k)*100):null,avgPct:s.t>0?signalAvgPct(s,k):null,total:s.t};
   }).sort(function(a,b){return(b.winRate||0)-(a.winRate||0);});
 }
 // お気に入り登録銘柄全体で集計（お気に入りタブ用）
@@ -845,7 +847,7 @@ function calcSignalAccuracyMulti(tickers){
     var row={signal:k};
     ACCURACY_HORIZONS.forEach(function(h){
       var s=statsByH[h][k];
-      row["d"+h]=s?{winRate:Math.round(signalQuality(s,k)*100),total:s.t}:{winRate:null,total:0};
+      row["d"+h]=s?{winRate:Math.round(signalQuality(s,k)*100),avgPct:signalAvgPct(s,k),total:s.t}:{winRate:null,avgPct:null,total:0};
     });
     return row;
   }).sort(function(a,b){return(b.d1.winRate||0)-(a.d1.winRate||0);});
@@ -954,6 +956,15 @@ function signalQuality(stat,sigKey){
   var state=parseInt(sigKey.split("#")[1],10);
   var winRate=stat.w/stat.t;
   return state===-1?(1-winRate):winRate;
+}
+// シグナルの向き通りに動いた場合の平均リターン（%）。Dの機能。
+// 弱気(state=-1)シグナルは「下落率」がプラス材料なので符号を反転し、
+// 「そのシグナル通りに動いたら何%取れたか」に統一して返す
+function signalAvgPct(stat,sigKey){
+  if(!stat||!stat.t) return null;
+  var state=parseInt(sigKey.split("#")[1],10);
+  var avg=stat.sumPct/stat.t;
+  return state===-1?-avg:avg;
 }
 // シグナル1件分の重み係数（1.0=調整なし）。
 // サンプル10件未満は調整なし／10〜19件は最大±10%／20件以上は最大±20%
@@ -1482,10 +1493,13 @@ function analyzeStock(stock,pd,vixVal){
       var hist=JSON.parse(localStorage.getItem(key)||"[]");
       var today=new Date().toISOString().slice(0,10);
       var sigKeys=signals.map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
+      // 地合い情報（対TOPIX前日比・VIX・時間帯）も一緒に記録しておく（Cの機能）
+      // → 「上げ相場ではこのシグナルが効く」等の分析に後日使うための記録のみ。現時点では集計には使わない
+      var ctx={topix:topixChange!=null?topixChange:null,vix:vixVal!=null?parseFloat(vixVal):null,session:currentSessionLabel()};
       if(hist.length&&hist[hist.length-1].d===today){
-        hist[hist.length-1]={d:today,s:sc,atr:atr,p:price,sig:sigKeys};
+        hist[hist.length-1]={d:today,s:sc,atr:atr,p:price,sig:sigKeys,ctx:ctx};
       }else{
-        hist.push({d:today,s:sc,atr:atr,p:price,sig:sigKeys});
+        hist.push({d:today,s:sc,atr:atr,p:price,sig:sigKeys,ctx:ctx});
         if(hist.length>40)hist.shift();
       }
       localStorage.setItem(key,JSON.stringify(hist));
@@ -3888,7 +3902,7 @@ function SignalAccuracyContent(p){
   function cellColor(wr){return wr==null?"#4a7090":wr>=60?"#22d3a0":wr>=50?"#fbbf24":"#f43f5e";}
   return(
     <div>
-      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルの予想方向（強気なら上昇/弱気なら下落）が何営業日後に当たったかを表示します"}</div>
+      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルの予想方向（強気なら上昇/弱気なら下落）が何営業日後に当たったかを表示します。%の下の小さい数字は、そのシグナル通りに動いた場合の平均騰落率です"}</div>
       {data.length===0?(
         <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだデータがありません。{emptyLabel}を毎日スキャンすると溜まっていきます。</div>
       ):(
@@ -3903,7 +3917,13 @@ function SignalAccuracyContent(p){
                 <div style={{flex:1,minWidth:0,color:"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{formatSigKeyLabel(row.signal)}</div>
                 {horizons.map(function(hz){
                   var c=row[hz.k],reliable=c.total>=5;
-                  return <div key={hz.k} title={c.total+"件"} style={{width:48,flexShrink:0,textAlign:"right",color:cellColor(c.winRate),fontWeight:700,opacity:reliable?1:0.5}}>{c.winRate!=null?c.winRate+"%":"-"}</div>;
+                  var avgLabel=c.avgPct!=null?((c.avgPct>=0?"+":"")+c.avgPct.toFixed(1)+"%"):null;
+                  return(
+                    <div key={hz.k} title={c.total+"件"} style={{width:48,flexShrink:0,textAlign:"right",opacity:reliable?1:0.5}}>
+                      <div style={{color:cellColor(c.winRate),fontWeight:700}}>{c.winRate!=null?c.winRate+"%":"-"}</div>
+                      {avgLabel&&<div style={{fontSize:9,color:"#4a7090"}}>{avgLabel}</div>}
+                    </div>
+                  );
                 })}
               </div>
             );
