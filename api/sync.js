@@ -78,6 +78,9 @@ async function handleTachibanaWatch(req, res) {
   return res.status(405).json({ error: 'method not allowed' });
 }
 
+// 休場中でも直近の板情報を表示できるよう、長期保存用スナップショットを別途持たせる
+const QUOTE_SNAPSHOT_TTL = 60 * 60 * 24 * 3; // 3日（連休を挟んでも切れないように）
+
 async function handleTachibanaQuote(req, res) {
   if (req.method === 'POST') {
     if (RELAY_SECRET && req.headers['x-relay-secret'] !== RELAY_SECRET) {
@@ -85,20 +88,24 @@ async function handleTachibanaQuote(req, res) {
     }
     const { ticker, fields, updatedAt } = req.body || {};
     if (!ticker) return res.status(400).json({ error: 'ticker required' });
-    await redis.set(
-      'tachibana:quote:' + ticker,
-      JSON.stringify({ ticker, fields, updatedAt: updatedAt || Date.now() }),
-      { ex: 30 }
-    );
+    const payload = JSON.stringify({ ticker, fields, updatedAt: updatedAt || Date.now() });
+    await redis.set('tachibana:quote:' + ticker, payload, { ex: 30 });
+    await redis.set('tachibana:quote:last:' + ticker, payload, { ex: QUOTE_SNAPSHOT_TTL });
     return res.status(200).json({ ok: true });
   }
   if (req.method === 'GET') {
     const { ticker } = req.query;
     if (!ticker) return res.status(400).json({ error: 'ticker required' });
-    const data = await redis.get('tachibana:quote:' + ticker);
-    if (!data) return res.status(200).json({ found: false });
-    const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-    return res.status(200).json({ found: true, ...parsed });
+    const live = await redis.get('tachibana:quote:' + ticker);
+    if (live) {
+      const parsed = typeof live === 'string' ? JSON.parse(live) : live;
+      return res.status(200).json({ found: true, stale: false, ...parsed });
+    }
+    // ライブ値が無い＝立花証券が閉まっている時間帯。直近の成功データを代わりに返す
+    const snapshot = await redis.get('tachibana:quote:last:' + ticker);
+    if (!snapshot) return res.status(200).json({ found: false });
+    const parsed = typeof snapshot === 'string' ? JSON.parse(snapshot) : snapshot;
+    return res.status(200).json({ found: true, stale: true, ...parsed });
   }
   return res.status(405).json({ error: 'method not allowed' });
 }
