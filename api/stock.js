@@ -1,3 +1,9 @@
+// api/stock.js
+// 個別銘柄の詳細データ取得
+//   日本株(.T): Yahoo Financeの15分足 ＋ 決算発表予定日(東証) ＋ TOPIX・PER/PBR等(立花証券API)
+//   それ以外  : 市況指数（VIX・日経平均・NYダウ・S&P500・ドル円）用のYahoo Finance 15分足
+// ※米国株の個別銘柄分析は使用していないため、米国株専用の項目取得は削除済み
+
 import XLSX from "xlsx";
 import { Redis } from "@upstash/redis";
 import { withFallback } from "./_fallbackCache.js";
@@ -15,32 +21,6 @@ export default async function handler(req, res) {
 
   if (ticker.endsWith(".T")) return handleJP(ticker, res);
   return handleUS(ticker, res);
-}
-
-// ── 1分足を指定分数の足に集計（O=区間内最初/H=区間内最大/L=区間内最小/C=区間内最後/Vo=区間内合計）──
-// 時刻を15分境界（00/15/30/45）で区切ってグルーピングするため、取引時間の途中で
-// データが欠けても境界がズレない。barsはDate+Time昇順ソート済みが前提。
-function aggregateBars(bars, intervalMinutes) {
-  const order = [];
-  const map = {};
-  bars.forEach(function (b) {
-    const digits = String(b.Time || "").replace(/\D/g, "");
-    const hh = parseInt(digits.slice(0, 2), 10) || 0;
-    const mm = parseInt(digits.slice(2, 4), 10) || 0;
-    const totalMin = hh * 60 + mm;
-    const bucketStart = Math.floor(totalMin / intervalMinutes) * intervalMinutes;
-    const key = b.Date + "_" + bucketStart;
-    if (!map[key]) {
-      map[key] = { Date: b.Date, O: b.C || 0, H: b.H || 0, L: b.L || 0, C: b.C || 0, Vo: 0 };
-      order.push(key);
-    }
-    const g = map[key];
-    if ((b.H || 0) > g.H) g.H = b.H;
-    if ((b.L || 0) < g.L || g.L === 0) g.L = b.L;
-    g.C = b.C || g.C; // 昇順ソート済みなので最後に処理した値が区間の終値になる
-    g.Vo += b.Vo || 0;
-  });
-  return order.map(function (k) { return map[k]; });
 }
 
 // ── JP: Yahoo Finance 15分足 / 30日（USと同じ取得方法に統一）─────────────
@@ -131,18 +111,6 @@ async function handleJP(ticker, res) {
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
-}
-
-// ── 権利落ち日の概算：基準日のn営業日前（土日のみ考慮、祝日は非考慮の概算値）──
-function subtractBusinessDays(dateStr, n) {
-  const d = new Date(dateStr + "T00:00:00Z");
-  let remaining = n;
-  while (remaining > 0) {
-    d.setUTCDate(d.getUTCDate() - 1);
-    const dow = d.getUTCDay();
-    if (dow !== 0 && dow !== 6) remaining--;
-  }
-  return d.toISOString().slice(0, 10);
 }
 
 // ── 決算発表予定日キャッシュ ──────────────────────────────────────────
@@ -375,18 +343,10 @@ async function fetchTachibanaIssueDetail(code4) {
   return data;
 }
 
-// ── JST日付文字列を取得（daysAgo日前、YYYYMMDD形式）────────────────────────
-function getJSTDate(daysAgo) {
-  const d = new Date();
-  d.setTime(d.getTime() + 9 * 60 * 60 * 1000);
-  d.setUTCDate(d.getUTCDate() - daysAgo);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${y}${m}${day}`;
-}
-
-// ── US: Yahoo Finance 15分足 / 30日（JPの取得期間・バー本数と揃える）────────
+// ── 指数（VIX・日経平均・NYダウ・S&P500・ドル円など）: Yahoo Finance 15分足 / 30日 ──
+// 以前はここで米国株のPER/PBR・アナリスト目標株価・決算日も追加取得していたが、
+// 米国株を扱わなくなったため削除した（指数の取得には不要な項目で、
+// 追加の外部アクセス2回分が丸ごと減るため、市況バーの表示も速くなる）。
 async function handleUS(ticker, res) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=15m&range=30d`;
 
@@ -396,6 +356,7 @@ async function handleUS(ticker, res) {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json",
       },
+      signal: AbortSignal.timeout(9000),
     });
     if (!response.ok) throw new Error(`Yahoo Finance returned ${response.status}`);
     const data = await response.json();
@@ -415,78 +376,12 @@ async function handleUS(ticker, res) {
       result.meta.chartPreviousClose = previousClose;
       result.meta.dataInterval = "15m";
       result.meta.dataRange = "30d";
-    }
-
-    let per = null, pbr = null, analystTarget = null, sector = null, earningsDate = null;
-    const chartMeta = data?.chart?.result?.[0]?.meta || {};
-    if (chartMeta.trailingPE) per = chartMeta.trailingPE;
-    if (chartMeta.priceToBook) pbr = chartMeta.priceToBook;
-
-    if (!per || !pbr || !analystTarget || !sector || !earningsDate) {
-      try {
-        const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=defaultKeyStatistics,summaryDetail,financialData,assetProfile,calendarEvents`;
-        const summaryRes = await fetch(summaryUrl, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.9",
-          },
-          signal: AbortSignal.timeout(6000),
-        });
-        if (summaryRes.ok) {
-          const summary = await summaryRes.json();
-          const detail = summary?.quoteSummary?.result?.[0];
-          if (!per) {
-            per = detail?.summaryDetail?.trailingPE?.raw || null;
-            if (!per && detail?.defaultKeyStatistics?.trailingEps?.raw && chartMeta.regularMarketPrice) {
-              const eps = detail.defaultKeyStatistics.trailingEps.raw;
-              if (eps > 0) per = chartMeta.regularMarketPrice / eps;
-            }
-          }
-          if (!pbr) pbr = detail?.defaultKeyStatistics?.priceToBook?.raw || null;
-          if (detail?.financialData?.targetMeanPrice?.raw) analystTarget = detail.financialData.targetMeanPrice.raw;
-          if (detail?.assetProfile?.sector) sector = detail.assetProfile.sector;
-
-          // 決算発表予定日（epoch秒 → YYYY-MM-DD）。複数候補があれば先頭日を採用
-          const earnRaw = detail?.calendarEvents?.earnings?.earningsDate;
-          if (Array.isArray(earnRaw) && earnRaw.length > 0 && earnRaw[0]?.raw) {
-            earningsDate = new Date(earnRaw[0].raw * 1000).toISOString().slice(0, 10);
-          }
-        }
-      } catch(e) {}
-    }
-
-    if (!per || !pbr) {
-      try {
-        const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}&fields=trailingPE,priceToBook`;
-        const quoteRes = await fetch(quoteUrl, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json",
-          },
-          signal: AbortSignal.timeout(5000),
-        });
-        if (quoteRes.ok) {
-          const quoteData = await quoteRes.json();
-          const q = quoteData?.quoteResponse?.result?.[0];
-          if (q) {
-            if (!per && q.trailingPE) per = q.trailingPE;
-            if (!pbr && q.priceToBook) pbr = q.priceToBook;
-          }
-        }
-      } catch(e) {}
-    }
-
-    if (per && (!isFinite(per) || per <= 0 || per > 10000)) per = null;
-    if (pbr && (!isFinite(pbr) || pbr <= 0 || pbr > 1000)) pbr = null;
-    if (analystTarget && (!isFinite(analystTarget) || analystTarget <= 0)) analystTarget = null;
-
-    if (data?.chart?.result?.[0]) {
-      data.chart.result[0].per = per;
-      data.chart.result[0].pbr = pbr;
-      data.chart.result[0].analystTarget = analystTarget;
-      data.chart.result[0].sector = sector;
-      data.chart.result[0].earningsDate = earningsDate;
+      // アプリ側（fetchYahoo）はこれらの項目を参照するため、常にnullで揃えておく
+      result.per = null;
+      result.pbr = null;
+      result.analystTarget = null;
+      result.sector = null;
+      result.earningsDate = null;
     }
 
     return res.status(200).json(data);
