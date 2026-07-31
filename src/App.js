@@ -1896,9 +1896,6 @@ function GapFillBar(p){
         {!isMobile&&<div style={{fontSize:9,color:"#4a7090"}}>{d.total}回中{d.filled}回</div>}
       </div>
       <div style={{fontSize:15,fontWeight:800,color:color,marginBottom:4}}>{d.rate.toFixed(0)}%{!isMobile&&<span style={{fontSize:9,color:"#6a90b0",fontWeight:400}}> 当日中に埋まる</span>}</div>
-      <div style={{height:6,background:"#0a1830",borderRadius:3,overflow:"hidden"}}>
-        <div style={{height:"100%",width:d.rate+"%",background:color}}/>
-      </div>
     </div>
   );
 }
@@ -2142,7 +2139,7 @@ function displaySignalLabel(label){return label==="寄り付きレンジ"?"ORB":
 // ── シグナル詳細（カードの展開パネルとチャートモーダルで共通利用）────────
 function SignalDetailList(p){
   var isMobile=useIsMobile();
-  var labelFs=isMobile?10:12,valFs=isMobile?10:12;
+  var labelFs=isMobile?9:11,valFs=isMobile?9:11;
   var weightOpenS=useState(false);var weightOpen=weightOpenS[0],setWeightOpen=weightOpenS[1];
   var sortedSignals=(p.signals||[])
     .filter(function(sig){return sig.label==="BB"||sig.label==="OBV"||sig.label==="出来高"||sig.label==="ギャップ"||sig.label==="当日ブレイク"||sig.label==="VWAP傾き"||sig.label==="EMA整列"||sig.label==="ATR消化率"||sig.label==="寄り付きレンジ"||sig.label==="コンフルエンス"||sig.label.startsWith("RSI");})
@@ -2150,7 +2147,7 @@ function SignalDetailList(p){
     .sort(function(a,b){return signalWeightRank(a.label)-signalWeightRank(b.label);});
   return(
     <div>
-      <div style={{fontSize:12,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
+      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル詳細</div>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
         {sortedSignals.map(function(sig,i){
           return(
@@ -3083,9 +3080,9 @@ function FavPanel(p){
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4}}>
         {isMobile?(
         <>
-        <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+        <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"6px 14px",marginBottom:8}}>
           <div style={{display:"flex",gap:6,flexWrap:"nowrap"}}>
-            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 8px",fontSize:16,fontFamily:"monospace",flex:"1 1 auto",minWidth:0}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
+            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"6px 8px",fontSize:16,fontFamily:"monospace",flex:"1 1 auto",minWidth:0}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
             <select value={addGroup} onChange={function(e){setAddGroup(Number(e.target.value));}} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#fbbf24",padding:"0 2px",fontSize:12,fontFamily:"monospace",flex:"0 0 auto",width:78}}>
               <option value={0}>全体</option>
               {[1,2,3,4,5].map(function(n){return <option key={n} value={n}>{groupNames[n]}</option>;})}
@@ -3121,9 +3118,9 @@ function FavPanel(p){
         </>
         ):(
         <>
-        <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+        <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"6px 14px",marginBottom:8}}>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"8px 8px",fontSize:16,fontFamily:"monospace",flex:"1 1 auto",minWidth:120}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
+            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"6px 8px",fontSize:16,fontFamily:"monospace",flex:"1 1 auto",minWidth:120}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
             <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",flex:"0 0 auto"}}>追加</button>
             <span style={{width:1,alignSelf:"stretch",background:"#1e3050",flexShrink:0}}/>
             <span style={{fontSize:11,color:"#2a6090"}}>グループ:</span>
