@@ -2619,18 +2619,23 @@ function TachibanaBoard(p){
 // ── 立花証券リアルタイム詳細モーダル：株価タップで開く ─────────────────────
 function TachibanaQuoteModal(p){
   var quote=p.quote;
+  var stale=!!(quote&&quote.stale);
   var ageSec=quote?Math.round((Date.now()-quote.updatedAt)/1000):null;
+  var headerColor=stale?"#fbbf24":"#22d3a0";
+  var headerLabel=stale
+    ?"⏸ 立花証券（休場中・最終値 "+new Date(quote.updatedAt).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})+"時点）"
+    :"📡 立花証券リアルタイム"+(ageSec!=null?"（"+ageSec+"秒前）":"");
   return(
     <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",inset:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:"56vw"}}>
-      <div onClick={function(e){e.stopPropagation();}} style={{background:"#040c18",border:"1px solid #22d3a050",borderRadius:10,padding:"16px 18px",maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
+      <div onClick={function(e){e.stopPropagation();}} style={{background:"#040c18",border:"1px solid "+(stale?"#fbbf2450":"#22d3a050"),borderRadius:10,padding:"16px 18px",maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-          <div style={{fontSize:13,fontWeight:700,color:"#22d3a0"}}>📡 立花証券リアルタイム{ageSec!=null?"（"+ageSec+"秒前）":""}</div>
+          <div style={{fontSize:13,fontWeight:700,color:headerColor}}>{headerLabel}</div>
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
         </div>
         {!quote?(
           <div style={{fontSize:12,color:"#4a7090"}}>取得中…</div>
         ):(
-          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          <div style={{display:"flex",flexDirection:"column",gap:6,opacity:stale?0.55:1}}>
             {Object.keys(quote.fields||{}).map(function(k){
               return(
                 <div key={k} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#a8c4e0",borderBottom:"1px solid #0e2038",paddingBottom:4}}>
