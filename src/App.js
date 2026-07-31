@@ -687,6 +687,7 @@ function calcAiForecastAccuracy(){
         horizons.forEach(function(h){
           var base=hist[idx],nxt=hist[idx+h];
           if(!nxt||nxt.p==null||base.p==null) return;
+          if(bizDayDiff(base.d,nxt.d)!==h) return; // 記録が飛んだペアは「h日後」として不正確なので除外
           var move=priceMoveState(base.p,nxt.p);
           if(move===0) return; // 誤差レベルの値動きは集計対象外
           var won=pr.dir.indexOf("上昇")!==-1?(move>0):(move<0);
@@ -752,6 +753,27 @@ function priceMoveState(basePrice,nextPrice){
   if(Math.abs(changePct)<WIN_THRESHOLD_PCT) return 0;
   return changePct>0?1:-1;
 }
+// ── 記録日ペアの営業日差を数える ─────────────────────────────────────────
+// スキャンしない日があると「隣り合う記録」が数日離れることがあり、それを
+// 「1日後の実績」として集計すると統計が汚れる。土日を除いた日数差を返し、
+// 集計側で「想定の営業日差と一致するペアだけ」を採用するために使う
+function bizDayDiff(dStr1,dStr2){
+  var a=new Date(dStr1+"T00:00:00"),b=new Date(dStr2+"T00:00:00");
+  if(isNaN(a.getTime())||isNaN(b.getTime())||b<=a) return null;
+  var n=0,cur=new Date(a);
+  while(cur<b){
+    cur.setDate(cur.getDate()+1);
+    var dw=cur.getDay();
+    if(dw!==0&&dw!==6)n++;
+    if(n>30)return n; // 異常に離れたペアの無限ループ防止
+  }
+  return n;
+}
+// シグナル統計が「何営業日分（何日分の記録）から作られたか」を返す
+// 同じ日に多数の銘柄をスキャンすると件数だけが水増しされるため、日数でも信頼性を測る
+function sigStatDays(st){
+  return st&&st.dd?Object.keys(st.dd).length:0;
+}
 
 // スコア高銘柄の翌日実績を算出
 // scoreHist: [{d,s,p},...] pは記録日の終値
@@ -764,6 +786,7 @@ function calcActualWinRate(scoreHist,threshold){
   for(var i=0;i<scoreHist.length-1;i++){
     var cur=scoreHist[i],nxt=scoreHist[i+1];
     if(cur.s<threshold||cur.p==null||nxt.p==null) continue;
+    if(bizDayDiff(cur.d,nxt.d)!==1) continue; // 記録が飛んだペア（数日分の値動き）は翌日実績に含めない
     var move=priceMoveState(cur.p,nxt.p);
     if(move===0) continue; // 誤差レベルの値動きは集計対象外
     var won=move>0;
@@ -800,12 +823,15 @@ function accumulateSignalStats(hist,daysAfter,stats){
   for(var i=0;i<hist.length-daysAfter;i++){
     var cur=hist[i],nxt=hist[i+daysAfter];
     if(cur.p==null||nxt.p==null||!cur.sig) continue;
+    if(bizDayDiff(cur.d,nxt.d)!==daysAfter) continue; // 記録が飛んだペアは「◯日後」の実績として不正確なので除外
     var move=priceMoveState(cur.p,nxt.p);
     if(move===0) continue; // 誤差レベルの値動きは集計対象外
     var won=move>0;
     var changePct=(nxt.p-cur.p)/cur.p*100; // Dの機能：平均騰落率の算出用
     cur.sig.forEach(function(key){
-      if(!stats[key])stats[key]={w:0,t:0,sumPct:0};
+      if(!stats[key])stats[key]={w:0,t:0,sumPct:0,dd:{}};
+      if(!stats[key].dd)stats[key].dd={};
+      stats[key].dd[cur.d]=1; // 何営業日分の記録から作られた統計かを追跡（同日水増し対策）
       stats[key].t++;
       stats[key].sumPct+=changePct;
       if(won)stats[key].w++;
@@ -895,6 +921,7 @@ function getUniverseBandStats(){
       for(var i=0;i<hist.length-1;i++){
         var cur=hist[i],nxt=hist[i+1];
         if(cur.p==null||nxt.p==null) continue;
+        if(bizDayDiff(cur.d,nxt.d)!==1) continue; // 記録が飛んだペアは翌日実績に含めない
         var move=priceMoveState(cur.p,nxt.p);
         if(move===0) continue; // 誤差レベルの値動きは集計対象外
         var band=bandLabelFor(cur.s);
@@ -976,7 +1003,7 @@ function calcStatForecast(signals,stats){
   (signals||[]).forEach(function(x){
     var key=baseSigLabel(x.label)+"#"+x.state;
     var st=stats[key];
-    if(!st||st.t<FORECAST_MIN_SAMPLES) return;
+    if(!st||st.t<FORECAST_MIN_SAMPLES||sigStatDays(st)<5) return; // 件数不足 or 5営業日分未満は除外
     var w=Math.min(st.t,FORECAST_WEIGHT_CAP); // 特定シグナルだけが極端に効きすぎないよう重みに上限
     sumW+=w;totalN+=st.t;used++;
     sumMove+=(st.sumPct/st.t)*w;
@@ -1008,7 +1035,9 @@ function getIntradaySignalStats(){
           if(move===0) return; // 誤差レベルの値動きは集計対象外
           var changePct=(closeEntry.p-e.p)/e.p*100;
           e.sig.forEach(function(key){
-            if(!stats[key])stats[key]={w:0,t:0,sumPct:0};
+            if(!stats[key])stats[key]={w:0,t:0,sumPct:0,dd:{}};
+            if(!stats[key].dd)stats[key].dd={};
+            stats[key].dd[e.d]=1; // 何営業日分の記録かを追跡（同日水増し対策）
             stats[key].t++;stats[key].sumPct+=changePct;
             if(move>0)stats[key].w++;
           });
@@ -1019,13 +1048,16 @@ function getIntradaySignalStats(){
   INTRADAY_SIG_CACHE=stats;INTRADAY_SIG_TS=now;
   return stats;
 }
-// シグナル1件分の重み係数（1.0=調整なし）。
-// サンプル10件未満は調整なし／10〜19件は最大±10%／20件以上は最大±20%
+// シグナル1件分の重み係数（1.0=調整なし、0=ミュート）。
+// サンプル10件未満 または 5営業日分未満 は調整なし（同日に多銘柄スキャンした水増し対策）
+// 10〜19件は最大±10%／20件以上は最大±20%
+// 30件以上あって的中率45%未満のシグナルは「ノイズ」と判断し配点ゼロ（自動ミュート）
 function getSignalWeight(sigKey){
   var s=getUniverseSignalStats()[sigKey];
-  if(!s||s.t<10) return 1;
-  var maxAdjust=s.t>=20?0.2:0.1;
+  if(!s||s.t<10||sigStatDays(s)<5) return 1;
   var quality=signalQuality(s,sigKey);
+  if(s.t>=30&&quality<0.45) return 0; // 自動ミュート
+  var maxAdjust=s.t>=20?0.2:0.1;
   var mult=1+(quality-0.5)*2*maxAdjust;
   return Math.max(1-maxAdjust,Math.min(1+maxAdjust,mult));
 }
@@ -1563,13 +1595,16 @@ function analyzeStock(stock,pd,vixVal){
 
   // ── 時間帯別検証用のイントラデイ履歴（①のscoreHistとは別キー・別ロジック）───
   // 1日に複数件残す（同一日・同一時間帯の再スキャンのみ上書き）。Dの機能専用。
+  // JP銘柄のみ記録（時間帯ラベルが日本市場基準のため、US銘柄を混ぜると統計が汚れる）。
+  // sigは点灯中（state≠0）のみ保存し、localStorage容量を大幅節約する
   (function(){
     try{
+      if(stock.market!=="JP") return;
       var ikey="sh_intraday_"+stock.ticker;
       var ihist=JSON.parse(localStorage.getItem(ikey)||"[]");
       var itoday=new Date().toISOString().slice(0,10);
       var isession=currentSessionLabel();
-      var isigKeys=signals.map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
+      var isigKeys=signals.filter(function(x){return x.state!==0;}).map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
       var ilast=ihist[ihist.length-1];
       var ientry={d:itoday,session:isession,s:sc,p:price,sig:isigKeys};
       if(ilast&&ilast.d===itoday&&ilast.session===isession){
@@ -2546,7 +2581,7 @@ function StatForecastPanel(p){
   function renderRow(titleLabel,f,withRange){
     if(!f.ready){
       return(
-        <div key={titleLabel} style={{fontSize:10,color:"#4a7090",marginBottom:6}}>{titleLabel}：📥 データ蓄積中（実績10件以上のシグナルが{f.used}/3種類）。スキャンを重ねると自動で表示が始まります</div>
+        <div key={titleLabel} style={{fontSize:10,color:"#4a7090",marginBottom:6}}>{titleLabel}：📥 データ蓄積中（実績が十分＝10件かつ5営業日以上のシグナルが{f.used}/3種類）。スキャンを重ねると自動で表示が始まります</div>
       );
     }
     var d=dirInfo(f.upRate);
