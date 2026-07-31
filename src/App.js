@@ -2322,7 +2322,6 @@ function SignalDetailList(p){
   }
   return(
     <div>
-      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>📊 シグナル+出来高急増後</div>
       <div style={{display:"flex",flexDirection:"column",gap:4}}>
         {volPat&&volRow("volNext1","翌日営業日",volPat.avgNext1)}
         {volPat&&volRow("volNext2","翌々日営業日",volPat.avgNext2)}
