@@ -1922,10 +1922,6 @@ function IntradayChart1m(p){
   var scrollRef=useRef(null);
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
 
-  var obTendency=p.quote?parseOrderBookLevels(p.quote):null; // 売買傾向（チャート中央上部に小さく重ねて表示）
-  var obTotal=obTendency?obTendency.sellVol+obTendency.buyVol:0;
-  var obSellPct=obTotal>0?obTendency.sellVol/obTotal*100:null,obBuyPct=obTotal>0?obTendency.buyVol/obTotal*100:null;
-
   var aiLevels=p.aiEntry||null; // AI分析のentry/target/stop/forecast
   var hasForecast=!!(aiLevels&&aiLevels.forecast&&aiLevels.forecast.direction);
   var PROJECTION_W=hasForecast?46:0; // 予測トレンド線用の余白
@@ -2034,18 +2030,6 @@ function IntradayChart1m(p){
     });
   return(
     <div>
-      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
-        {obSellPct!=null&&
-        <div style={{flex:1,display:"flex",height:16,borderRadius:4,overflow:"hidden",background:"#0e2038"}}>
-          <div style={{width:obSellPct+"%",background:"#f43f5e40",display:"flex",alignItems:"center",paddingLeft:5}}>
-            <span style={{fontSize:10,fontWeight:700,color:"#f43f5e"}}>{obSellPct.toFixed(0)}%</span>
-          </div>
-          <div style={{width:obBuyPct+"%",background:"#22d3a040",display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:5}}>
-            <span style={{fontSize:10,fontWeight:700,color:"#22d3a0"}}>{obBuyPct.toFixed(0)}%</span>
-          </div>
-        </div>}
-        <span style={{fontSize:10,color:"#6a90b0",whiteSpace:"nowrap",marginLeft:obSellPct==null?"auto":0}}>1分足</span>
-      </div>
       <div style={{display:"flex",gap:6}}>
         <div style={{position:"relative",flex:1,minWidth:0}}>
           <div style={{position:"absolute",top:4,left:4,zIndex:2,background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px",display:"flex",flexDirection:"column",gap:2,pointerEvents:"none"}}>
@@ -2053,6 +2037,7 @@ function IntradayChart1m(p){
             <span style={{fontSize:9,color:"#f472b6",whiteSpace:"nowrap"}}>75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
             {hasVolume?<span style={{fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{fontSize:9,color:"#2a4060",whiteSpace:"nowrap"}}>VWAP未対応</span>}
           </div>
+          <span style={{position:"absolute",top:4,right:4,zIndex:2,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px",pointerEvents:"none"}}>1分足</span>
         <div ref={scrollRef} onScroll={updateVisibleRange} style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <div style={{width:chartWidth}}>
             <svg width={chartWidth} height={H} style={{display:"block",overflow:"hidden"}}>
@@ -2664,8 +2649,8 @@ function StockDetailPanel(p){
       }}/>}
 
       <div style={{display:"flex",gap:4,alignItems:"center",overflowX:"auto",WebkitOverflowScrolling:"touch",paddingBottom:2}}>
-        <a href={s.yahooUrl} target="_blank" rel="noreferrer" title="Yahoo!ファイナンス" style={{flexShrink:0,background:"#071428",border:"1px solid #4f46e5",borderRadius:6,color:"#a5b4fc",padding:"4px 9px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>🔗</a>
-        <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} title="iSPEED（銘柄コードをコピー）" style={{flexShrink:0,background:"#1a0a0a",border:"1px solid #f87171",borderRadius:6,color:"#fca5a5",padding:"4px 9px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>📱</a>
+        <a href={s.yahooUrl} target="_blank" rel="noreferrer" title="Yahoo!ファイナンス" style={{flexShrink:0,background:"#071428",border:"1px solid #4f46e5",borderRadius:6,color:"#a5b4fc",padding:"4px 9px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>🔗</a>
+        <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} title="iSPEED（銘柄コードをコピー）" style={{flexShrink:0,background:"#1a0a0a",border:"1px solid #f87171",borderRadius:6,color:"#fca5a5",padding:"4px 9px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>📱</a>
         <div style={{flexShrink:0,width:30}}/>
         <button onClick={copyTradePrompt} title="判定プロンプトをコピー" style={{flexShrink:0,background:promptCopied?"#052e16":"transparent",border:"1px solid "+(promptCopied?"#22d3a0":"#2a4060"),borderRadius:6,color:promptCopied?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>{promptCopied?"✓":"📋"}</button>
         <button onClick={function(){if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} title="再スキャン" style={{flexShrink:0,background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
@@ -2674,9 +2659,9 @@ function StockDetailPanel(p){
         <button onClick={function(){setTradePrefill(null);setShowTrade(function(v){return !v;});}} title="トレード登録" style={{flexShrink:0,background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
       </div>
 
-      {/* チャート（1分足＋週足MA、売買傾向はチャート中央上部に重ねて表示） */}
-      <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px"}}>
-        <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340} aiEntry={aiEntry} quote={tachibanaQuote}/>
+      {/* チャート（1分足＋週足MA） */}
+      <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px",marginTop:-6}}>
+        <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340} aiEntry={aiEntry}/>
       </div>
 
             {/* シグナル詳細（左・上に出来高急増後の値動き）／板情報・利確損切りライン（右） */}
