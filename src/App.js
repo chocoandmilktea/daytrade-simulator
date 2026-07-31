@@ -1943,69 +1943,6 @@ function VolumeSpikePattern(p){
     </div>
   );
 }
-// ── 「銘柄の癖」パターン分析：ギャップ埋まり率 ──────────────────────────
-// 前日終値と当日始値の差（ギャップ）が、その日のうちに前日終値の水準まで
-// 戻ってきた（＝埋まった）かどうかを過去1年分の日足から集計する。
-// 上ギャップ埋まり率が高い→寄り付き後に下がって戻りやすい、
-// 下ギャップ埋まり率が高い→寄り付き後に上がって戻りやすい、という目安になる。
-// GAP_MIN_PCT未満の僅かな差はノイズとみなし、ギャップとしてカウントしない。
-var GAP_MIN_PCT=0.3;
-function computeGapFillPattern(daily){
-  if(!daily||!daily.closes||!daily.opens||!daily.highs||!daily.lows||daily.closes.length<30) return null;
-  var closes=daily.closes,opens=daily.opens,highs=daily.highs,lows=daily.lows,n=closes.length;
-  var upTotal=0,upFilled=0,downTotal=0,downFilled=0;
-  for(var i=1;i<n;i++){
-    var prevClose=closes[i-1];
-    if(!prevClose||opens[i]==null) continue;
-    var gapPct=(opens[i]-prevClose)/prevClose*100;
-    if(gapPct>=GAP_MIN_PCT){
-      upTotal++;
-      if(lows[i]<=prevClose) upFilled++;
-    }else if(gapPct<=-GAP_MIN_PCT){
-      downTotal++;
-      if(highs[i]>=prevClose) downFilled++;
-    }
-  }
-  var up=upTotal>=3?{total:upTotal,filled:upFilled,rate:upFilled/upTotal*100}:null;
-  var down=downTotal>=3?{total:downTotal,filled:downFilled,rate:downFilled/downTotal*100}:null;
-  if(!up&&!down) return null;
-  return{up:up,down:down};
-}
-function GapFillBar(p){
-  var d=p.data,color=p.color,isMobile=p.isMobile;
-  if(!d) return(
-    <div style={{flex:1,background:"#071428",borderRadius:6,padding:"8px 10px"}}>
-      <div style={{fontSize:9,color:"#6a90b0",marginBottom:6}}>{p.label}</div>
-      <div style={{fontSize:11,color:"#4a7090"}}>サンプル不足</div>
-    </div>
-  );
-  return(
-    <div style={{flex:1,background:"#071428",borderRadius:6,padding:"8px 10px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
-        <div style={{fontSize:9,color:"#6a90b0"}}>{p.label}</div>
-        {!isMobile&&<div style={{fontSize:9,color:"#4a7090"}}>{d.total}回中{d.filled}回</div>}
-      </div>
-      <div style={{fontSize:15,fontWeight:800,color:color,marginBottom:4}}>{d.rate.toFixed(0)}%{!isMobile&&<span style={{fontSize:9,color:"#6a90b0",fontWeight:400}}> 当日中に埋まる</span>}</div>
-    </div>
-  );
-}
-function GapFillPattern(p){
-  var data=p.data,isMobile=p.isMobile; // undefined=読込中, null=取得失敗
-  var wrapStyle={fontSize:10,color:"#4a7090",padding:"6px 2px"};
-  if(data===undefined) return <div style={wrapStyle}>🎯 ギャップ埋まり率：読込中…</div>;
-  if(data===null) return null; // 取得失敗時は静かに非表示
-  var pat=computeGapFillPattern(data);
-  if(!pat) return <div style={wrapStyle}>🎯 ギャップ埋まり率：サンプル不足のため非表示</div>;
-  return(
-    <div>
-      <div style={{fontSize:10,color:"#6a90b0",marginBottom:4}}>🎯 ギャップ埋まり率{!isMobile&&"（前日終値比・過去1年）"}</div>
-      <div style={{display:"flex",gap:6}}>
-        <GapFillBar label="上ギャップ" data={pat.up} color="#f43f5e" isMobile={isMobile}/>
-        <GapFillBar label="下ギャップ" data={pat.down} color="#22d3a0" isMobile={isMobile}/>
-      </div>
-    </div>
-  );
-}
 function IntradayChart1m(p){
   var data=p.data,H=p.height||140,BUCKET=1,CANDLE_W=8,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
@@ -2828,6 +2765,11 @@ function StockDetailPanel(p){
         <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340} aiEntry={aiEntry}/>
       </div>
 
+            {/* 統計ベースの目安（全幅・出来高急増後の値動きより上） */}
+      <div style={{marginBottom:10}}>
+        <StatForecastPanel s={s}/>
+      </div>
+
             {/* シグナル詳細（左・上に出来高急増後の値動き）／板情報・利確損切りライン（右） */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignItems:"start"}}>
         <div style={{minWidth:0}}>
@@ -2835,9 +2777,7 @@ function StockDetailPanel(p){
           <SignalDetailList signals={s.signals} breakdown={s.breakdown}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
-          <GapFillPattern data={daily} isMobile={isMobile}/>
           <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
-          <StatForecastPanel s={s}/>
         </div>
       </div>
 
