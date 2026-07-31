@@ -2583,11 +2583,16 @@ function StatForecastPanel(p){
   return(
     <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
       <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🔮 統計ベースの目安（過去実績のみで算出・AI不使用）</div>
-      {renderRow("翌営業日",next,true)}
-      {today?renderRow("今日の引けまで",today,false):(
-        <div style={{fontSize:10,color:"#2a6090",marginBottom:4}}>「今日の引けまで」版は取引時間中（9:00〜15:30）のみ表示されます</div>
-      )}
-      <div style={{fontSize:9,color:"#2a6090",marginTop:2}}>※点灯中シグナルの過去の平均騰落率を件数で重み付けした統計値。将来を保証するものではありません</div>
+      <div style={{display:"flex",gap:10}}>
+        <div style={{flex:1,minWidth:0}}>
+          {today?renderRow("今日の引けまで",today,false):(
+            <div style={{fontSize:10,color:"#2a6090",marginBottom:4}}>「今日の引けまで」版は取引時間中（9:00〜15:30）のみ表示されます</div>
+          )}
+        </div>
+        <div style={{flex:1,minWidth:0}}>
+          {renderRow("翌営業日",next,true)}
+        </div>
+      </div>
     </div>
   );
 }
