@@ -966,6 +966,59 @@ function signalAvgPct(stat,sigKey){
   var avg=stat.sumPct/stat.t;
   return state===-1?-avg:avg;
 }
+// ── 統計ベースの未来予想（🔮パネル用）──────────────────────────────────────
+// 点灯中シグナルの過去実績（平均騰落率・上昇率）を件数で重み付け平均して
+// 「期待変化率」と「上昇確率の目安」を返す。サンプル10件未満のシグナルは除外し、
+// 有効シグナルが3種類未満の間は ready:false（＝データ蓄積中の表示）を返す
+var FORECAST_MIN_SAMPLES=10,FORECAST_MIN_SIGNALS=3,FORECAST_WEIGHT_CAP=30;
+function calcStatForecast(signals,stats){
+  var sumW=0,sumMove=0,sumUp=0,used=0,totalN=0;
+  (signals||[]).forEach(function(x){
+    var key=baseSigLabel(x.label)+"#"+x.state;
+    var st=stats[key];
+    if(!st||st.t<FORECAST_MIN_SAMPLES) return;
+    var w=Math.min(st.t,FORECAST_WEIGHT_CAP); // 特定シグナルだけが極端に効きすぎないよう重みに上限
+    sumW+=w;totalN+=st.t;used++;
+    sumMove+=(st.sumPct/st.t)*w;
+    sumUp+=(st.w/st.t)*w;
+  });
+  if(used<FORECAST_MIN_SIGNALS||sumW===0) return{ready:false,used:used,totalN:totalN};
+  return{ready:true,used:used,totalN:totalN,expPct:sumMove/sumW,upRate:Math.round(sumUp/sumW*100)};
+}
+// 今日版（引けまで）用：sh_intraday_全体から「各時間帯のスナップショット→同日最後の記録」への
+// 変化率をシグナル別に積算する（getUniverseSignalStatsのイントラデイ版・キャッシュ付き）
+var INTRADAY_SIG_CACHE=null,INTRADAY_SIG_TS=0;
+function getIntradaySignalStats(){
+  var now=Date.now();
+  if(INTRADAY_SIG_CACHE&&now-INTRADAY_SIG_TS<UNIVERSE_STATS_TTL) return INTRADAY_SIG_CACHE;
+  var stats={};
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_intraday_")!==0) return;
+      var hist;try{hist=JSON.parse(localStorage.getItem(k)||"[]");}catch(e){hist=[];}
+      var byDate={};
+      hist.forEach(function(e){(byDate[e.d]=byDate[e.d]||[]).push(e);});
+      Object.keys(byDate).forEach(function(d){
+        var entries=byDate[d];
+        var closeEntry=entries[entries.length-1]; // その日最後の記録＝引けに近いスナップショット
+        if(closeEntry.p==null) return;
+        entries.forEach(function(e){
+          if(e===closeEntry||e.p==null||!e.sig) return;
+          var move=priceMoveState(e.p,closeEntry.p);
+          if(move===0) return; // 誤差レベルの値動きは集計対象外
+          var changePct=(closeEntry.p-e.p)/e.p*100;
+          e.sig.forEach(function(key){
+            if(!stats[key])stats[key]={w:0,t:0,sumPct:0};
+            stats[key].t++;stats[key].sumPct+=changePct;
+            if(move>0)stats[key].w++;
+          });
+        });
+      });
+    });
+  }catch(e){}
+  INTRADAY_SIG_CACHE=stats;INTRADAY_SIG_TS=now;
+  return stats;
+}
 // シグナル1件分の重み係数（1.0=調整なし）。
 // サンプル10件未満は調整なし／10〜19件は最大±10%／20件以上は最大±20%
 function getSignalWeight(sigKey){
@@ -2527,6 +2580,80 @@ function SupportZoneRow(p){
     </div>
   );
 }
+// ── 🔮 統計ベース予想パネル（翌営業日＋今日の引けまで）──────────────────────
+// AIの推測ではなく、蓄積した実績データ（シグナル別の平均騰落率）だけで目安を算出。
+// 「今日の引けまで」版はイントラデイ実績が貯まると自動で数値表示に切り替わる
+function StatForecastPanel(p){
+  var s=p.s;
+  if(!s||!s.signals||s.rawPrice==null) return null;
+  var price=s.rawPrice,isJP=s.market==="JP";
+  function fmtP(v){return isJP?Math.round(v).toLocaleString():v.toFixed(2);}
+  // この銘柄自身の「1日の動きやすさ」＝スコア履歴の日次変化率の平均（レンジ表示用）
+  var dailyVol=(function(){
+    var h=s.scoreHist||[],sum=0,n=0;
+    for(var i=0;i<h.length-1;i++){
+      if(h[i].p!=null&&h[i+1].p!=null&&h[i].p>0){sum+=Math.abs((h[i+1].p-h[i].p)/h[i].p*100);n++;}
+    }
+    return n>=3?sum/n:null;
+  })();
+  var next=calcStatForecast(s.signals,getUniverseSignalStats());
+  var session=currentSessionLabel();
+  var today=session!=="時間外"?calcStatForecast(s.signals,getIntradaySignalStats()):null;
+  function dirInfo(upRate){
+    if(upRate>=55)return{label:"上昇寄り",color:"#22d3a0"};
+    if(upRate<=45)return{label:"下落寄り",color:"#f43f5e"};
+    return{label:"ほぼ中立",color:"#fbbf24"};
+  }
+  // 目安価格が手前の抵抗線/支持線を越えていたら注意書きを返す（案3：現実的な天井/床チェック）
+  function levelWarn(expPct,target){
+    if(expPct>0&&s.resistance){
+      var up=[{v:s.resistance.r1,name:"20日高値"},{v:s.resistance.atrCeil,name:"ATR上限"}]
+        .filter(function(c){return c.v!=null&&c.v>price;}).sort(function(a,b){return a.v-b.v;});
+      if(up.length&&target>up[0].v)return"⚠️ 手前の"+fmtP(up[0].v)+"（"+up[0].name+"）に抵抗 → 目安が頭打ちになる可能性";
+    }
+    if(expPct<0&&s.support){
+      var dn=[{v:s.support.s1,name:"20日安値"},{v:s.support.atrFloor,name:"ATR下限"}]
+        .filter(function(c){return c.v!=null&&c.v<price;}).sort(function(a,b){return b.v-a.v;});
+      if(dn.length&&target<dn[0].v)return"⚠️ 手前の"+fmtP(dn[0].v)+"（"+dn[0].name+"）に支持 → 下げ止まる可能性";
+    }
+    return null;
+  }
+  function renderRow(titleLabel,f,withRange){
+    if(!f.ready){
+      return(
+        <div key={titleLabel} style={{fontSize:11,color:"#4a7090",marginBottom:6}}>{titleLabel}：📥 データ蓄積中（実績10件以上のシグナルが{f.used}/3種類）。スキャンを重ねると自動で表示が始まります</div>
+      );
+    }
+    var d=dirInfo(f.upRate);
+    var target=price*(1+f.expPct/100);
+    var warn=levelWarn(f.expPct,target);
+    var lo=withRange&&dailyVol!=null?price*(1+(f.expPct-dailyVol)/100):null;
+    var hi=withRange&&dailyVol!=null?price*(1+(f.expPct+dailyVol)/100):null;
+    return(
+      <div key={titleLabel} style={{marginBottom:6}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:11,color:"#8aa8c8"}}>{titleLabel}</span>
+          <span style={{fontSize:11,fontWeight:700,color:d.color}}>{d.label}（過去傾向 上昇{f.upRate}%・{f.totalN}件）</span>
+        </div>
+        <div style={{fontSize:12,color:"#d8eeff",fontWeight:700,marginTop:2}}>
+          目安 {(f.expPct>=0?"+":"")+f.expPct.toFixed(1)}%（{fmtP(target)}前後）
+          {lo!=null&&<span style={{fontSize:10,color:"#4a7090",fontWeight:400}}>　レンジ {fmtP(lo)}〜{fmtP(hi)}</span>}
+        </div>
+        {warn&&<div style={{fontSize:10,color:"#fbbf24",marginTop:2}}>{warn}</div>}
+      </div>
+    );
+  }
+  return(
+    <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"}}>
+      <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🔮 統計ベースの目安（過去実績のみで算出・AI不使用）</div>
+      {renderRow("翌営業日",next,true)}
+      {today?renderRow("今日の引けまで",today,false):(
+        <div style={{fontSize:10,color:"#2a6090",marginBottom:4}}>「今日の引けまで」版は取引時間中（9:00〜15:30）のみ表示されます</div>
+      )}
+      <div style={{fontSize:9,color:"#2a6090",marginTop:2}}>※点灯中シグナルの過去の平均騰落率を件数で重み付けした統計値。将来を保証するものではありません</div>
+    </div>
+  );
+}
 function SupportZonePanel(p){
   var support=p.support,resistance=p.resistance,profitLoss=p.profitLoss;
   if(!support&&!resistance) return null;
@@ -2710,6 +2837,7 @@ function StockDetailPanel(p){
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
           <GapFillPattern data={daily} isMobile={isMobile}/>
           <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
+          <StatForecastPanel s={s}/>
         </div>
       </div>
 
