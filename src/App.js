@@ -104,12 +104,14 @@ var TACHIBANA_WATCH_API="https://daytrade-simulator.vercel.app/api/sync?resource
 var TACHIBANA_QUOTE_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-quote";
 
 // ── 当日5分足（カード常時ミニ表示用）─────────────────────────────────────
-// Yahoo Financeの1分足をapi/intraday.js経由で受け取り、アプリ側で5分足に集約して表示する
-// 土日・休場日は直近の取引日のデータが返るため、date（実際の取引日）も受け取る
+// J-Quantsの1分足をサーバー側(api/intraday.js)で5分足に集約して返す想定
+// 土日・休場日はサーバー側で自動的に直近の取引日まで遡るため、date（実際の取引日）も受け取る
 var INTRADAY_CACHE={}, INTRADAY_TTL=5*60*1000; // 5分足なのでTTLも5分
 
-// レートリミット対策：分足の取得を短時間に集中させると429（アクセス制限）を招くため、
-// 一定の間隔で1件ずつ順番に実行する直列キューにしている
+// J-Quantsのレートリミット対策：分足アドオンは「1分あたり60リクエスト」という
+// 上限が公式に決まっているため、それを厳守できるよう厳密な間隔で1件ずつ順番に実行する。
+// （同時3件・短い間隔、という前回の実装では実際には1分あたり300件近く出てしまい、
+// 　429エラー→リトライの連鎖で余計に悪化していたため、シンプルな直列キューに変更）
 var INTRADAY_QUEUE=[], INTRADAY_TIMER=null, INTRADAY_LAST_DISPATCH=0;
 var INTRADAY_MIN_INTERVAL=1500; // 60件/分に余裕を持たせて約1.5秒に1件ペース（旧1100ms）
 var INTRADAY_PAUSED_UNTIL=0; // 429を検知したら、この時刻まではキューを進めない
@@ -136,7 +138,8 @@ function enqueueIntraday(fn){
 // 一定間隔ごとに、まとめてSTOCK_CONCURRENCY件ずつ呼び出すことで、
 // Yahoo Finance・立花証券API双方への負荷を抑えつつスキャンを高速化する。
 // 429を検知したらキュー全体を一時停止し、レート制限が収まってから再開する。
-// ※以前は「1.5秒に1件」だったが、現在の構成では制限が緩いため段階的に短縮してテスト中。
+// ※旧J-Quants時代の60件/分制限を基準に「1.5秒に1件」だったが、立花証券API
+// 　移行後は制限が緩和されている可能性があるため段階的に短縮してテスト中。
 // 　Step1: 間隔を1.5秒→0.6秒に短縮（問題なし）
 // 　Step2: 1件ずつ→3件ずつ同時実行に変更（今回）
 // 　429エラーが増える場合はSTOCK_CONCURRENCYを1に、間隔を1500付近に戻せば元通り。
@@ -164,7 +167,7 @@ function enqueueStock(fn){
     scheduleStockQueue();
   });
 }
-// エラーメッセージがレート制限（429）由来かどうかの判定
+// エラーメッセージがJ-Quantsのレート制限（429）由来かどうかの判定
 function isRateLimitError(msg){
   return !!msg&&(msg.indexOf("429")>=0||msg.toLowerCase().indexOf("rate limit")>=0);
 }
@@ -243,7 +246,7 @@ async function fetchRanking(market){
   }
 }
 
-// AI業種選定→その業種で絞り込んだランキング取得（メインの取得経路）
+// AI業種選定→J-Quants絞り込みランキング取得（メインの取得経路）
 // manualSectors指定時はAIのweb_search選定をスキップし、指定業種のランキングのみ取得（トークン節約）
 // 通信が一時的に不安定な場合に備え、失敗時は1回だけ自動で再試行する
 async function fetchSectorRanking(manualSectors){
@@ -1239,7 +1242,7 @@ function analyzeStock(stock,pd,vixVal){
   // ── 足種別パラメータ切替 ──────────────────────────────────────────────────
   var isJP=stock.market==="JP";
   // デイトレ対応：JP/US共に15分足に統一（取引時間が約6.5時間で揃うため1日≒26本で共通化）
-  // 15分足はapi/stock.js経由でYahoo Financeから取得している
+  // JP: J-Quantsの1分足をサーバー側(api/stock.js)で15分足に集計 / US: Yahoo Financeから15分足を直接取得
   var DAY_BARS   =26;   // 1日あたりのバー数
   var BB_P       =520;  // 20日相当(26本×20日)
   var RECENT_BARS=520;  // 20日相当
@@ -1256,11 +1259,7 @@ function analyzeStock(stock,pd,vixVal){
 
   // ── ATR（値幅）算出 ─────────────────────────────────────────────────────
   var atrRaw=calcATR(closes,highs,lows,14);
-  // 日本株は円単位（整数）、それ以外（指数など）は小数第2位まで残す。
-  // 常に整数へ丸めると、値幅が小さい銘柄でATRが0になり「値幅不足」の誤判定や
-  // 想定値幅±0・利確損切りラインが現在値と同じ、という連鎖が起きるため
-  var atrBase=atrRaw!=null?atrRaw:price*0.02;
-  var atr=isJP?Math.round(atrBase):parseFloat(atrBase.toFixed(2));
+  var atr=atrRaw!=null?Math.round(atrRaw):Math.round(price*0.02);
   var atrPct=price>0?(atr/price*100):0;
 
   // ── 当日データの切り出し（dates配列から本日分の開始インデックスを特定）────
@@ -1665,8 +1664,8 @@ function analyzeStock(stock,pd,vixVal){
   }catch(e){aptScore=0;}
 
   // ── 本日の想定値幅（atrはスコア計算冒頭で算出済みのものを再利用）──────────
-  var atrUpper=isJP?Math.round(price+atr):parseFloat((price+atr).toFixed(2));
-  var atrLower=isJP?Math.round(price-atr):parseFloat((price-atr).toFixed(2));
+  var atrUpper=Math.round(price+atr);
+  var atrLower=Math.round(price-atr);
   // ── 利確/損切りライン（標準パターン：利確ATR×1.5／損切りATR×0.75、リスクリワード比1:2）──
   var isJPmkt=stock.market==="JP";
   var profitTargetV=price+atr*1.5;
@@ -1689,10 +1688,12 @@ function analyzeStock(stock,pd,vixVal){
     var validLows=lows.filter(function(v){return v!=null&&v>0&&!isNaN(v)&&isFinite(v);});
     var isJPfmt=stock.market==="JP";
     var s1v=validLows.length>=BB_P?Math.min.apply(null,validLows.slice(-BB_P)):null; // 20日相当
+    var s2v=validLows.length>=1?Math.min.apply(null,validLows.slice(-YEAR_BARS)):null; // 全期間
     var atrFv=price-atr*1.5;
-    if(s1v!==null&&isFinite(s1v)){
+    if(s1v!==null&&s2v!==null&&isFinite(s1v)&&isFinite(s2v)){
       support={
         s1:isJPfmt?Math.round(s1v):parseFloat(s1v.toFixed(2)),
+        s2:isJPfmt?Math.round(s2v):parseFloat(s2v.toFixed(2)),
         atrFloor:isJPfmt?Math.round(atrFv):parseFloat(atrFv.toFixed(2))
       };
     }
@@ -2523,7 +2524,7 @@ function StockCard(p){
       setCardIntraday(undefined);
       fetchIntraday(s.ticker).then(function(r){setCardIntraday(r);});
     }
-    // ※再スキャンはStockDetailPanel側で行うため、ここでは呼ばない（呼ぶと1回の選択で2回走る）
+    if(onRescan) onRescan(s.ticker); // 価格・判定バッジもチャートと同様に毎回最新化
   },[isSelected]);
 
   var cardBorder=isSelected?"#60a5fa":borderColor;
@@ -2759,7 +2760,7 @@ function StatForecastPanel(p){
         </div>
         <div style={{fontSize:11,color:"#d8eeff",fontWeight:700,marginTop:1}}>
           目安 {(f.expPct>=0?"+":"")+f.expPct.toFixed(1)}%（{fmtP(target)}前後）
-          {lo!=null&&<span style={{fontSize:9,color:"#4a7090",fontWeight:400}}>　レンジ {fmtP(lo)}〜{fmtP(hi)}</span>}
+          {lo!=null&&<span style={{fontSize:9,color:"#4a7090",fontWeight:400,marginLeft:11}}>レンジ {fmtP(lo)}〜{fmtP(hi)}</span>}
         </div>
         {warn&&<div style={{fontSize:9,color:"#fbbf24",marginTop:1}}>{warn}</div>}
       </div>
@@ -3975,39 +3976,6 @@ function IndexPanel(){
   );
 }
 
-// ── 同期データの圧縮とサイズ監視 ─────────────────────────────────────────
-// スコア履歴は「同じシグナル名の繰り返し」が大量に含まれるため、gzip圧縮すると
-// おおよそ10〜20分の1まで小さくなる。サーバー(api/sync.js)側の1回あたりの
-// 送受信サイズ上限に余裕を持たせ、全銘柄の履歴を端末間で同期し続けるための処理。
-// CompressionStreamに未対応の古い端末では、自動的に今まで通り無圧縮で送る。
-var LAST_SYNC_INFO={bytes:0,rawBytes:0,compressed:false,ts:null};
-var SYNC_WARN_BYTES=800*1024; // この大きさを超えたら警告（サーバー側の上限1MBの手前）
-function utf8Bytes(str){
-  try{return new TextEncoder().encode(str).length;}catch(e){return str.length;}
-}
-async function packSyncPayload(obj){
-  var json=JSON.stringify(obj);
-  var rawBytes=utf8Bytes(json);
-  try{
-    if(typeof CompressionStream==="undefined") return{body:json,bytes:rawBytes,rawBytes:rawBytes,compressed:false};
-    var stream=new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
-    var buf=await new Response(stream).arrayBuffer();
-    var bytes=new Uint8Array(buf),bin="";
-    // 一度に渡すと引数が多すぎてエラーになる端末があるため、小分けにして文字列化する
-    for(var i=0;i<bytes.length;i+=8192){bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+8192));}
-    var body=JSON.stringify({gz:btoa(bin)});
-    return{body:body,bytes:utf8Bytes(body),rawBytes:rawBytes,compressed:true};
-  }catch(e){
-    return{body:json,bytes:rawBytes,rawBytes:rawBytes,compressed:false};
-  }
-}
-function formatBytes(n){
-  if(n==null) return "—";
-  if(n>=1024*1024) return (n/1024/1024).toFixed(2)+"MB";
-  if(n>=1024) return Math.round(n/1024)+"KB";
-  return n+"B";
-}
-
 // 合言葉＋PINから、常に同じデバイスIDを作り出す（サーバーには合言葉自体を送らない）
 async function deriveUserId(word,pin){
   var text=(word||"").trim()+":"+(pin||"").trim();
@@ -4107,27 +4075,6 @@ function SyncPanel(p){
         <a href="pushover://" style={{display:"block",width:"100%",background:"linear-gradient(135deg,#1a1a2e,#16213e)",border:"1px solid #4a4a8a",borderRadius:8,color:"#a0a0ff",padding:"10px",fontSize:14,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",boxSizing:"border-box"}}>
           📱 Pushoverを開く
         </a>
-      </div>
-      {/* 同期データのサイズ監視：上限に近づいたら気づけるようにする */}
-      <div style={{background:"#071428",border:"1px solid "+(LAST_SYNC_INFO.bytes>SYNC_WARN_BYTES?"#fbbf2450":"#0f2040"),borderRadius:10,padding:"14px 16px",marginBottom:14}}>
-        <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:6}}>📦 同期データのサイズ</div>
-        {LAST_SYNC_INFO.ts?(
-          <div>
-            <div style={{fontSize:13,color:"#b8cce0"}}>
-              送信サイズ <b style={{color:LAST_SYNC_INFO.bytes>SYNC_WARN_BYTES?"#fbbf24":"#22d3a0"}}>{formatBytes(LAST_SYNC_INFO.bytes)}</b>
-              {LAST_SYNC_INFO.compressed&&<span style={{color:"#4a7090",fontSize:11}}>　（圧縮前 {formatBytes(LAST_SYNC_INFO.rawBytes)}）</span>}
-            </div>
-            <div style={{fontSize:11,color:"#4a7090",marginTop:4}}>
-              {LAST_SYNC_INFO.compressed?"gzip圧縮して送信しています":"この端末は圧縮に未対応のため、そのまま送信しています"}
-              　最終保存 {LAST_SYNC_INFO.ts.toLocaleTimeString("ja-JP")}
-            </div>
-            {LAST_SYNC_INFO.bytes>SYNC_WARN_BYTES&&(
-              <div style={{fontSize:12,color:"#fbbf24",marginTop:6}}>⚠️ 上限（1MB）に近づいています。お気に入りタブの「📊的中率」→「🧹古いデータ掃除」で古い履歴を整理してください</div>
-            )}
-          </div>
-        ):(
-          <div style={{fontSize:12,color:"#4a7090"}}>まだこのセッションで保存が行われていません（お気に入りやトレードを変更すると表示されます）</div>
-        )}
       </div>
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
         <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>別デバイスのIDで同期</div>
@@ -4450,7 +4397,7 @@ function GuidePanel(){
   var CATS=[
     {key:"all",icon:"📋",label:"全銘柄",sections:[
       {title:null,items:["銘柄カードをタップ → 詳細シグナル表示"]},
-      {title:"📊 データ取得の方法",items:["日本株の株価：Yahoo Finance・15分足（直近30日）","日本株ランキング：立花証券API（出来高上位＋値上がり率上位のハイブリッド）","業種の絞り込み：AIがWeb検索で選んだ業種、または自分で選んだ業種","PER・PBR・配当利回り・TOPIX・会社名：立花証券API","リアルタイム株価・板情報：立花証券API（選択中の1銘柄のみ）","市況指数（日経・ダウ・VIX等）：Yahoo Finance・15分遅延"]},
+      {title:"📊 データ取得の方法",items:["米国株：Yahoo Finance・15分足（直近60日）","日本株：J-Quants・1分足を15分足に集計（直近20営業日）","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
       {title:"📖 指標の見方（RSI・BB・BB収束・OBV・出来高）",items:[
         "【確認用】RSI（相対力指数）：30以下で売られすぎ・反発狙いの補助確認。70以上で買われすぎ・過熱感の補助確認。BBのシグナルと合わせて判断する",
         "【メイン判断】BB（ボリンジャーバンド）：バンドの収縮＝エネルギー蓄積→ブレイクアウト狙いの買い準備。バンドの拡大＝トレンド発生中。下限タッチで反発買い候補、上限タッチで過熱感・利確検討",
@@ -4468,14 +4415,14 @@ function GuidePanel(){
         "スコア帯は60〜79 / 80〜99 / 100の3段階で集計。毎日スキャンするほど精度が上がります",
         "色の見方：緑=60%以上、黄=50〜59%、赤=50%未満"
       ]},
-      {title:"📉 サポート／レジスタンスの見方",items:["S1（20日安値）：直近20日間の最安値。短期の下値サポートライン","ATR×1.5下限：14日間の平均値幅（ATR）×1.5を現在値から引いた価格。統計的な下値の限界目安","R1（20日高値）：直近20日間の最高値。上値の抵抗になりやすい目安","🧱重なりバッジ：チャート上の節目と、板の厚い注文が同じ価格帯で重なっている状態。支え（抵抗）としての信頼度が高い","活用法：S1割れで警戒、ATR下限は最悪ケースの想定として使用"]},
+      {title:"📉 下値サポート目安の見方",items:["S1（20日安値）：直近20日間の最安値。短期の下値サポートライン。ここを割ると次のS2が目安","S2（60日安値）：直近60日間の最安値。中期の強いサポートライン。S1を割り込んだ場合の次の目安","ATR×1.5下限：14日間の平均値幅（ATR）×1.5を現在値から引いた価格。統計的な下値の限界目安","活用法：S1割れで警戒、S2割れで損切り検討、ATR下限は最悪ケースの想定として使用"]},
       {title:"🔥🧊 対TOPIX／対業種バッジの見方（日本株限定）",items:[
         "どちらも「個別銘柄の当日騰落率 − 比較対象の当日騰落率」の差分を表示する補助シグナル。市場全体（または同業他社）の値動きを差し引いた「銘柄固有の強さ・弱さ」を見るためのもの",
         "🔥（緑）＝比較対象より強い、🧊（青緑〜赤）＝比較対象より弱い。差が±0.5%未満の場合は誤差レベルとみなし非表示",
         "対TOPIX：比較対象は東証株価指数（TOPIX）。市場全体に対して強いか弱いかを見る。スコアにも反映され、差が大きいほど最大±6点まで加減算される",
         "対業種：比較対象はその銘柄が属する東証33業種の当日平均騰落率（同業他社の値動き）。同じ業種の中で出遅れている／先行しているかを見る。こちらは参考表示のみでスコアには影響しない",
         "内部の仕組み（対TOPIX）：TOPIXの日足データから前日比%を算出し、全銘柄共通の値として1時間キャッシュ",
-        "内部の仕組み（対業種）：全上場銘柄の騰落率を立花証券の銘柄マスタ（東証33業種分類）で分類し、業種ごとの平均値を集計して使い回す",
+        "内部の仕組み（対業種）：その日の全上場銘柄の騰落率をJ-Quantsの業種コードで33業種に分類し、業種ごとの平均値を1回だけ集計。同じく1時間キャッシュして使い回す（銘柄ごとに毎回集計し直すと重いため）",
         "どちらも前日比ベースの参考値であり、将来の値動きを保証するものではない"
       ]},
       {title:"🔘 銘柄詳細のアイコン行",items:[
@@ -4483,8 +4430,8 @@ function GuidePanel(){
         "🔄：この銘柄だけを最新データで再スキャン",
         "🤖：AIによる分析・上昇予測をポップアップ表示",
         "💹：損益シミュレーターをポップアップ表示（買値・株数から利確/損切りラインの損益を試算）",
-        "🎯：トレード登録（買い価格・利確・損切り・株数を指定して記録する）",
-        "📱：iSPEEDへ遷移（銘柄コードをクリップボードにコピー）"
+        "🔀：逆相関で上昇しやすい銘柄をポップアップ表示（下落中の銘柄でのみ使用可）",
+        "逆相関の数値（例：-0.51）：2銘柄の値動きの関係の強さを-1〜+1で表す相関係数。+1に近いほど同じ方向に動きやすく、-1に近いほど逆方向に動きやすい（0は無関係）。過去60営業日程度のデータに基づく統計的傾向であり、将来を保証するものではない"
       ]},
     ]},
     {key:"fav",icon:"⭐",label:"お気に入り",sections:[
@@ -4667,29 +4614,20 @@ export default function App(){
   var DEFAULT_GROUP_NAMES={1:"グループ1",2:"グループ2",3:"グループ3",4:"グループ4",5:"グループ5"};
   var fgS=useState(function(){try{var v=localStorage.getItem("fav_groups");return v?JSON.parse(v):{};}catch(e){return{};}});var favGroups=fgS[0],setFavGroups=fgS[1];
   var gnS=useState(function(){try{var v=localStorage.getItem("group_names");return v?Object.assign({},DEFAULT_GROUP_NAMES,JSON.parse(v)):Object.assign({},DEFAULT_GROUP_NAMES);}catch(e){return Object.assign({},DEFAULT_GROUP_NAMES);}});var groupNames=gnS[0],setGroupNames=gnS[1];
+  var NOTIFY_API="https://daytrade-simulator.vercel.app/api/notify";
   // 起動時のサーバー読み込みが終わるまでtrueにならない。falseの間は保存を止めて、
   // 「読み込み前の古いデータで上書きしてしまう」事故を防ぐ
   var syncLoadedS=useState(false);var syncLoaded=syncLoadedS[0],setSyncLoaded=syncLoadedS[1];
   function syncToServer(nextFavs,nextGroups,nextGroupNames,nextAppTrades,nextPersonalTrades,targetId){
     if(!syncLoaded)return; // 起動時の読み込み完了前は保存しない
-    var payload={
+    fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       favs:nextFavs,
       scoreHist:getAllScoreHist(),
       groups:nextGroups,
       groupNames:nextGroupNames,
       appTrades:nextAppTrades!==undefined?nextAppTrades:appTrades,
       personalTrades:nextPersonalTrades!==undefined?nextPersonalTrades:personalTrades
-    };
-    // gzip圧縮してから送信する（スコア履歴が増えても送信サイズが膨らみにくい）
-    packSyncPayload(payload).then(function(packed){
-      LAST_SYNC_INFO={bytes:packed.bytes,rawBytes:packed.rawBytes,compressed:packed.compressed,ts:new Date()};
-      if(packed.bytes>SYNC_WARN_BYTES){
-        console.warn("[sync] 送信サイズが大きくなっています: "+formatBytes(packed.bytes)+"（デバイス同期タブの「🧹古いデータ掃除」をおすすめします）");
-      }
-      return fetch(SYNC_API+"?userId="+(targetId||userId),{
-        method:"POST",headers:{"Content-Type":"application/json"},body:packed.body
-      });
-    }).catch(function(){});
+    })}).catch(function(){});
   }
   var favPickerS=useState(null);var favPickerTicker=favPickerS[0],setFavPickerTicker=favPickerS[1];
   // groupNum: 0=全体(未分類) / 1〜5=グループ / null=お気に入り削除
@@ -4712,6 +4650,9 @@ export default function App(){
     setFavGroups(nextGroups);
     try{localStorage.setItem("fav_groups",JSON.stringify(nextGroups));}catch(e){}
     syncToServer(next,nextGroups,groupNames);
+    if(isAdding){
+      fetch(NOTIFY_API,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:" ",message:userId})}).catch(function(){});
+    }
     return next;
   });}
   // ⭐ボタンからの呼び出し(引数1つ)は保存先選択モーダルを開く。groupNum指定時（addByTicker等）は直接反映
@@ -4828,7 +4769,7 @@ export default function App(){
     }finally{
       setLoading(false);
     }
-  },[vix]);  // vixを依存に含める（含めないと起動直後のnullのまま固定され、VIXキャップが効かない）
+  },[]);
   var rescanLoadingS=useState({});var rescanLoading=rescanLoadingS[0],setRescanLoading=rescanLoadingS[1];
   var rescanOne=useCallback(async function(ticker){
     setRescanLoading(function(prev){var n=Object.assign({},prev);n[ticker]=true;return n;});
@@ -4839,9 +4780,6 @@ export default function App(){
       var pd=await fetchYahooSafe(ticker);
       var updated=analyzeStock(existing,pd,vix);
       setStocks(function(prev){return prev.map(function(s){return s.ticker===ticker?updated:s;});});
-      // 詳細パネルは別のstate(selectedStock)を見ているため、そちらも同時に差し替える
-      // （これが無いと🔄を押してもカードだけ更新され、開いている詳細パネルは古い値のまま）
-      setSelectedStock(function(prev){return(prev&&prev.ticker===ticker)?updated:prev;});
     }finally{
       setRescanLoading(function(prev){var n=Object.assign({},prev);delete n[ticker];return n;});
     }
