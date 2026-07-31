@@ -912,7 +912,8 @@ function getUniverseSignalStats(){
   var stats={};
   try{
     Object.keys(localStorage).forEach(function(k){
-      if(k.indexOf("sh_")!==0) return;
+      if(k.indexOf("sh_")!==0||k.indexOf("sh_intraday_")===0) return; // イントラデイ履歴の混入を防止
+      if(!/\.T$/.test(k.slice(3))) return; // JP銘柄のみ（US銘柄は取引時間帯が異なり翌日統計を汚すため除外）
       var hist=JSON.parse(localStorage.getItem(k)||"[]");
       accumulateSignalStats(hist,1,stats);
     });
@@ -934,7 +935,8 @@ function getUniverseBandStats(){
   var stats={};
   try{
     Object.keys(localStorage).forEach(function(k){
-      if(k.indexOf("sh_")!==0) return;
+      if(k.indexOf("sh_")!==0||k.indexOf("sh_intraday_")===0) return; // イントラデイ履歴の混入を防止
+      if(!/\.T$/.test(k.slice(3))) return; // JP銘柄のみ
       var hist=JSON.parse(localStorage.getItem(k)||"[]");
       for(var i=0;i<hist.length-1;i++){
         var cur=hist[i],nxt=hist[i+1];
@@ -993,6 +995,128 @@ function calcIntradayAccuracy(){
   });
   INTRADAY_ACC_TS=now;
   return INTRADAY_ACC_CACHE;
+}
+// ── 地合い別（TOPIXプラスの日/マイナスの日）シグナル的中率 ──────────────────
+// scoreHistに記録し始めたctx（地合い）を使う。ctxの無い古い記録は対象外なので、
+// 記録開始からデータが貯まるまでは「蓄積中」表示になる（自動で有効化される待機機能）
+var REGIME_STATS_CACHE=null,REGIME_STATS_TS=0;
+function getRegimeSignalStats(){
+  var now=Date.now();
+  if(REGIME_STATS_CACHE&&now-REGIME_STATS_TS<UNIVERSE_STATS_TTL) return REGIME_STATS_CACHE;
+  var stats={up:{},down:{}};
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_")!==0||k.indexOf("sh_intraday_")===0) return;
+      if(!/\.T$/.test(k.slice(3))) return; // JP銘柄のみ
+      var hist;try{hist=JSON.parse(localStorage.getItem(k)||"[]");}catch(e){hist=[];}
+      for(var i=0;i<hist.length-1;i++){
+        var cur=hist[i],nxt=hist[i+1];
+        if(cur.p==null||nxt.p==null||!cur.sig||!cur.ctx||cur.ctx.topix==null) continue;
+        if(bizDayDiff(cur.d,nxt.d)!==1) continue;
+        var move=priceMoveState(cur.p,nxt.p);
+        if(move===0) continue;
+        var bucket=cur.ctx.topix>=0?stats.up:stats.down;
+        cur.sig.forEach(function(key){
+          if(!bucket[key])bucket[key]={w:0,t:0};
+          bucket[key].t++;
+          if(move>0)bucket[key].w++;
+        });
+      }
+    });
+  }catch(e){}
+  REGIME_STATS_CACHE=stats;REGIME_STATS_TS=now;
+  return stats;
+}
+// ── 実トレード×シグナル：完了トレードの損益と、登録時に点灯していたシグナルの関係 ──
+// sigKeysAtAddを保存し始めた新しいトレードだけが対象。完了トレードが貯まると自動で表示される
+function calcTradeSignalStats(){
+  var all=loadTrades("app").concat(loadTrades("personal"));
+  var stats={};
+  all.forEach(function(t){
+    if(t.status!=="done"||t.pnlPercent==null||!t.sigKeysAtAdd||!t.sigKeysAtAdd.length) return;
+    t.sigKeysAtAdd.forEach(function(key){
+      if(!stats[key])stats[key]={w:0,t:0,sumPct:0};
+      stats[key].t++;stats[key].sumPct+=t.pnlPercent;
+      if(t.pnlPercent>0)stats[key].w++;
+    });
+  });
+  return Object.keys(stats).map(function(k){
+    var s=stats[k];
+    return{signal:k,winRate:Math.round(s.w/s.t*100),avgPct:s.sumPct/s.t,total:s.t};
+  }).sort(function(a,b){return b.winRate-a.winRate;});
+}
+// ── 勝敗しきい値（WIN_THRESHOLD_PCT）の検証：スコア60点以上の記録を対象に、
+// しきい値を変えた場合の的中率と件数を並べて比較する（0.3%が適切かの判断材料）──
+function calcThresholdCheck(){
+  var thrs=[0.1,0.3,0.5,0.8];
+  var acc=thrs.map(function(){return{w:0,t:0};});
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_")!==0||k.indexOf("sh_intraday_")===0) return;
+      if(!/\.T$/.test(k.slice(3))) return; // JP銘柄のみ
+      var hist;try{hist=JSON.parse(localStorage.getItem(k)||"[]");}catch(e){hist=[];}
+      for(var i=0;i<hist.length-1;i++){
+        var cur=hist[i],nxt=hist[i+1];
+        if(cur.p==null||nxt.p==null||cur.s==null||cur.s<60) continue;
+        if(bizDayDiff(cur.d,nxt.d)!==1) continue;
+        var chg=(nxt.p-cur.p)/cur.p*100;
+        thrs.forEach(function(thr,idx){
+          if(Math.abs(chg)<thr) return;
+          acc[idx].t++;
+          if(chg>0)acc[idx].w++;
+        });
+      }
+    });
+  }catch(e){}
+  return thrs.map(function(thr,idx){
+    var a=acc[idx];
+    return{thr:thr,winRate:a.t>0?Math.round(a.w/a.t*100):null,total:a.t};
+  });
+}
+// ── データ管理（バックアップ/復元/掃除）───────────────────────────────────
+// iPadのSafariはストレージ圧迫時などにlocalStorageを消すことがあるため、
+// 学習データ（スコア履歴・地合い・トレード記録）をJSONファイルに書き出して守る
+function exportAllData(){
+  try{
+    var data={};
+    Object.keys(localStorage).forEach(function(k){data[k]=localStorage.getItem(k);});
+    var blob=new Blob([JSON.stringify(data)],{type:"application/json"});
+    var a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download="daytrade_backup_"+new Date().toISOString().slice(0,10)+".json";
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(a.href);},2000);
+  }catch(e){alert("書き出しに失敗しました: "+e.message);}
+}
+function importAllData(file){
+  var reader=new FileReader();
+  reader.onload=function(){
+    try{
+      var data=JSON.parse(reader.result);
+      var keys=Object.keys(data);
+      if(!keys.length){alert("ファイルにデータがありません");return;}
+      if(!window.confirm("バックアップから"+keys.length+"件のデータを復元します。現在のデータは上書きされます。よろしいですか？"))return;
+      keys.forEach(function(k){try{localStorage.setItem(k,data[k]);}catch(e){}});
+      alert("復元しました。ページを再読み込みします");
+      window.location.reload();
+    }catch(e){alert("復元に失敗しました: 正しいバックアップファイルか確認してください");}
+  };
+  reader.readAsText(file);
+}
+function cleanupOldData(){
+  if(!window.confirm("90日以上更新のない銘柄の履歴データ（スコア履歴・AI予想記録）を削除します。よろしいですか？"))return;
+  var cutoff=new Date(Date.now()-90*24*60*60*1000).toISOString().slice(0,10);
+  var removed=0;
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_")!==0&&k.indexOf("aipred_")!==0) return;
+      var list;try{list=JSON.parse(localStorage.getItem(k)||"[]");}catch(e){return;}
+      if(!list.length){localStorage.removeItem(k);removed++;return;}
+      var lastD=list[list.length-1].d;
+      if(lastD&&lastD<cutoff){localStorage.removeItem(k);removed++;}
+    });
+  }catch(e){}
+  alert(removed?("90日以上更新のない銘柄データを"+removed+"件削除しました"):"削除対象はありませんでした");
 }
 // シグナルの方向（強気/弱気/中立）を踏まえた「精度」を0〜1で返す共通関数。
 // 弱気(state=-1)シグナルは「翌営業日に上がらなかった率」、それ以外は「上がった率」が精度の目安。
@@ -4012,6 +4136,33 @@ function SignalAccuracyContent(p){
   var horizons=[{k:"d1",h:"1日後"},{k:"d3",h:"3日後"},{k:"d5",h:"5日後"}];
   var aiAcc=calcAiForecastAccuracy();
   var intradayAcc=calcIntradayAccuracy();
+  var regime=getRegimeSignalStats();
+  var tradeSig=calcTradeSignalStats();
+  var thrCheck=calcThresholdCheck();
+  // 地合い別：両方の地合いで5件以上あるシグナルを、差が大きい順に最大12件
+  var regimeRows=(function(){
+    var keys={};
+    Object.keys(regime.up).forEach(function(k){keys[k]=1;});
+    Object.keys(regime.down).forEach(function(k){keys[k]=1;});
+    return Object.keys(keys).map(function(k){
+      var u=regime.up[k],d=regime.down[k];
+      return{signal:k,
+        up:u&&u.t>=5?Math.round(signalQuality(u,k)*100):null,upT:u?u.t:0,
+        down:d&&d.t>=5?Math.round(signalQuality(d,k)*100):null,downT:d?d.t:0};
+    }).filter(function(r){return r.up!=null&&r.down!=null;})
+      .sort(function(a,b){return Math.abs(b.up-b.down)-Math.abs(a.up-a.down);})
+      .slice(0,12);
+  })();
+  // スコア帯の逆転検知（隣り合う帯が両方20件以上あるのに、上の帯の的中率が下回る）
+  var bandInv=(function(){
+    var inv=[];
+    for(var bi=0;bi<bandData.length-1;bi++){
+      var lo=bandData[bi],hb=bandData[bi+1];
+      if(lo.total>=20&&hb.total>=20&&lo.winRate!=null&&hb.winRate!=null&&hb.winRate<lo.winRate)
+        inv.push("スコア"+hb.band+"("+hb.winRate+"%) が "+lo.band+"("+lo.winRate+"%) を下回っています");
+    }
+    return inv;
+  })();
   function cellColor(wr){return wr==null?"#4a7090":wr>=60?"#22d3a0":wr>=50?"#fbbf24":"#f43f5e";}
   return(
     <div>
@@ -4115,6 +4266,89 @@ function SignalAccuracyContent(p){
             );
           })
         )}
+      </div>
+      {bandInv.length>0&&(
+        <div style={{marginTop:16,padding:"10px 12px",background:"#1c1400",border:"1px solid #fbbf2450",borderRadius:8}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#fbbf24",marginBottom:4}}>⚠️ スコア帯の逆転を検知</div>
+          {bandInv.map(function(msg,i){return <div key={i} style={{fontSize:12,color:"#e0d0a0"}}>{msg}</div>;})}
+          <div style={{fontSize:11,color:"#8a7850",marginTop:4}}>「スコアが高いほど当たる」が崩れています。スコア設計（配点・キャップ）の見直しサインです</div>
+        </div>
+      )}
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🌤 地合い別 シグナル的中率</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>TOPIXプラスの日とマイナスの日で、シグナルの効き方がどう変わるかを比較します（差が大きい順）</div>
+        {regimeRows.length===0?(
+          <div style={{fontSize:12,color:"#4a7090",textAlign:"center",padding:"10px 0"}}>📥 データ蓄積中。地合いの記録は最近始まったばかりのため、スキャンを重ねると自動で表示が始まります</div>
+        ):(
+          <div>
+            <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
+              <div style={{flex:1,minWidth:0}}>シグナル</div>
+              <div style={{width:64,flexShrink:0,textAlign:"right"}}>TOPIX↑日</div>
+              <div style={{width:64,flexShrink:0,textAlign:"right"}}>TOPIX↓日</div>
+            </div>
+            {regimeRows.map(function(r,i){
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
+                  <div style={{flex:1,minWidth:0,color:"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{formatSigKeyLabel(r.signal)}</div>
+                  <div title={r.upT+"件"} style={{width:64,flexShrink:0,textAlign:"right",color:cellColor(r.up),fontWeight:700}}>{r.up+"%"}</div>
+                  <div title={r.downT+"件"} style={{width:64,flexShrink:0,textAlign:"right",color:cellColor(r.down),fontWeight:700}}>{r.down+"%"}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>💰 実トレード×シグナル（自分の成績）</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>完了したトレードの損益と、登録時に点灯していたシグナルの関係。「自分が実際に勝てているシグナル」が見えてきます</div>
+        {tradeSig.filter(function(r){return r.total>=3;}).length===0?(
+          <div style={{fontSize:12,color:"#4a7090",textAlign:"center",padding:"10px 0"}}>📥 データ蓄積中。今後登録するトレードから記録が始まり、完了トレードが貯まると自動で表示されます（シグナルごとに3件以上で表示）</div>
+        ):(
+          <div>
+            <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
+              <div style={{flex:1,minWidth:0}}>シグナル</div>
+              <div style={{width:48,flexShrink:0,textAlign:"right"}}>勝率</div>
+              <div style={{width:56,flexShrink:0,textAlign:"right"}}>平均損益</div>
+              <div style={{width:36,flexShrink:0,textAlign:"right"}}>件数</div>
+            </div>
+            {tradeSig.filter(function(r){return r.total>=3;}).map(function(r,i){
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
+                  <div style={{flex:1,minWidth:0,color:"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{formatSigKeyLabel(r.signal)}</div>
+                  <div style={{width:48,flexShrink:0,textAlign:"right",color:cellColor(r.winRate),fontWeight:700}}>{r.winRate+"%"}</div>
+                  <div style={{width:56,flexShrink:0,textAlign:"right",color:r.avgPct>=0?"#22d3a0":"#f43f5e",fontWeight:700}}>{(r.avgPct>=0?"+":"")+r.avgPct.toFixed(1)+"%"}</div>
+                  <div style={{width:36,flexShrink:0,textAlign:"right",color:"#4a7090"}}>{r.total}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>⚙️ 勝敗しきい値の検証</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>スコア60点以上の記録を対象に、「何%以上動いたら勝敗として数えるか」を変えた場合の的中率を比較。現在は0.3%を採用中です</div>
+        {thrCheck.map(function(r,i){
+          var isCurrent=r.thr===WIN_THRESHOLD_PCT;
+          return(
+            <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"5px 8px",borderBottom:i<thrCheck.length-1?"1px solid #0a1830":"none",background:isCurrent?"#0a1e3a":"transparent",borderRadius:isCurrent?6:0}}>
+              <div style={{flex:1,color:isCurrent?"#8ac0e8":"#b8cce0",fontFamily:"monospace"}}>{"±"+r.thr+"%以上"+(isCurrent?"（採用中）":"")}</div>
+              <div style={{width:52,textAlign:"right",color:cellColor(r.winRate),fontWeight:700}}>{r.winRate!=null?r.winRate+"%":"-"}</div>
+              <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{r.total}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>💾 データ管理</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>学習データ（スコア履歴・地合い・トレード記録）はこの端末に保存されています。Safariの仕様で消えることがあるため、週1回の書き出しをおすすめします</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button onClick={exportAllData} style={{fontSize:12,padding:"8px 12px",borderRadius:6,border:"1px solid #2a4060",background:"#0a1e3a",color:"#8ac0e8",cursor:"pointer"}}>📤 書き出し</button>
+          <label style={{fontSize:12,padding:"8px 12px",borderRadius:6,border:"1px solid #2a4060",background:"#0a1e3a",color:"#8ac0e8",cursor:"pointer"}}>
+            📂 復元
+            <input type="file" accept=".json,application/json" style={{display:"none"}} onChange={function(ev){var f=ev.target.files&&ev.target.files[0];if(f)importAllData(f);ev.target.value="";}}/>
+          </label>
+          <button onClick={cleanupOldData} style={{fontSize:12,padding:"8px 12px",borderRadius:6,border:"1px solid #2a4060",background:"#0a1e3a",color:"#8ac0e8",cursor:"pointer"}}>🧹 古いデータ掃除</button>
+        </div>
       </div>
     </div>
   );
