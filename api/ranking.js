@@ -1,6 +1,9 @@
 // api/ranking.js
-// ハイブリッド方式：出来高上位 + 値上がり率上位20（出来高フィルター付き）
-// JP: 出来高上位40 / US: 出来高上位50（US: Yahoo Finance, JP: 立花証券API経由）
+// 日本株のハイブリッドランキング：出来高上位40 + 値上がり率上位20（出来高フィルター付き）
+// データ取得元：立花証券API（tachibana-server の /ranking-data 経由）
+//
+// ※米国株ランキング（Yahoo Financeのスクリーナー）は、米国株を扱わなくなったため削除済み。
+// 　VIX・日経平均・NYダウ等の市況指数は api/stock.js 側で取得しているため影響しない。
 
 import { withFallback } from "./_fallbackCache.js";
 
@@ -9,16 +12,9 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const { market } = req.query;
-
   try {
-    if (market === "jp") {
-      const data = await getJPRanking(req);
-      return res.status(200).json({ market: "jp", stocks: data });
-    } else {
-      const data = await getUSRanking();
-      return res.status(200).json({ market: "us", stocks: data });
-    }
+    const data = await getJPRanking(req);
+    return res.status(200).json({ market: "jp", stocks: data });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -44,59 +40,6 @@ export function mergeHybrid(byVolume, byChange) {
     if (!seen[s.ticker]) { seen[s.ticker] = true; out.push(s); }
   });
   return out;
-}
-
-// ── 米国株 ───────────────────────────────────────────────────────────────────
-
-async function fetchYahooScreener(scrId, count) {
-  const url = new URL("https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved");
-  url.searchParams.set("formatted", "false");
-  url.searchParams.set("lang", "en-US");
-  url.searchParams.set("region", "US");
-  url.searchParams.set("scrIds", scrId);
-  url.searchParams.set("count", String(count));
-  url.searchParams.set("start", "0");
-
-  const res = await fetch(url.toString(), {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      "Accept": "application/json",
-    },
-  });
-  if (!res.ok) throw new Error("Yahoo Finance screener(" + scrId + "): " + res.status);
-  const json = await res.json();
-  return json?.finance?.result?.[0]?.quotes || [];
-}
-
-function mapUSQuote(q) {
-  return {
-    ticker: q.symbol,
-    name: q.shortName || q.longName || q.symbol,
-    market: "US",
-    tvSymbol: (q.exchange === "NYQ" ? "NYSE:" : "NASDAQ:") + q.symbol,
-    volume: q.regularMarketVolume || 0,
-    avgVolume: q.averageDailyVolume3Month || 0,
-    price: q.regularMarketPrice || 0,
-    change: q.regularMarketChangePercent || 0,
-  };
-}
-
-async function getUSRanking() {
-  // 出来高上位50 と 値上がり率上位50 を並列取得
-  const [actives, gainers] = await Promise.all([
-    fetchYahooScreener("most_actives", 50),
-    fetchYahooScreener("day_gainers", 50),
-  ]);
-
-  const byVolume = actives.map(mapUSQuote);
-
-  // 値上がり率上位から出来高フィルターを通して上位20件
-  const byChange = gainers
-    .map(mapUSQuote)
-    .filter(function(s) { return isVolumeAboveAvg(s.volume, s.avgVolume); })
-    .slice(0, 20);
-
-  return mergeHybrid(byVolume, byChange);
 }
 
 // ── 日本株 ───────────────────────────────────────────────────────────────────
@@ -152,7 +95,7 @@ export function getTargetBusinessDay() {
 }
 
 // 変化率の算出：立花証券からは前日終値(PrevC)が取れるため、それを優先して使う
-// （以前のJ-Quantsは前日終値が取れず、当日始値比で代用していたための名残でO/Cのフォールバックも残す）
+// （取れない場合の保険として、当日始値比でも算出できるようにしてある）
 export function calcChangeRate(bar) {
   if (bar.PrevC && bar.PrevC > 0) {
     return (bar.C - bar.PrevC) / bar.PrevC;
@@ -162,7 +105,7 @@ export function calcChangeRate(bar) {
   return open > 0 ? (close - open) / open : 0;
 }
 
-// 会社名の優先順位：IPO専用API > 立花証券の銘柄マスタ名 > ハードコード一覧 > コードそのまま
+// 会社名の優先順位：銘柄名API > 立花証券の銘柄マスタ名 > ハードコード一覧 > コードそのまま
 export function mapJPBar(bar, names) {
   const code = String(bar.Code || "");
   const name = names[code] || bar.Name || JP_NAMES_FALLBACK[code] || code;
@@ -213,7 +156,6 @@ function toBarShape(row) {
 
 // dateStrの引数は既存コード（sector.js）との互換のために残しているが、
 // 立花証券のランキング用データは常に最新値のため実質的には未使用
-// （旧: J-Quants用のapiKey引数があったが、未使用のため削除済み）
 export async function fetchDailyBarsWithFallback(dateStr) {
   const rows = await fetchTachibanaRankingData();
   if (!rows.length) throw new Error("No JP ranking data");
