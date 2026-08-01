@@ -894,7 +894,11 @@ function calcSignalAccuracyMulti(tickers){
       row["d"+h]=s?{winRate:Math.round(signalQuality(s,k)*100),avgPct:signalAvgPct(s,k),total:s.t}:{winRate:null,avgPct:null,total:0};
     });
     return row;
-  }).sort(function(a,b){return(b.d1.winRate||0)-(a.d1.winRate||0);});
+  }).sort(function(a,b){
+    var ra=a.d1.total>=5,rb=b.d1.total>=5;
+    if(ra!==rb) return ra?-1:1;              // 件数5件未満（参考値）は下にまとめる
+    return(b.d1.avgPct||0)-(a.d1.avgPct||0); // 期待値＝1日後の平均騰落率が高い順
+  });
 }
 // お気に入り登録銘柄全体で集計（複数ホライズン版）
 function calcFavSignalAccuracyMulti(){
@@ -1134,6 +1138,13 @@ function signalAvgPct(stat,sigKey){
   var state=parseInt(sigKey.split("#")[1],10);
   var avg=stat.sumPct/stat.t;
   return state===-1?-avg:avg;
+}
+// ── 期待値マイナス警告（⚠️）─────────────────────────────────────────────
+// 件数が十分あるのに平均騰落率がマイナス＝「勝率は高いが小さく勝って大きく負ける」
+// シグナルを見つけるための判定。スコアには一切影響せず、画面表示のみに使う
+var EXPECTANCY_MIN_SAMPLES=10;
+function isNegExpectancy(c){
+  return !!(c&&c.total>=EXPECTANCY_MIN_SAMPLES&&c.avgPct!=null&&c.avgPct<0);
 }
 // ── 統計ベースの未来予想（🔮パネル用）──────────────────────────────────────
 // 点灯中シグナルの過去実績（平均騰落率・上昇率）を件数で重み付け平均して
@@ -2413,6 +2424,28 @@ function ScoreRing(p){
 
 function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.active?p.color+"18":"transparent",border:"1px solid "+(p.active?p.color:"#1e3050"),borderRadius:6,color:p.active?p.color:"#4a6080",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",fontWeight:p.active?700:400}}>{p.label}</button>);}
 
+// ── 地合いバナー（TOPIX前日比）─────────────────────────────────────────────
+// スコアには一切影響させず「今日は順風か逆風か」という判断材料だけを表示する。
+// TOPIXは日本株スキャン時のみ取得されるため、値が無い場合は何も出さない
+function MarketRegimeBanner(p){
+  var jp=(p.stocks||[]).find(function(s){return s.topixChange!=null;});
+  if(!jp) return null;
+  var t=jp.topixChange;
+  var down=t<=-0.5,up=t>=0.5;
+  var col=down?"#f43f5e":up?"#22d3a0":"#fbbf24";
+  var head=down?"⚠️ 逆風日":up?"🟢 順風日":"➖ 中立";
+  var note=down?"市場全体が下落中。買いシグナルは通りにくい地合いです"
+    :up?"市場全体が上昇中。買いシグナルが通りやすい地合いです"
+    :"市場全体はほぼ横ばいです";
+  return(
+    <div style={{background:"#050e1c",border:"1px solid "+col+"55",borderRadius:8,padding:"6px 10px",marginBottom:8,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+      <span style={{fontSize:12,fontWeight:800,color:col}}>{head}</span>
+      <span style={{fontSize:11,color:"#8fb0d0",fontFamily:"monospace"}}>TOPIX {(t>=0?"+":"")+t.toFixed(2)}%</span>
+      <span style={{fontSize:10,color:"#4a7090"}}>{note}</span>
+    </div>
+  );
+}
+
 // ── StockCard ────────────────────────────────────────────────────────────────
 // ── トレード登録モーダル（買い/売り価格を入力し、アプリ予想 or 個人予想へ追加）─────
 function TradeAddModal(p){
@@ -3270,6 +3303,7 @@ function AllStocksPanel(p){
   var stickyTop=50+extraH;
   var cardGrid=(
     <>
+      <MarketRegimeBanner stocks={stocks}/>
       {sortMode==="lowPrice"&&lowPriceMatchCount===0&&<div style={{textAlign:"center",padding:"24px 12px",color:"#4a7090",fontSize:12}}>条件（株価100〜800円・出来高急増）に合う銘柄がありません</div>}
       <div style={{display:"grid",gridTemplateColumns:"repeat("+cols+",1fr)",gap:8}}>
         {displayStocks.map(function(s,i){
@@ -3375,6 +3409,7 @@ function FavPanel(p){
   var favCols=2; // 常に2列固定
   var cardGrid=(
     <>
+      <MarketRegimeBanner stocks={stocks}/>
       {sortMode==="lowPrice"&&lowPriceMatchCount===0&&<div style={{textAlign:"center",padding:"24px 12px",color:"#4a7090",fontSize:12}}>条件（株価100〜800円・出来高急増）に合うお気に入り銘柄がありません</div>}
       <div style={{display:"grid",gridTemplateColumns:"repeat("+favCols+",1fr)",gap:8}}>
         {displayStocks.map(function(s,i){
@@ -4219,7 +4254,7 @@ function SignalAccuracyContent(p){
   function cellColor(wr){return wr==null?"#4a7090":wr>=60?"#22d3a0":wr>=50?"#fbbf24":"#f43f5e";}
   return(
     <div>
-      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルの予想方向（強気なら上昇/弱気なら下落）が何営業日後に当たったかを表示します。%の下の小さい数字は、そのシグナル通りに動いた場合の平均騰落率です"}</div>
+      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルの予想方向（強気なら上昇/弱気なら下落）が何営業日後に当たったかを表示します。%の下の小さい数字は、そのシグナル通りに動いた場合の平均騰落率です。並び順は勝率ではなく「1日後の平均騰落率（期待値）が高い順」です"}</div>
       {data.length===0?(
         <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだデータがありません。{emptyLabel}を毎日スキャンすると溜まっていきます。</div>
       ):(
@@ -4231,14 +4266,14 @@ function SignalAccuracyContent(p){
           {data.map(function(row,i){
             return(
               <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
-                <div style={{flex:1,minWidth:0,color:"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{formatSigKeyLabel(row.signal)}</div>
+                <div title={isNegExpectancy(row.d1)?"件数十分だが1日後の平均騰落率がマイナス。小さく勝って大きく負ける傾向のシグナルです":""} style={{flex:1,minWidth:0,color:isNegExpectancy(row.d1)?"#fb923c":"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(isNegExpectancy(row.d1)?"⚠️ ":"")+formatSigKeyLabel(row.signal)}</div>
                 {horizons.map(function(hz){
                   var c=row[hz.k],reliable=c.total>=5;
                   var avgLabel=c.avgPct!=null?((c.avgPct>=0?"+":"")+c.avgPct.toFixed(1)+"%"):null;
                   return(
                     <div key={hz.k} title={c.total+"件"} style={{width:48,flexShrink:0,textAlign:"right",opacity:reliable?1:0.5}}>
                       <div style={{color:cellColor(c.winRate),fontWeight:700}}>{c.winRate!=null?c.winRate+"%":"-"}</div>
-                      {avgLabel&&<div style={{fontSize:9,color:"#4a7090"}}>{avgLabel}</div>}
+                      {avgLabel&&<div style={{fontSize:9,color:c.avgPct>=0?"#2a8a68":"#b04a5a"}}>{avgLabel}</div>}
                     </div>
                   );
                 })}
@@ -4246,6 +4281,7 @@ function SignalAccuracyContent(p){
             );
           })}
           <div style={{fontSize:11,color:"#2a6090",marginTop:10}}>※薄字は件数5件未満（参考値）。数値をタップ/ホバーで件数を確認できます</div>
+          <div style={{fontSize:11,color:"#fb923c",marginTop:4}}>※<b>⚠️</b>＝10件以上あるのに1日後の平均騰落率がマイナスのシグナル。勝率が高くても「小さく勝って大きく負ける」ため、スコアの主力がこれなら額面通り受け取らない方が安全です</div>
         </div>
       )}
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
