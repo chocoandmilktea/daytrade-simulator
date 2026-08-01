@@ -2772,7 +2772,7 @@ function StatForecastPanel(p){
     );
   }
   return(
-    <div style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"5px 8px"}}>
+    <div onClick={p.onInfoClick} style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"5px 8px",cursor:"pointer"}}>
       <div style={{fontSize:10,fontWeight:700,color:"#4a90c0",marginBottom:3}}>🔮 統計ベースの目安（過去実績のみで算出・AI不使用）</div>
       <div style={{display:"flex",gap:10}}>
         <div style={{flex:1,minWidth:0}}>
@@ -2868,6 +2868,7 @@ function StockDetailPanel(p){
   var simStopInputS=useState("-5");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
   var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
   var showSupportInfoS=useState(false);var showSupportInfo=showSupportInfoS[0],setShowSupportInfo=showSupportInfoS[1];
+  var showStatInfoS=useState(false);var showStatInfo=showStatInfoS[0],setShowStatInfo=showStatInfoS[1];
   var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
   var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
 
@@ -2963,7 +2964,7 @@ function StockDetailPanel(p){
 
             {/* 統計ベースの目安（全幅・出来高急増後の値動きより上） */}
       <div style={{marginBottom:2}}>
-        <StatForecastPanel s={s}/>
+        <StatForecastPanel s={s} onInfoClick={function(){setShowStatInfo(true);}}/>
       </div>
 
             {/* シグナル詳細（出来高急増後の値動きを内包）／板情報・利確損切りライン（右） */}
@@ -3007,6 +3008,32 @@ function StockDetailPanel(p){
             )}
             {!aiLoading&&aiEntry&&ForecastBox(aiEntry.forecast)}
             {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
+          </div>
+        </div>
+      ,document.body)}
+      {showStatInfo&&createPortal(
+        <div onClick={function(e){if(e.target===e.currentTarget)setShowStatInfo(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
+          <div style={{background:"#040c18",border:"1px solid #4a90c050",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:14,fontWeight:700,color:"#4a90c0"}}>🔮 統計ベースの目安の見方</div>
+              <button onClick={function(){setShowStatInfo(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
+            </div>
+            <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.7}}>
+              <div style={{marginBottom:10}}>今この銘柄で点灯しているシグナルについて、<b>過去に同じシグナルが出たあと実際に株価がどう動いたか</b>を集計して算出しています。AIの予測は一切使っていません。</div>
+              <div style={{fontWeight:700,color:"#d8eeff",marginTop:12,marginBottom:4}}>算出のしかた</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                <div>① 点灯中のシグナルごとに、過去の記録から「その後の平均騰落率」と「上昇した割合」を取り出す</div>
+                <div>② 記録が10件未満、または5営業日分に満たないシグナルは信頼できないので除外する（同じ日に何十銘柄もスキャンした水増しを防ぐため）</div>
+                <div>③ 残ったシグナルを<b>記録件数で重み付けして平均</b>する（1つのシグナルだけが効きすぎないよう、重みは30件分で頭打ち）</div>
+                <div>④ その平均値を「目安 ±○%」「上昇○%」として表示。現在値に掛けた価格も併記する</div>
+              </div>
+              <div style={{fontWeight:700,color:"#d8eeff",marginTop:12,marginBottom:4}}>2種類の目安</div>
+              <div style={{marginBottom:10}}>「今日の引けまで」は取引時間中（9:00〜15:30）だけ表示され、その日の中での値動きを予想します。「翌営業日」は翌日の終値までの予想で、日々の値幅から求めたレンジも併せて表示します。</div>
+              <div style={{background:"#1c1400",border:"1px solid #fbbf2440",borderRadius:8,padding:"8px 10px",marginBottom:10}}>
+                <b style={{color:"#fbbf24"}}>📥 データ蓄積中と出る場合</b><br/>信頼できるシグナルが3種類そろっていない状態です。スキャンを重ねて記録が溜まると自動で表示が始まり、続けるほど精度も上がります。
+              </div>
+              <div style={{color:"#8aa4c0"}}>※ あくまで過去データの統計的な傾向であり、将来の値動きを保証するものではありません。手前に節目（サポート・レジスタンス）がある場合は⚠️で注意書きが出ます。</div>
+            </div>
           </div>
         </div>
       ,document.body)}
@@ -4402,14 +4429,7 @@ function GuidePanel(){
   var CATS=[
     {key:"all",icon:"📋",label:"全銘柄",sections:[
       {title:null,items:["銘柄カードをタップ → 詳細シグナル表示"]},
-      {title:"📊 データ取得の方法",items:["米国株：Yahoo Finance・15分足（直近60日）","日本株：J-Quants・1分足を15分足に集計（直近20営業日）","日本株ランキング：J-Quants（前営業日の出来高上位50）","米国株ランキング：Yahoo Finance 出来高上位50","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
-      {title:"📖 指標の見方（RSI・BB・BB収束・OBV・出来高）",items:[
-        "【確認用】RSI（相対力指数）：30以下で売られすぎ・反発狙いの補助確認。70以上で買われすぎ・過熱感の補助確認。BBのシグナルと合わせて判断する",
-        "【メイン判断】BB（ボリンジャーバンド）：バンドの収縮＝エネルギー蓄積→ブレイクアウト狙いの買い準備。バンドの拡大＝トレンド発生中。下限タッチで反発買い候補、上限タッチで過熱感・利確検討",
-        "【収束確認】BB収束：バンドが狭まっている状態＝エネルギー蓄積中。収束率が高いほどブレイクアウトの可能性が高まる",
-        "【方向確認】OBV（板代替）：終値の位置で買い・売り優勢を判定。高値引けに近いほど買い圧力が強い。BB判断と方向が一致しているか確認する",
-        "【勢い確認】出来高：平均比2倍以上の急増＋高値引けなら買いシグナル強化。出来高増＋安値引けなら売り圧力増大で警戒"
-      ]},
+      {title:"📊 データ取得の方法",items:["米国株：Yahoo Finance・15分足（直近30日）","日本株：Yahoo Finance・15分足（直近30日）","1分足チャート：Yahoo Finance・1分足（直近5営業日／15〜20分程度の遅延あり）","現在値・板情報のリアルタイム表示：立花証券e支店API（WebSocket中継）","日本株ランキング：立花証券API（出来高上位＋値上がり率上位のハイブリッド）","米国株ランキング：Yahoo Finance 出来高上位50","TOPIX・PER/PBR・配当利回り：立花証券API","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
       {title:"📈 実績勝率について",items:[
         "カード左側に表示される勝率の見方",
         "具体的には：①スコアが60点以上になった日＝アプリが「これは買いシグナルが強い」と判断した日",
@@ -4420,23 +4440,23 @@ function GuidePanel(){
         "スコア帯は60〜79 / 80〜99 / 100の3段階で集計。毎日スキャンするほど精度が上がります",
         "色の見方：緑=60%以上、黄=50〜59%、赤=50%未満"
       ]},
-      {title:"📉 下値サポート目安の見方",items:["S1（20日安値）：直近20日間の最安値。短期の下値サポートライン。ここを割ると次のS2が目安","S2（60日安値）：直近60日間の最安値。中期の強いサポートライン。S1を割り込んだ場合の次の目安","ATR×1.5下限：14日間の平均値幅（ATR）×1.5を現在値から引いた価格。統計的な下値の限界目安","活用法：S1割れで警戒、S2割れで損切り検討、ATR下限は最悪ケースの想定として使用"]},
       {title:"🔥🧊 対TOPIX／対業種バッジの見方（日本株限定）",items:[
         "どちらも「個別銘柄の当日騰落率 − 比較対象の当日騰落率」の差分を表示する補助シグナル。市場全体（または同業他社）の値動きを差し引いた「銘柄固有の強さ・弱さ」を見るためのもの",
         "🔥（緑）＝比較対象より強い、🧊（青緑〜赤）＝比較対象より弱い。差が±0.5%未満の場合は誤差レベルとみなし非表示",
         "対TOPIX：比較対象は東証株価指数（TOPIX）。市場全体に対して強いか弱いかを見る。スコアにも反映され、差が大きいほど最大±6点まで加減算される",
         "対業種：比較対象はその銘柄が属する東証33業種の当日平均騰落率（同業他社の値動き）。同じ業種の中で出遅れている／先行しているかを見る。こちらは参考表示のみでスコアには影響しない",
         "内部の仕組み（対TOPIX）：TOPIXの日足データから前日比%を算出し、全銘柄共通の値として1時間キャッシュ",
-        "内部の仕組み（対業種）：その日の全上場銘柄の騰落率をJ-Quantsの業種コードで33業種に分類し、業種ごとの平均値を1回だけ集計。同じく1時間キャッシュして使い回す（銘柄ごとに毎回集計し直すと重いため）",
+        "内部の仕組み（対業種）：その日の全上場銘柄の騰落率を立花証券APIの業種コードで33業種に分類し、業種ごとの平均値を1回だけ集計。同じく1時間キャッシュして使い回す（銘柄ごとに毎回集計し直すと重いため）",
         "どちらも前日比ベースの参考値であり、将来の値動きを保証するものではない"
       ]},
       {title:"🔘 銘柄詳細のアイコン行",items:[
+        "🔗：Yahoo!ファイナンスの銘柄ページを新しいタブで開く",
+        "📱：銘柄コードをコピーしてiSPEEDアプリを開く（日本株向け）",
         "📋：AI判定用のプロンプトをクリップボードにコピー（claude.aiなどに貼り付けて使う用）",
         "🔄：この銘柄だけを最新データで再スキャン",
         "🤖：AIによる分析・上昇予測をポップアップ表示",
         "💹：損益シミュレーターをポップアップ表示（買値・株数から利確/損切りラインの損益を試算）",
-        "🔀：逆相関で上昇しやすい銘柄をポップアップ表示（下落中の銘柄でのみ使用可）",
-        "逆相関の数値（例：-0.51）：2銘柄の値動きの関係の強さを-1〜+1で表す相関係数。+1に近いほど同じ方向に動きやすく、-1に近いほど逆方向に動きやすい（0は無関係）。過去60営業日程度のデータに基づく統計的傾向であり、将来を保証するものではない"
+        "🎯：この銘柄をトレード登録（買い価格・売り価格＝利確ライン・株数を入力）"
       ]},
     ]},
     {key:"fav",icon:"⭐",label:"お気に入り",sections:[
