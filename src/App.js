@@ -677,35 +677,72 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
     "各銘柄について「買い」「売り」「見送り」のいずれかを判定し、理由を1〜2文で日本語で答えてください。\n"+
     "出力形式:\n銘柄コード: 判定（買い/売り/見送り） — 理由";
 }
+// 表示用にAI_DATAタグ（数値データ用の内部タグ）を隠す。
+// 書きかけの「<AI_D」のような未完成のタグも隠して、画面にチラつかないようにする。
+function stripAiData(t){
+  var m=t.match(/<AI_DATA>[\s\S]*?<\/AI_DATA>/);
+  if(m) return t.replace(m[0],"");
+  var i=t.indexOf("<AI_DATA>");
+  if(i!==-1) return t.slice(0,i);
+  var j=t.lastIndexOf("<");
+  if(j!==-1&&"<AI_DATA>".indexOf(t.slice(j))===0) return t.slice(0,j);
+  return t;
+}
+// AI_DATAタグ（無ければ末尾JSON）から数値データを取り出し、本文と分けて返す
+function parseAiResult(raw){
+  var tagMatch=raw.match(/<AI_DATA>([\s\S]*?)<\/AI_DATA>/);
+  var parsed=null,cleanText=raw;
+  if(tagMatch){
+    try{parsed=JSON.parse(tagMatch[1]);}catch(je){}
+    cleanText=raw.replace(tagMatch[0],"");
+  }else{
+    var stripped=raw.replace(/```json[\s\S]*?```/g,"");
+    var braceIdx=stripped.lastIndexOf("{");
+    if(braceIdx!==-1){
+      try{parsed=JSON.parse(stripped.slice(braceIdx));cleanText=stripped.slice(0,braceIdx);}catch(je2){}
+    }
+  }
+  return{parsed:parsed,cleanText:cleanText};
+}
 async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
+  var raw="";
   try{
     var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         prompt:buildAiPrompt(s),
         system:"必ず自分でWeb検索ツールを使って、この銘柄の最新ニュース・材料を確認してから回答してください。ユーザーに質問や確認を求めず、自律的に分析を完了してください。\n\n回答の一番最初に、解説文より前に必ず次の形式でJSONデータを出力してください:\n<AI_DATA>{\"entry\":推奨エントリー価格の数値,\"target\":利確目標価格の数値,\"stop\":損切りラインの数値,\"forecast\":{\"direction\":\"上昇\"または\"下落\"または\"中立\",\"confidence\":0〜100の確信度数値,\"timeframe\":\"期間目安(例:1〜3営業日)\",\"reason\":\"見通しの理由を1文で\"}}</AI_DATA>\nこのタグの後に、通常の分析コメント（買い/売り推奨、Entry/Target/Stopの詳細、今後の見通しなど）を日本語で記載してください。",
-        useWebSearch:true
+        useWebSearch:true,
+        stream:true
       }),signal:AbortSignal.timeout(45000)});
-    var aiData=await res.json();
-    if(aiData.error) throw new Error(typeof aiData.error==="string"?aiData.error:JSON.stringify(aiData.error));
-    var aiText2=typeof aiData.text==="string"?aiData.text:JSON.stringify(aiData.text)||"";
-    // 冒頭の<AI_DATA>...</AI_DATA>タグから数値データを取り出す（先頭にあるので、後半の説明が
-    // 長くなって途中で切れても確実に拾える）。タグが無い場合は旧形式（末尾JSON）にフォールバック。
-    var tagMatch=aiText2.match(/<AI_DATA>([\s\S]*?)<\/AI_DATA>/);
-    var parsed=null,cleanText=aiText2;
-    if(tagMatch){
-      try{parsed=JSON.parse(tagMatch[1]);}catch(je){}
-      cleanText=aiText2.replace(tagMatch[0],"");
-    }else{
-      var stripped=aiText2.replace(/```json[\s\S]*?```/g,"");
-      var braceIdx=stripped.lastIndexOf("{");
-      if(braceIdx!==-1){
-        try{parsed=JSON.parse(stripped.slice(braceIdx));cleanText=stripped.slice(0,braceIdx);}catch(je2){}
+    if(!res.ok) throw new Error("サーバーエラー("+res.status+")");
+
+    if(res.body&&res.body.getReader){
+      // ストリーミング：届いた文字を書けた端から画面に反映していく
+      var reader=res.body.getReader(),dec=new TextDecoder(),last=0;
+      for(;;){
+        var r=await reader.read();
+        if(r.done) break;
+        raw+=dec.decode(r.value,{stream:true});
+        var now=Date.now();
+        if(now-last>120){last=now;setAiText(stripAiData(raw));} // 描画は最短0.12秒間隔に間引く
       }
+    }else{
+      // 万一ストリーミングが使えない環境では従来どおり全文まとめて受け取る
+      var txt=await res.text();
+      try{var j2=JSON.parse(txt);if(j2.error) throw new Error(j2.error);raw=j2.text||"";}
+      catch(pe){raw=txt;}
     }
-    if(parsed&&typeof parsed.entry!=="undefined") setAiEntry(parsed);
-    if(parsed&&parsed.forecast) recordAiForecast(s.ticker,s.price,parsed.forecast);
-    setAiText(cleanText.trim()||"分析できませんでした。");
-  }catch(e){setAiText("エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー"));}
+
+    var out=parseAiResult(raw);
+    if(out.parsed&&typeof out.parsed.entry!=="undefined") setAiEntry(out.parsed);
+    if(out.parsed&&out.parsed.forecast) recordAiForecast(s.ticker,s.price,out.parsed.forecast);
+    setAiText(out.cleanText.trim()||"分析できませんでした。");
+  }catch(e){
+    // 途中まで届いていれば、それを残したうえで注意書きを添える（全部消えるより親切）
+    var partial=stripAiData(raw).trim();
+    var msg="エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー");
+    setAiText(partial?(partial+"\n\n──\n（"+msg+" 途中までの内容を表示しています）"):msg);
+  }
   setAiLoading(false);
 }
 // ── AI予想（forecast）の的中率トラッキング ───────────────────────────────
@@ -3312,7 +3349,7 @@ function StockDetailPanel(p){
               </div>
               <button onClick={function(){setShowAi(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
             </div>
-            {aiLoading?(<div style={{textAlign:"center",padding:"12px 0"}}><div style={{fontSize:18}}>⏳</div><div style={{fontSize:14,color:"#4a90c0",marginTop:4}}>AIが分析中...</div></div>):(<div style={{fontSize:15,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}</div>)}
+            {aiLoading&&!aiText?(<div style={{textAlign:"center",padding:"12px 0"}}><div style={{fontSize:18}}>⏳</div><div style={{fontSize:14,color:"#4a90c0",marginTop:4}}>AIが分析中...</div></div>):(<div style={{fontSize:15,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}{aiLoading&&<span style={{color:"#22d3a0"}}>▌</span>}</div>)}
             {!aiLoading&&aiEntry&&(
               <div style={{background:"#071428",border:"1px solid #4a90c040",borderRadius:8,padding:"8px 10px",marginTop:8}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 AIエントリー提案</div>
