@@ -4502,68 +4502,120 @@ function formatSigKeyLabel(key){
 // 登録時点の重み補正(weightAdjustAtAdd)の向きごとに完了トレードを3グループに分け、
 // 実際の勝率・平均損益を比較する（アプリ予想／個人予想を合算・タブ切替に関わらず常時表示）
 // ※このパネル追加より前に登録されたトレードにはweightAdjustAtAdd記録がないため集計対象外
-// ── ☀️ 寄り付き→引けの検証 ────────────────────────────────────────────
-// 「その日の寄り付きで買って、引けで売っていたら勝てたか」を過去1年の日足で検証する。
-// 条件はすべて朝9:00時点で確定している情報（前日の値動き・当日のギャップ）だけで作るので、
-// 検証で良かった条件はそのまま実戦に使える。
-// 各条件の成績は前半・後半に分けて表示する。両方でプラスでなければ、ただの偶然と判断できる。
-
-// 1銘柄分の日足から、1日ごとのサンプルを作る
-// y=その日の寄り→引けの騰落率。他はすべて「朝9:00に分かっている」材料
-function buildOCSamples(d){
-  var out=[];
-  if(!d||!d.closes||!d.opens||!d.highs||!d.lows)return out;
-  for(var i=6;i<d.closes.length;i++){
-    var o=d.opens[i],c=d.closes[i],pc=d.closes[i-1],po=d.opens[i-1],ph=d.highs[i-1],pl=d.lows[i-1],c5=d.closes[i-6];
-    if(!(o>0&&c>0&&pc>0&&po>0))continue;
-    var rng=(ph>0&&pl>0)?ph-pl:0;
+// ── ☀️ 寄り→引けの検証（分足・利確/損切りシミュレーション）──────────────
+// 「朝の寄り付きで買い、利確・損切り・引けのいずれかで決済する」を過去2年で検証する。
+// 利確幅・損切り幅は buildBuyPlan と同じ計算（日足ATR×0.4／下限1%・上限3%、損切りはその半分）。
+// 60分足を時系列に走査するので「利確と損切りのどちらが先に来たか」を1時間単位で判定できる。
+// 同じ足の中で両方に触れた日はどちらが先か分からないため、悲観版（損切り優先）と
+// 楽観版（利確優先）の両方を出す。実際の成績は必ずこの2つの間に入る。
+var BAR_CACHE={};
+async function fetchBars(ticker,interval,range){
+  var key=ticker+"|"+interval+"|"+range;
+  if(BAR_CACHE[key])return BAR_CACHE[key];
+  try{
+    var res=await fetch(DAILY_API+"?ticker="+encodeURIComponent(ticker)+"&interval="+interval+"&range="+range,{signal:AbortSignal.timeout(20000)});
+    if(!res.ok)throw new Error("HTTP "+res.status);
+    var j=await res.json();
+    if(!j||!j.closes||j.closes.length<50)return null;
+    BAR_CACHE[key]=j;
+    return j;
+  }catch(e){return null;}
+}
+// 分足を日ごとにまとめる。各日は 始値・終値・高値・安値 と、時系列順の足リストを持つ
+function groupBarsByDay(j){
+  var days=[],cur=null;
+  for(var i=0;i<j.closes.length;i++){
+    var d=j.dates[i],o=j.opens[i],c=j.closes[i],h=j.highs[i],l=j.lows[i];
+    if(!(o>0&&c>0&&h>0&&l>0))continue;
+    if(!cur||cur.date!==d){cur={date:d,open:o,close:c,high:h,low:l,bars:[]};days.push(cur);}
+    cur.close=c;
+    if(h>cur.high)cur.high=h;
+    if(l<cur.low)cur.low=l;
+    cur.bars.push({h:h,l:l,c:c});
+  }
+  return days.filter(function(x){return x.bars.length>=3;}); // 半日しかない日は除く
+}
+// 前日までのデータだけで計算するATR14（先読みなし）
+function atrSeries(days,period){
+  var tr=[],out=[];
+  for(var i=0;i<days.length;i++){
+    if(i===0){tr.push(days[0].high-days[0].low);out.push(null);continue;}
+    var pc=days[i-1].close;
+    tr.push(Math.max(days[i].high-days[i].low,Math.abs(days[i].high-pc),Math.abs(pc-days[i].low)));
+    // i日目のATRには i-1日目までのTRしか使わない
+    if(i<period){out.push(null);continue;}
+    var s=0;
+    for(var k=i-period;k<i;k++)s+=tr[k];
+    out.push(s/period);
+  }
+  return out;
+}
+// 1日分のシミュレーション。足を時系列に見て、先に触れた方で決済する
+function simulateDay(day,entry,tp,sl,pessimistic){
+  for(var i=0;i<day.bars.length;i++){
+    var b=day.bars[i],hitTp=b.h>=tp,hitSl=b.l<=sl;
+    if(hitTp&&hitSl)return{px:pessimistic?sl:tp,why:pessimistic?"sl":"tp",amb:true};
+    if(hitTp)return{px:tp,why:"tp",amb:false};
+    if(hitSl)return{px:sl,why:"sl",amb:false};
+  }
+  return{px:day.close,why:"close",amb:false};
+}
+// 1銘柄分のサンプルを作る
+function buildOCSamples(days){
+  var out=[],atr=atrSeries(days,14);
+  for(var i=1;i<days.length;i++){
+    var d=days[i],prevC=days[i-1].close,entry=d.open,a=atr[i];
+    if(!(entry>0&&prevC>0&&a>0))continue;
+    var up=Math.min(Math.max(a*0.4,entry*0.010),entry*0.030),dn=up/2;
+    var tp=entry+up,sl=entry-dn;
+    var pes=simulateDay(d,entry,tp,sl,true),opt=simulateDay(d,entry,tp,sl,false);
     out.push({
-      y:(c-o)/o*100,                       // 寄りで買って引けで売った場合の損益%
-      gap:(o-pc)/pc*100,                   // 当日のギャップ（寄った瞬間に確定）
-      prevOC:(pc-po)/po*100,               // 前日の寄→引
-      prevPos:rng>0?(pc-pl)/rng:0.5,       // 前日の引け位置（1に近いほど高値引け）
-      ret5:c5>0?(pc-c5)/c5*100:0           // 直近5日の騰落率
+      gap:(entry-prevC)/prevC*100,
+      pes:(pes.px-entry)/entry*100,
+      opt:(opt.px-entry)/entry*100,
+      why:pes.why,amb:pes.amb,
+      upPct:up/entry*100
     });
   }
   return out;
 }
-// 検証する条件。すべて朝9:00に判定できるものだけ
-var OC_CONDS=[
-  {label:"全日（比較の基準）",        f:function(x){return true;}},
-  {label:"ギャップアップ +0.5%超",    f:function(x){return x.gap>0.5;}},
-  {label:"ギャップアップ +2%超",      f:function(x){return x.gap>2;}},
-  {label:"ギャップほぼ無し ±0.5%内",  f:function(x){return Math.abs(x.gap)<=0.5;}},
-  {label:"ギャップダウン -0.5%超",    f:function(x){return x.gap<-0.5;}},
-  {label:"ギャップダウン -2%超",      f:function(x){return x.gap<-2;}},
-  {label:"前日が高値引け（70%以上）", f:function(x){return x.prevPos>=0.7;}},
-  {label:"前日が安値引け（30%以下）", f:function(x){return x.prevPos<=0.3;}},
-  {label:"前日が陽線",                f:function(x){return x.prevOC>0;}},
-  {label:"前日が陰線",                f:function(x){return x.prevOC<0;}},
-  {label:"5日で上昇中",               f:function(x){return x.ret5>0;}},
-  {label:"5日で下落中",               f:function(x){return x.ret5<0;}},
-  {label:"ギャップ下げ＋前日陽線",    f:function(x){return x.gap<-0.5&&x.prevOC>0;}},
-  {label:"ギャップ上げ＋前日高値引け",f:function(x){return x.gap>0.5&&x.prevPos>=0.7;}}
+// ギャップの大きさで区切る。上から下へ一直線に並ぶかどうかを見るための梯子
+var GAP_BUCKETS=[
+  {label:"ギャップ +2%以上",   f:function(g){return g>=2;}},
+  {label:"　　　 +1〜+2%",     f:function(g){return g>=1&&g<2;}},
+  {label:"　　　 +0.5〜+1%",   f:function(g){return g>=0.5&&g<1;}},
+  {label:"　　　 -0.5〜+0.5%", f:function(g){return g>-0.5&&g<0.5;}},
+  {label:"　　　 -1〜-0.5%",   f:function(g){return g>-1&&g<=-0.5;}},
+  {label:"　　　 -1.5〜-1%",   f:function(g){return g>-1.5&&g<=-1;}},
+  {label:"　　　 -2〜-1.5%",   f:function(g){return g>-2&&g<=-1.5;}},
+  {label:"　　　 -2.5〜-2%",   f:function(g){return g>-2.5&&g<=-2;}},
+  {label:"　　　 -3〜-2.5%",   f:function(g){return g>-3&&g<=-2.5;}},
+  {label:"ギャップ -3%以下",   f:function(g){return g<=-3;}}
 ];
-// 条件に合う日を集計。前半・後半に分けて、優位性が両方の期間で続いているかを見る
-function aggOC(samples,cond){
-  var n=0,win=0,sum=0,n1=0,s1=0,w1=0,n2=0,s2=0,w2=0;
-  for(var i=0;i<samples.length;i++){
-    var x=samples[i];
-    if(!cond.f(x))continue;
-    n++;sum+=x.y;if(x.y>0)win++;
-    if(x.half===1){n1++;s1+=x.y;if(x.y>0)w1++;}else{n2++;s2+=x.y;if(x.y>0)w2++;}
+function aggOC(pool,test){
+  var n=0,win=0,sp=0,so=0,tp=0,sl=0,cl=0,amb=0,worst=0,n1=0,s1=0,n2=0,s2=0;
+  for(var i=0;i<pool.length;i++){
+    var x=pool[i];
+    if(test&&!test(x.gap))continue;
+    n++;sp+=x.pes;so+=x.opt;
+    if(x.pes>0)win++;
+    if(x.why==="tp")tp++;else if(x.why==="sl")sl++;else cl++;
+    if(x.amb)amb++;
+    if(x.pes<worst)worst=x.pes;
+    if(x.half===1){n1++;s1+=x.pes;}else{n2++;s2+=x.pes;}
   }
   if(n<30)return null;
-  return{n:n,winRate:Math.round(win/n*100),avg:sum/n,
-    avg1:n1>=15?s1/n1:null,avg2:n2>=15?s2/n2:null,
-    win1:n1>=15?Math.round(w1/n1*100):null,win2:n2>=15?Math.round(w2/n2*100):null};
+  return{n:n,winRate:Math.round(win/n*100),pes:sp/n,opt:so/n,
+    tpRate:Math.round(tp/n*100),slRate:Math.round(sl/n*100),clRate:Math.round(cl/n*100),
+    ambRate:Math.round(amb/n*100),worst:worst,
+    h1:n1>=15?s1/n1:null,h2:n2>=15?s2/n2:null};
 }
 
-// ── ☀️ 寄り→引け 検証パネル（ボタンを押した時だけ計算する）──────────────
 function OpenCloseBacktestPanel(p){
   var runS=useState(false);var running=runS[0],setRunning=runS[1];
   var resS=useState(null);var res=resS[0],setRes=resS[1];
   var msgS=useState("");var msg=msgS[0],setMsg=msgS[1];
+  var ivS=useState("60m");var iv=ivS[0],setIv=ivS[1];
 
   var targets=(function(){
     var out=[];
@@ -4572,78 +4624,90 @@ function OpenCloseBacktestPanel(p){
     return out.filter(function(t){return typeof t==="string"&&t.endsWith(".T");});
   })();
 
-  async function run(){
-    setRunning(true);setRes(null);setMsg("");
+  async function run(interval){
+    var range=interval==="5m"?"60d":"2y";
+    setRunning(true);setRes(null);setMsg("");setIv(interval);
     try{
       var pool=[],used=0;
       for(var i=0;i<targets.length;i++){
         setMsg("検証中 "+(i+1)+"/"+targets.length+"　"+targets[i].replace(".T",""));
-        var d=await fetchDaily(targets[i]);
-        var sm=buildOCSamples(d);
-        if(sm.length<60)continue;
-        var cut=Math.floor(sm.length/2); // 銘柄ごとに前半・後半を分ける
+        var j=await fetchBars(targets[i],interval,range);
+        if(!j)continue;
+        var sm=buildOCSamples(groupBarsByDay(j));
+        if(sm.length<40)continue;
+        var cut=Math.floor(sm.length/2);
         for(var k=0;k<sm.length;k++){sm[k].half=k<cut?1:2;pool.push(sm[k]);}
         used++;
       }
-      if(pool.length<300){setMsg("データが足りません（対象銘柄を増やしてください）");setRunning(false);return;}
-      var rows=[];
-      for(var ci=0;ci<OC_CONDS.length;ci++){
-        var a=aggOC(pool,OC_CONDS[ci]);
-        if(a)rows.push({label:OC_CONDS[ci].label,d:a});
-      }
-      setRes({rows:rows,stocks:used,days:pool.length});
+      if(pool.length<300){setMsg("データが足りませんでした（取得失敗の可能性）");setRunning(false);return;}
+      var rows=[{label:"全日（比較の基準）",d:aggOC(pool,null)}];
+      GAP_BUCKETS.forEach(function(b){
+        var a=aggOC(pool,b.f);
+        if(a)rows.push({label:b.label,d:a});
+      });
+      setRes({rows:rows,stocks:used,days:pool.length,interval:interval});
       setMsg("");
     }catch(e){setMsg("エラー: "+e.message);}
     setRunning(false);
   }
 
-  var base=res&&res.rows.length?res.rows[0].d:null;
   function pct(v){return v==null?"—":(v>=0?"+":"")+v.toFixed(2)+"%";}
+  var base=res&&res.rows[0]?res.rows[0].d:null;
 
   return(
     <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
-      <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>☀️ 寄り→引けの検証</div>
+      <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>☀️ 寄り→引けの検証（利確・損切りあり）</div>
       <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>
-        「朝の寄り付きで買って、引けで売る」を過去1年の日足で検証します。条件はすべて<b>朝9:00に分かっている材料</b>だけなので、
-        良い条件が見つかればそのまま使えます。<b>前半・後半の両方でプラス</b>でなければ偶然と考えてください。
+        「寄り付きで買い、利確・損切り・引けのどれかで決済」を分足で再現します。利確幅・損切り幅はアプリの買いプランと同じ計算です。
+        同じ足の中で利確と損切りの両方に触れた日は順番が分からないため、<b>悲観（損切り優先）と楽観（利確優先）の両方</b>を出します。実際はこの間に入ります。
       </div>
-      <button onClick={run} disabled={running||!targets.length} style={{background:running?"#0a1a3a":"#0ea5e9",border:"none",borderRadius:8,color:running?"#4a7090":"#04121f",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
-        {running?"検証中...":"▶ 検証を実行（対象"+targets.length+"銘柄）"}
-      </button>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button onClick={function(){run("60m");}} disabled={running||!targets.length} style={{background:running?"#0a1a3a":"#0ea5e9",border:"none",borderRadius:8,color:running?"#4a7090":"#04121f",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
+          {running?"検証中...":"▶ 60分足・2年で検証（"+targets.length+"銘柄）"}
+        </button>
+        <button onClick={function(){run("5m");}} disabled={running||!targets.length} style={{background:"transparent",border:"1px solid #1a3a5a",borderRadius:8,color:"#4a7090",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
+          5分足・60日で答え合わせ
+        </button>
+      </div>
       {!targets.length&&<div style={{fontSize:11,color:"#f43f5e",marginTop:6}}>対象がありません。お気に入り登録かトレード登録をしてください（日本株のみ対象）</div>}
       {msg&&<div style={{fontSize:11,color:"#4a7090",marginTop:6}}>{msg}</div>}
       {res&&(
         <div style={{marginTop:10}}>
-          <div style={{fontSize:11,color:"#4a7090",marginBottom:6}}>{res.stocks}銘柄・のべ{res.days}日分を集計</div>
+          <div style={{fontSize:11,color:"#4a7090",marginBottom:6}}>
+            {res.interval==="5m"?"5分足・60日":"60分足・2年"}／{res.stocks}銘柄・のべ{res.days}日分
+          </div>
           <div style={{display:"flex",fontSize:10,color:"#2a6090",padding:"4px 6px",borderBottom:"1px solid #0f2040"}}>
-            <div style={{flex:1}}>条件（朝9:00に判定できるもの）</div>
+            <div style={{flex:1}}>ギャップ区分</div>
             <div style={{width:44,textAlign:"right"}}>件数</div>
             <div style={{width:40,textAlign:"right"}}>勝率</div>
-            <div style={{width:52,textAlign:"right"}}>平均</div>
-            <div style={{width:52,textAlign:"right"}}>前半</div>
-            <div style={{width:52,textAlign:"right"}}>後半</div>
+            <div style={{width:54,textAlign:"right"}}>悲観</div>
+            <div style={{width:54,textAlign:"right"}}>楽観</div>
           </div>
           {res.rows.map(function(r,i){
             var d=r.d,isBase=i===0;
-            // 基準より良く、かつ前半・後半の両方でプラスなら「使えるかもしれない」条件
-            var solid=!isBase&&base&&d.avg>base.avg&&d.avg1>0&&d.avg2>0;
+            var solid=!isBase&&base&&d.pes>base.pes&&d.pes>0&&d.h1>0&&d.h2>0;
             return(
-              <div key={i} style={{display:"flex",alignItems:"center",fontSize:12,padding:"5px 6px",
-                borderBottom:"1px solid #0a1830",background:isBase?"#0a1830":(solid?"#06201a":"transparent")}}>
-                <div style={{flex:1,color:isBase?"#e0f0ff":"#b8cce0",fontWeight:isBase?700:400}}>{r.label}{solid?" ◎":""}</div>
-                <div style={{width:44,textAlign:"right",color:"#4a7090"}}>{d.n}</div>
-                <div style={{width:40,textAlign:"right",color:"#b8cce0"}}>{d.winRate}%</div>
-                <div style={{width:52,textAlign:"right",fontWeight:700,color:d.avg>0?"#22d3a0":"#f43f5e"}}>{pct(d.avg)}</div>
-                <div style={{width:52,textAlign:"right",color:d.avg1>0?"#4a9080":"#8a5060"}}>{pct(d.avg1)}</div>
-                <div style={{width:52,textAlign:"right",color:d.avg2>0?"#4a9080":"#8a5060"}}>{pct(d.avg2)}</div>
+              <div key={i} style={{padding:"5px 6px",borderBottom:"1px solid #0a1830",background:isBase?"#0a1830":(solid?"#06201a":"transparent")}}>
+                <div style={{display:"flex",alignItems:"center",fontSize:12}}>
+                  <div style={{flex:1,color:isBase?"#e0f0ff":"#b8cce0",fontWeight:isBase?700:400,whiteSpace:"pre"}}>{r.label}{solid?" ◎":""}</div>
+                  <div style={{width:44,textAlign:"right",color:"#4a7090"}}>{d.n}</div>
+                  <div style={{width:40,textAlign:"right",color:"#b8cce0"}}>{d.winRate}%</div>
+                  <div style={{width:54,textAlign:"right",fontWeight:700,color:d.pes>0?"#22d3a0":"#f43f5e"}}>{pct(d.pes)}</div>
+                  <div style={{width:54,textAlign:"right",fontWeight:700,color:d.opt>0?"#4a9080":"#8a5060"}}>{pct(d.opt)}</div>
+                </div>
+                <div style={{fontSize:10,color:"#2a6090",marginTop:2}}>
+                  利確{d.tpRate}%／損切{d.slRate}%／引け{d.clRate}%　前半{pct(d.h1)}・後半{pct(d.h2)}　最悪{pct(d.worst)}　判定不能{d.ambRate}%
+                </div>
               </div>
             );
           })}
           <div style={{fontSize:10,color:"#4a7090",marginTop:8,lineHeight:1.5}}>
-            ・一番上の「全日」が基準です。各条件はこれを上回って初めて意味があります<br/>
-            ・<b>◎</b>＝基準より良く、前半・後半の両方でプラスだった条件<br/>
-            ・平均は手数料を含みません。往復コストを引いても残るかで判断してください<br/>
-            ・条件を14個試しているので、1つくらいは偶然良く見えます。◎が付いても差が小さいものは信用しないでください
+            ・<b>悲観</b>が実際に近い下限、<b>楽観</b>が上限です。悲観でもプラスなら信頼できます<br/>
+            ・上から下へ数字が一直線に並んでいれば、偶然ではなく本物の性質です<br/>
+            ・<b>◎</b>＝基準を上回り、悲観でもプラスで、前半・後半の両方でプラス<br/>
+            ・「判定不能」は同じ足の中で利確と損切りの両方に触れた割合。ここが高いほど悲観と楽観の差が開きます<br/>
+            ・「最悪」は1日の最大損失。損切りがあるので理論上は−0.5%前後ですが、それを超える日は寄り後に急落して損切り価格を飛び越えた日です<br/>
+            ・平均は手数料を含みません
           </div>
         </div>
       )}
