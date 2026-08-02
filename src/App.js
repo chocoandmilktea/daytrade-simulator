@@ -1288,7 +1288,15 @@ function analyzeStock(stock,pd,vixVal){
   }
 
   // ── VWAP・ピボット計算 ─────────────────────────────────────────────────────
-  var vwap=volumes.length>0?calcVWAP(closes,highs,lows,volumes):null;
+  // VWAPは「当日分のみ」で算出する（デイトレの押し目基準にするため）。
+  // 全期間累積だと数日前の値を引きずり、チャート上のVWAPとズレるため。
+  var vwap=null;
+  if(volumes.length>0){
+    if(todayStart!==null&&n-todayStart>=1){
+      vwap=calcVWAP(closes.slice(todayStart),highs.slice(todayStart),lows.slice(todayStart),volumes.slice(todayStart));
+    }
+    if(vwap===null) vwap=calcVWAP(closes,highs,lows,volumes); // 当日データが取れない時のみ従来通り
+  }
   var pivot=calcPivot(closes,highs,lows);
 
   // ── VWAP シグナル（メイン・最大15点）────────────────────────────────────
@@ -1721,18 +1729,24 @@ function analyzeStock(stock,pd,vixVal){
         mode="dip"; entryRaw=vwap; reason="VWAPまでの押し目待ち（指値）";
       }
       var entryV=roundTick(entryRaw,mode==="break"?1:mode==="dip"?-1:0);
-      var stopRaw=(mode==="dip"?vwap:entryV)-atr*0.4;
-      var targetRaw=entryV+atr*0.8;
+      // ATRが極端に小さい低位株では利確・損切りが買値と同値になってしまうため、
+      // 「2ティック」または「0.4%」のうち大きい方を最低の値幅として確保する
+      var minGap=Math.max(tickSize(entryV)*2,entryV*0.004);
+      var stopRaw=(mode==="dip"?vwap:entryV)-Math.max(atr*0.4,minGap*0.5);
+      var targetRaw=entryV+Math.max(atr*0.8,minGap);
       // Pivot R1が利確目標より手前にある場合は、そこで止められやすいためR1を目標にする
       if(pivot&&pivot.r1>entryV&&pivot.r1<targetRaw) targetRaw=pivot.r1;
       // 残り時間チェック（日本株・14:30以降のブレイク狙いは伸びきらない可能性）
       var jstNow=new Date(Date.now()+9*3600*1000);
       var jstMin=jstNow.getUTCHours()*60+jstNow.getUTCMinutes();
       var lateWarn=(isJPmkt&&jstMin>=870&&mode!=="dip")?"引けまで残りわずか":null;
+      var targetV=roundTick(targetRaw,-1),stopV=roundTick(stopRaw,-1);
+      // 丸めた結果が買値と同値になった場合の最終保険
+      if(targetV<=entryV) targetV=roundTick(entryV+tickSize(entryV)*2,1);
+      if(stopV>=entryV)   stopV=roundTick(entryV-tickSize(entryV)*2,-1);
       buyPlan={
-        entry:entryV,
-        stop:roundTick(stopRaw,-1),
-        target:roundTick(targetRaw,-1),
+        entry:entryV,target:targetV,stop:stopV,
+        rr:(targetV-entryV)>0&&(entryV-stopV)>0?parseFloat(((targetV-entryV)/(entryV-stopV)).toFixed(1)):null,
         mode:mode,reason:reason,warn:lateWarn
       };
     }
@@ -2888,30 +2902,40 @@ function StatForecastPanel(p){
     </div>
   );
 }
-// ── 買値パネル（デイトレ用・エントリー1本）────────────────────────────
+// ── 買値パネル（デイトレ用・エントリー1本／横1行コンパクト表示）──────
 function BuyPlanPanel(p){
+  var isMobile=useIsMobile();
   var b=p.plan;
   if(!b) return null;
   var unit=p.isJP?"\u00a5":"$";
   var f=function(v){return unit+(p.isJP?Math.round(v).toLocaleString():v.toFixed(2));};
-  var MODE={now:{label:"\u25b6 今すぐ追随",color:"#22d3a0"},break:{label:"\u2934 上抜け待ち（逆指値）",color:"#0ea5e9"},dip:{label:"\u2935 押し目待ち（指値）",color:"#fbbf24"}};
+  var MODE={
+    now:{label:"\u25b6 今すぐ追随",color:"#22d3a0"},
+    "break":{label:"\u2934 上抜け待ち",color:"#0ea5e9"},
+    dip:{label:"\u2935 押し目待ち",color:"#fbbf24"}
+  };
   var m=MODE[b.mode]||MODE.dip;
+  var sub={fontSize:isMobile?12:13,fontWeight:800,lineHeight:1.1};
   return(
-    <div style={{background:"#071428",border:"1px solid "+m.color+"60",borderRadius:8,padding:"8px 10px"}}>
-      <div style={{fontSize:11,fontWeight:700,color:m.color,marginBottom:4}}>💰 買値 — {m.label}</div>
-      <div style={{fontSize:22,fontWeight:800,color:"#e0f0ff",lineHeight:1.1}}>{f(b.entry)}</div>
-      <div style={{fontSize:10,color:"#4a7090",margin:"3px 0 6px"}}>{b.reason}</div>
-      <div style={{display:"flex",gap:6}}>
-        <div style={{flex:1,background:"#052e16",borderRadius:6,padding:"4px 6px"}}>
-          <div style={{fontSize:9,color:"#22d3a0"}}>🎯 利確</div>
-          <div style={{fontSize:13,fontWeight:700,color:"#22d3a0"}}>{f(b.target)}</div>
-        </div>
-        <div style={{flex:1,background:"#1f0010",borderRadius:6,padding:"4px 6px"}}>
-          <div style={{fontSize:9,color:"#f43f5e"}}>🛑 損切り</div>
-          <div style={{fontSize:13,fontWeight:700,color:"#f43f5e"}}>{f(b.stop)}</div>
+    <div style={{background:"#071428",border:"1px solid "+m.color+"70",borderRadius:8,padding:isMobile?"5px 8px":"6px 10px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:isMobile?7:10,flexWrap:"nowrap"}}>
+        <span style={{fontSize:isMobile?10:11,fontWeight:700,color:m.color,whiteSpace:"nowrap",flexShrink:0}}>💰{m.label}</span>
+        <span style={{fontSize:isMobile?20:24,fontWeight:800,color:"#e0f0ff",lineHeight:1,flexShrink:0}}>{f(b.entry)}</span>
+        <div style={{display:"flex",gap:6,marginLeft:"auto",flexShrink:0}}>
+          <div style={{background:"#052e16",borderRadius:5,padding:"3px 7px",textAlign:"right"}}>
+            <div style={{fontSize:9,color:"#22d3a0",lineHeight:1}}>🎯利確</div>
+            <div style={Object.assign({color:"#22d3a0"},sub)}>{f(b.target)}</div>
+          </div>
+          <div style={{background:"#1f0010",borderRadius:5,padding:"3px 7px",textAlign:"right"}}>
+            <div style={{fontSize:9,color:"#f43f5e",lineHeight:1}}>🛑損切り</div>
+            <div style={Object.assign({color:"#f43f5e"},sub)}>{f(b.stop)}</div>
+          </div>
         </div>
       </div>
-      {b.warn&&<div style={{fontSize:10,color:"#fb923c",marginTop:5}}>⚠️ {b.warn}</div>}
+      <div style={{fontSize:9,color:"#4a7090",marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+        {b.reason}{b.rr!=null&&" ／ リスクリワード 1:"+b.rr}
+        {b.warn&&<span style={{color:"#fb923c"}}>{" ／ ⚠️"+b.warn}</span>}
+      </div>
     </div>
   );
 }
@@ -3058,6 +3082,8 @@ function StockDetailPanel(p){
         </div>
       </div>
 
+      <BuyPlanPanel plan={s.buyPlan} isJP={s.market==="JP"}/>
+
       {s.market==="JP"&&<TachibanaBoard ticker={s.ticker} onQuote={function(q){
         // 受信イベントには「全項目入り(FD等)」と「価格だけの軽量な更新」があり、
         // 後者を受けた時に丸ごと置き換えると気配値など前回までの情報が消えてしまうため、
@@ -3087,7 +3113,7 @@ function StockDetailPanel(p){
 
       {/* チャート（1分足＋週足MA） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px",marginTop:-6}}>
-        <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?240:340} aiEntry={aiEntry}/>
+        <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?150:250} aiEntry={aiEntry}/>
       </div>
 
             {/* 統計ベースの目安（全幅・出来高急増後の値動きより上） */}
@@ -3096,12 +3122,11 @@ function StockDetailPanel(p){
       </div>
 
             {/* シグナル詳細（出来高急増後の値動きを内包）／板情報・利確損切りライン（右） */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,alignItems:"start"}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:isMobile?6:10,alignItems:"start"}}>
         <div style={{minWidth:0}}>
           <SignalDetailList signals={s.signals} breakdown={s.breakdown} daily={daily}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
-          <BuyPlanPanel plan={s.buyPlan} isJP={s.market==="JP"}/>
           <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
         </div>
       </div>
