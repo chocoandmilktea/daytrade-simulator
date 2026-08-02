@@ -141,11 +141,12 @@ function enqueueIntraday(fn){
 // ※旧J-Quants時代の60件/分制限を基準に「1.5秒に1件」だったが、立花証券API
 // 　移行後は制限が緩和されている可能性があるため段階的に短縮してテスト中。
 // 　Step1: 間隔を1.5秒→0.6秒に短縮（問題なし）
-// 　Step2: 1件ずつ→3件ずつ同時実行に変更（今回）
-// 　429エラーが増える場合はSTOCK_CONCURRENCYを1に、間隔を1500付近に戻せば元通り。
+// 　Step2: 1件ずつ→3件ずつ同時実行に変更（問題なし）
+// 　Step3: 3件ずつ→5件ずつに増加（今回）。tachibana-server側で5件同時の実績あり
+// 　429エラーが増える場合はSTOCK_CONCURRENCYを3や1に、間隔を1500付近に戻せば元通り。
 var STOCK_QUEUE=[], STOCK_TIMER=null, STOCK_LAST_DISPATCH=0;
 var STOCK_MIN_INTERVAL=600; // バッチ発火の最短間隔
-var STOCK_CONCURRENCY=3; // Step2: 1回の発火で同時に呼び出す件数
+var STOCK_CONCURRENCY=5; // Step3: 1回の発火で同時に呼び出す件数
 var STOCK_PAUSED_UNTIL=0;
 function scheduleStockQueue(){
   if(STOCK_TIMER||STOCK_QUEUE.length===0) return;
@@ -2624,25 +2625,41 @@ function TachibanaBoard(p){
       fetch(TACHIBANA_WATCH_API,{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({ticker:code}),signal:AbortSignal.timeout(8000)}).catch(function(){});
     }
+    // タップ直後はサーバー側(Redis)にまだ値が無いことが多い。7秒おきのままだと
+    // 初回表示まで最大7秒待たされるため、最初の1件が届くまでは1秒おきに取りに行き、
+    // 届いた時点で通常の7秒間隔に切り替える（空振りが続く場合も15回で切り替え）。
+    var fastTries=0, FAST_MAX=15, gotFirst=false;
+    var quoteTimer=null;
+    function startPolling(ms){
+      if(quoteTimer) clearInterval(quoteTimer);
+      quoteTimer=setInterval(pollQuote,ms);
+    }
     function pollQuote(){
       fetch(TACHIBANA_QUOTE_API+"&ticker="+encodeURIComponent(code),{signal:AbortSignal.timeout(8000)})
         .then(function(r){return r.json();})
         .then(function(json){
           if(stopped) return;
-          if(json&&json.found&&p.onQuote) p.onQuote(json);
+          if(json&&json.found){
+            if(p.onQuote) p.onQuote(json);
+            if(!gotFirst){gotFirst=true;startPolling(7*1000);} // 初回取得できたら通常間隔へ
+          }
         })
-        .catch(function(){});
+        .catch(function(){})
+        .finally(function(){
+          if(stopped||gotFirst) return;
+          if(++fastTries>=FAST_MAX) startPolling(7*1000); // 空振りが続いたら通常間隔へ
+        });
     }
 
     notifyWatch();
     pollQuote();
     var watchTimer=setInterval(notifyWatch,60*1000); // 監視継続を伝え続ける（5分でタイムアウトするため）
-    var quoteTimer=setInterval(pollQuote,7*1000);     // 実用的な範囲として7秒おきに取得
+    startPolling(1000); // まずは1秒おきの高速ポーリングで開始
 
     return function(){
       stopped=true;
       clearInterval(watchTimer);
-      clearInterval(quoteTimer);
+      if(quoteTimer) clearInterval(quoteTimer);
     };
   },[code]);
 
