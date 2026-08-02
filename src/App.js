@@ -4480,13 +4480,19 @@ function dailyChangeSeries(d){
   }
   return out;
 }
-// 指定日「より前」で最も新しい変化率を返す＝その日の朝までに確定していた値（先読み防止）
-function lastChangeBefore(series,date){
-  var v=null;
+// 指定日「より前」で最も新しい足の位置を返す（＝その日の朝までに確定していた足）
+function lastIndexBefore(series,date){
+  var idx=-1;
   for(var i=0;i<series.length;i++){
-    if(series[i].date<date)v=series[i].chg; else break;
+    if(series[i].date<date)idx=i; else break;
   }
-  return v;
+  return idx;
+}
+// shift=0 が本来の対応。日足の日付が1日ズレて記録されている疑いを検証するため、
+// shift=+1（1本後の足）/ -1（1本前の足）でも計算できるようにしている
+function changeShifted(series,date,shift){
+  var i=lastIndexBefore(series,date)+shift;
+  return (i>=0&&i<series.length)?series[i].chg:null;
 }
 // 2変数の最小二乗法（切片あり）。[a,b,c]を返す
 function fitGapCoef(x1,x2,y){
@@ -4532,14 +4538,14 @@ function gapBacktestCore(x1,x2,y,maxAbs){
     spRate:Math.round(spOnly/tot*100),mae:err/(n-cut),a:co[0],b:co[1],c:co[2]};
 }
 // 1銘柄分の検証（指数データは呼び出し側で1回だけ取得して使い回す）
-async function backtestGapOne(ticker,spSeries,fxSeries){
+async function backtestGapOne(ticker,spSeries,fxSeries,shift){
   var d=await fetchDaily(ticker);
   if(!d||!d.closes||!d.opens||d.closes.length<80)return null;
   var x1=[],x2=[],y=[];
   for(var i=1;i<d.closes.length;i++){
     var prevC=d.closes[i-1],op=d.opens[i];
     if(!(prevC>0)||!(op>0))continue;
-    var sp=lastChangeBefore(spSeries,d.dates[i]),fx=lastChangeBefore(fxSeries,d.dates[i]);
+    var sp=changeShifted(spSeries,d.dates[i],shift),fx=changeShifted(fxSeries,d.dates[i],shift);
     if(sp==null||fx==null)continue;
     y.push((op-prevC)/prevC*100);x1.push(sp);x2.push(fx);
   }
@@ -4568,15 +4574,8 @@ function GapBacktestPanel(p){
       var spD=await fetchDaily(GAP_MKT.sp),fxD=await fetchDaily(GAP_MKT.fx);
       var spSeries=dailyChangeSeries(spD),fxSeries=dailyChangeSeries(fxD);
       if(spSeries.length<60||fxSeries.length<60){setMsg("地合いデータが取得できませんでした");setRunning(false);return;}
-      var rows=[];
-      for(var i=0;i<targets.length;i++){
-        setMsg("検証中 "+(i+1)+"/"+targets.length+"　"+targets[i].replace(".T",""));
-        var r=await backtestGapOne(targets[i],spSeries,fxSeries);
-        if(r)rows.push(r);
-      }
-      if(!rows.length){setMsg("検証できる銘柄がありませんでした（日足が不足）");setRunning(false);return;}
       // 全体成績は検証件数で重み付けして平均する
-      function agg(key){
+      function agg(rows,key){
         var h=0,na=0,sp=0,n=0,mae=0,mn=0;
         rows.forEach(function(r){
           var v=r[key];if(!v)return;
@@ -4586,7 +4585,25 @@ function GapBacktestPanel(p){
         if(!n)return null;
         return{hitRate:Math.round(h/n),naiveRate:Math.round(na/n),spRate:Math.round(sp/n),testN:n,mae:mae/mn};
       }
-      setRes({rows:rows,all:agg("all"),trimmed:agg("trimmed")});
+      // shift=0が本来の対応。日足の日付が1日ズレていないかを確かめるため±1日も同時に計算する
+      var shifts=[-1,0,1],byShift={},baseRows=null,i,si;
+      for(si=0;si<shifts.length;si++){
+        var rows=[];
+        for(i=0;i<targets.length;i++){
+          setMsg("検証中（"+(si+1)+"/3）"+(i+1)+"/"+targets.length+"　"+targets[i].replace(".T",""));
+          var r=await backtestGapOne(targets[i],spSeries,fxSeries,shifts[si]);
+          if(r)rows.push(r);
+        }
+        byShift[shifts[si]]={all:agg(rows,"all"),trimmed:agg(rows,"trimmed")};
+        if(shifts[si]===0)baseRows=rows;
+      }
+      if(!baseRows||!baseRows.length){setMsg("検証できる銘柄がありませんでした（日足が不足）");setRunning(false);return;}
+      // 日付そのものの目視チェック用（末尾3日分）
+      var sampleD=await fetchDaily(targets[0]);
+      var tail=function(a){return a&&a.length?a.slice(-3).join(" / "):"-";};
+      setRes({rows:baseRows,byShift:byShift,
+        all:byShift[0].all,trimmed:byShift[0].trimmed,
+        dateCheck:{stock:targets[0].replace(".T",""),stockDates:tail(sampleD&&sampleD.dates),spDates:tail(spD&&spD.dates)}});
       setMsg("");
     }catch(e){setMsg("エラー: "+e.message);}
     setRunning(false);
@@ -4626,6 +4643,41 @@ function GapBacktestPanel(p){
         <div style={{marginTop:10}}>
           {Summary("全データ",res.all,"決算などの大幅ギャップも含めた素の成績")}
           {Summary("±5%超の大幅ギャップを除外",res.trimmed,"決算跨ぎなど予測不能な日を外した成績")}
+          {res.byShift&&(
+            <div style={{background:"#0a1020",border:"1px solid #1a3a5a",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#e0f0ff",marginBottom:2}}>🔍 日付ズレの検証</div>
+              <div style={{fontSize:10,color:"#4a7090",marginBottom:6}}>日足の日付が1日ズレて記録されていないかの確認。「現状」が最も高ければ日付は正しい</div>
+              <div style={{display:"flex",fontSize:10,color:"#2a6090",padding:"3px 4px",borderBottom:"1px solid #0f2040"}}>
+                <div style={{flex:1}}>使う地合いの足</div>
+                <div style={{width:54,textAlign:"right"}}>的中率</div>
+                <div style={{width:54,textAlign:"right"}}>常に上</div>
+                <div style={{width:54,textAlign:"right"}}>平均誤差</div>
+              </div>
+              {[{k:-1,label:"1日前にずらす"},{k:0,label:"現状（前営業日）"},{k:1,label:"1日後にずらす"}].map(function(o){
+                var v=res.byShift[o.k]&&res.byShift[o.k].trimmed;
+                if(!v)return null;
+                var base=res.byShift[0]&&res.byShift[0].trimmed;
+                var best=base&&v.hitRate>base.hitRate+2;
+                return(
+                  <div key={o.k} style={{display:"flex",alignItems:"center",fontSize:12,padding:"5px 4px",borderBottom:"1px solid #0a1830"}}>
+                    <div style={{flex:1,color:o.k===0?"#e0f0ff":"#b8cce0",fontWeight:o.k===0?700:400}}>{o.label}{best?"  ⚠":""}</div>
+                    <div style={{width:54,textAlign:"right",fontWeight:700,color:best?"#fbbf24":o.k===0?"#22d3a0":"#4a7090"}}>{v.hitRate}%</div>
+                    <div style={{width:54,textAlign:"right",color:"#4a7090"}}>{v.naiveRate}%</div>
+                    <div style={{width:54,textAlign:"right",color:"#4a7090"}}>{v.mae.toFixed(2)}%</div>
+                  </div>
+                );
+              })}
+              {res.dateCheck&&(
+                <div style={{fontSize:10,color:"#4a7090",marginTop:6,lineHeight:1.6,fontFamily:"monospace"}}>
+                  {res.dateCheck.stock+" 日足の末尾: "+res.dateCheck.stockDates}<br/>
+                  {"S&P500 日足の末尾: "+res.dateCheck.spDates}
+                </div>
+              )}
+              <div style={{fontSize:10,color:"#4a7090",marginTop:6,lineHeight:1.5}}>
+                ⚠が付いた場合は日付がズレている可能性があります。上の日付が実際の営業日と合っているか目視で確認してください
+              </div>
+            </div>
+          )}
           <div style={{display:"flex",fontSize:10,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
             <div style={{flex:1}}>銘柄</div>
             <div style={{width:54,textAlign:"right"}}>的中率</div>
