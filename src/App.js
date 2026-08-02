@@ -2935,7 +2935,7 @@ function calcBoardScore(quote,price){
 function BoardScorePanel(p){
   var b=p.board;
   if(!b) return null;
-  var base=p.baseScore||0;
+  var base=Math.round(p.baseScore||0);
   var adjusted=Math.min(100,Math.max(0,base+b.adj));
   var col=b.adj>0?"#22d3a0":b.adj<0?"#f43f5e":"#6a90b0";
   return(
@@ -3244,7 +3244,7 @@ function StockDetailPanel(p){
         // 既存のfieldsに新しい値を上書きする形でマージする
         setTachibanaQuote(function(prev){
           var merged=Object.assign({},prev&&prev.fields,q.fields);
-          return {fields:merged,updatedAt:q.updatedAt};
+          return {fields:merged,updatedAt:q.updatedAt,stale:q.stale};
         });
         var f=q.fields||{};
         if(f["p_1_DPP"]!=null) setLiveTick({
