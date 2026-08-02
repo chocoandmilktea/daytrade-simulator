@@ -2896,6 +2896,67 @@ function findBoardMatch(targetPrice,thickLevels){
   });
   return best;
 }
+// ── 板スコア補正：立花証券のリアルタイム気配値からスコアを±調整する ──────────
+// 【重要】既存のスコア(s.score)は書き換えず、別枠の「補正値」として表示する。
+// 　s.scoreを直接上書きすると、これまで蓄積してきた実績勝率(scoreHist)の
+// 　集計基準が変わり、過去データとの比較ができなくなるため。
+// 板が取れない銘柄(米国株)・休場中(stale)はnullを返し、パネル自体を非表示にする。
+var BOARD_MAX_AGE=5*60*1000; // 板が5分以上更新されていなければ休場中とみなし採点しない
+function calcBoardScore(quote,price){
+  if(!quote||quote.stale) return null;
+  if(!quote.updatedAt||Date.now()-quote.updatedAt>BOARD_MAX_AGE) return null;
+  var ob=parseOrderBookLevels(quote);
+  var totalVol=ob.buyVol+ob.sellVol;
+  if(!ob.found||totalVol<=0) return null;
+
+  var adj=0,items=[];
+
+  // ① 売買比率：板全体の注文のうち買い注文が何%を占めるか
+  var buyRatio=ob.buyVol/totalVol*100;
+  if(buyRatio>=65){adj+=8;items.push({label:"買い注文が厚い",val:buyRatio.toFixed(0)+"%",state:1});}
+  else if(buyRatio>=55){adj+=4;items.push({label:"やや買い優勢",val:buyRatio.toFixed(0)+"%",state:1});}
+  else if(buyRatio<=35){adj-=8;items.push({label:"売り注文が厚い",val:buyRatio.toFixed(0)+"%",state:-1});}
+  else if(buyRatio<=45){adj-=4;items.push({label:"やや売り優勢",val:buyRatio.toFixed(0)+"%",state:-1});}
+  else{items.push({label:"売買は拮抗",val:buyRatio.toFixed(0)+"%",state:0});}
+
+  // ② 現在値のすぐ近く(1%以内)に極端に厚い注文があるか
+  // 　買い側にあれば下支え(加点)、売り側にあれば上値の重し(減点)
+  if(price>0){
+    var nearBuy=findBoardMatch(price,findThickLevels(ob.buyLevels));
+    var nearSell=findBoardMatch(price,findThickLevels(ob.sellLevels));
+    if(nearBuy){adj+=4;items.push({label:"すぐ下に大口の買い",val:Math.round(nearBuy.price).toLocaleString()+"円",state:1});}
+    if(nearSell){adj-=4;items.push({label:"すぐ上に大口の売り",val:Math.round(nearSell.price).toLocaleString()+"円",state:-1});}
+  }
+
+  return {adj:adj,items:items,buyVol:ob.buyVol,sellVol:ob.sellVol};
+}
+
+// ── 板スコア補正パネル：元スコアと補正後スコアを並べて表示 ──────────────────
+function BoardScorePanel(p){
+  var b=p.board;
+  if(!b) return null;
+  var base=p.baseScore||0;
+  var adjusted=Math.min(100,Math.max(0,base+b.adj));
+  var col=b.adj>0?"#22d3a0":b.adj<0?"#f43f5e":"#6a90b0";
+  return(
+    <div style={{background:"#071428",borderRadius:8,padding:"8px 12px",display:"flex",flexDirection:"column",gap:4}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontSize:11,fontWeight:700,color:"#4a7090"}}>📡 板スコア補正</span>
+        <span style={{fontSize:13,fontWeight:800,color:col}}>{base} → {adjusted}（{b.adj>0?"+":""}{b.adj}）</span>
+      </div>
+      {b.items.map(function(it,i){
+        var c=it.state>0?"#22d3a0":it.state<0?"#f43f5e":"#6a90b0";
+        return(
+          <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#a8c4e0"}}>
+            <span>{it.label}</span><b style={{color:c}}>{it.val}</b>
+          </div>
+        );
+      })}
+      <div style={{fontSize:9,color:"#3a5a7a",marginTop:2,lineHeight:1.4}}>※板は数秒で変動します。見せ板（約定させる気のない大量注文）の可能性もあるため、あくまで参考値としてご利用ください</div>
+    </div>
+  );
+}
+
 function SupportZoneRow(p){
   var c=p.color||"#22d3a0";
   var priceColor=p.priceColor||"#d8eeff";
@@ -3128,6 +3189,10 @@ function StockDetailPanel(p){
     }).catch(function(){});
   }
 
+  // 板スコア補正（日本株のみ。板が届いていない間はnullでパネル非表示）
+  var boardPrice=(liveTick&&liveTick.price!=null)?liveTick.price:s.rawPrice;
+  var boardScore=s.market==="JP"?calcBoardScore(tachibanaQuote,boardPrice):null;
+
   return(
     <div style={{background:"#050e1c",border:"none",borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
@@ -3168,6 +3233,8 @@ function StockDetailPanel(p){
           })()}
         </div>
       </div>
+
+      <BoardScorePanel board={boardScore} baseScore={s.score}/>
 
       <BuyPlanPanel plan={s.buyPlan} isJP={s.market==="JP"} intraday={intraday}/>
 
