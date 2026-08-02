@@ -374,9 +374,35 @@ function sessionCloseTime(market,startAtISO){
   if(closeTs<=start.getTime())closeTs+=24*60*60*1000; // 念のための保険（開始時刻より前にならないよう1日繰り上げ）
   return closeTs;
 }
-// 今、その市場（JP/US）が取引時間中かどうか（大まかな判定・祝日は考慮しない）
+// 東証の休場日（祝日＋大晦日）。土日は自動判定するので載せていません
+// ★年に1回、翌年分をここに追記してください
+var JP_HOLIDAYS={
+  "2026-01-01":1,"2026-01-02":1,"2026-01-12":1,"2026-02-11":1,"2026-02-23":1,"2026-03-20":1,
+  "2026-04-29":1,"2026-05-04":1,"2026-05-05":1,"2026-05-06":1,"2026-07-20":1,"2026-08-11":1,
+  "2026-09-21":1,"2026-09-22":1,"2026-09-23":1,"2026-10-12":1,"2026-11-03":1,"2026-11-23":1,"2026-12-31":1,
+  "2027-01-01":1,"2027-01-11":1,"2027-02-11":1,"2027-02-23":1,"2027-03-22":1,"2027-04-29":1,
+  "2027-05-03":1,"2027-05-04":1,"2027-05-05":1,"2027-07-19":1,"2027-08-11":1,"2027-09-20":1,
+  "2027-09-23":1,"2027-10-11":1,"2027-11-03":1,"2027-11-23":1,"2027-12-31":1
+};
+// 日本時間の日付情報を取得（dayOffset=-1で前日）。key="YYYY-MM-DD" / dow=曜日(0:日〜6:土) / min=0時からの分
+function jstInfo(dayOffset){
+  var j=new Date(Date.now()+9*60*60*1000);
+  if(dayOffset)j.setUTCDate(j.getUTCDate()+dayOffset);
+  var m=j.getUTCMonth()+1,d=j.getUTCDate();
+  return {key:j.getUTCFullYear()+"-"+(m<10?"0":"")+m+"-"+(d<10?"0":"")+d,dow:j.getUTCDay(),min:j.getUTCHours()*60+j.getUTCMinutes()};
+}
+// 今日がその市場の「取引日」かどうか（土日・日本の祝日は取引日ではない。米国の祝日は未対応）
+function isTradingDay(market){
+  var n=jstInfo(0);
+  if(market==="JP")return n.dow>=1&&n.dow<=5&&!JP_HOLIDAYS[n.key];
+  // 米国：日本時間の夜(22:30〜)は当日、早朝(〜6:00)は前日の米国営業日にあたる
+  var day=n.min<12*60?jstInfo(-1):n;
+  return day.dow>=1&&day.dow<=5;
+}
+// 今、その市場（JP/US）が取引時間中かどうか（土日・日本の祝日も考慮）
 // 閉場中は前日終値等の古い値が返ってくるため、待機中→進行中の誤判定を防ぐために使用
 function isMarketOpen(market){
+  if(!isTradingDay(market))return false;
   var jst=new Date(Date.now()+9*60*60*1000);
   var mo=jst.getUTCMonth(),d=jst.getUTCDate();
   var timeMin=jst.getUTCHours()*60+jst.getUTCMinutes();
@@ -494,10 +520,13 @@ function applyPricesToTrades(kind,priceMap){
   var changed=false;
   var next=list.map(function(t){
     if(t.status==="done")return t;
+    // 土日・祝日など「取引日でない日」は、価格が古い終値のままなので一切状態を動かさない
+    if(!isTradingDay(t.market))return t;
     // 引け（取引終了）を過ぎたactiveトレードは、価格取得の成否に関わらず自動決済する（デイトレ想定：持ち越し禁止）
     if(t.status==="active"&&t.startAt&&Date.now()>=sessionCloseTime(t.market,t.startAt)){
       changed=true;
-      var exitP=priceMap[t.ticker]!=null?priceMap[t.ticker]:t.lastPrice;
+      // 取引時間中に決済する場合＝前営業日から持ち越された分なので、現在値ではなく最後に記録した価格を使う
+      var exitP=(isMarketOpen(t.market)&&t.lastPrice!=null)?t.lastPrice:(priceMap[t.ticker]!=null?priceMap[t.ticker]:t.lastPrice);
       var pnlPerShare3=exitP-t.startPrice,pnl3=pnlPerShare3*(t.shares||1),pnlPercent3=t.startPrice?(pnlPerShare3/t.startPrice*100):0;
       return Object.assign({},t,{status:"done",endPrice:exitP,endAt:new Date().toISOString(),pnl:pnl3,pnlPercent:pnlPercent3,exitReason:"time_exit",lastPrice:exitP});
     }
