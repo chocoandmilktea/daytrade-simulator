@@ -3918,7 +3918,7 @@ function TradePanel(p){
       </div>
 
       <WeightAdjustVerificationPanel appTrades={p.appTrades} personalTrades={p.personalTrades}/>
-      <GapBacktestPanel appTrades={p.appTrades} personalTrades={p.personalTrades} favs={p.favs}/>
+      <OpenCloseBacktestPanel appTrades={p.appTrades} personalTrades={p.personalTrades} favs={p.favs}/>
 
       {selTrade&&createPortal(
         <TradeDetailModal t={selTrade} s={selStock} kind={sub} stocks={stocks} toggleFav={toggleFav} isFav={isFavRef}
@@ -4502,98 +4502,65 @@ function formatSigKeyLabel(key){
 // 登録時点の重み補正(weightAdjustAtAdd)の向きごとに完了トレードを3グループに分け、
 // 実際の勝率・平均損益を比較する（アプリ予想／個人予想を合算・タブ切替に関わらず常時表示）
 // ※このパネル追加より前に登録されたトレードにはweightAdjustAtAdd記録がないため集計対象外
-// ── 🌏 寄り付きギャップ予測のバックテスト ──────────────────────────────────
-// 「日本株の寄り付きは、朝までに終わった米国市場とドル円でどこまで説明できるか」を
-// 過去1年の日足で検証する。使うのは「その日の朝までに確定していた情報」だけ（先読みなし）。
-// 予測式: ギャップ% = a×S&P500前日比% + b×ドル円前日比% + c
-var GAP_MKT={sp:"^GSPC",fx:"USDJPY=X"};
+// ── ☀️ 寄り付き→引けの検証 ────────────────────────────────────────────
+// 「その日の寄り付きで買って、引けで売っていたら勝てたか」を過去1年の日足で検証する。
+// 条件はすべて朝9:00時点で確定している情報（前日の値動き・当日のギャップ）だけで作るので、
+// 検証で良かった条件はそのまま実戦に使える。
+// 各条件の成績は前半・後半に分けて表示する。両方でプラスでなければ、ただの偶然と判断できる。
 
-// 日足から [{date, chg(前日比%)}, ...] を作る（日付の昇順）
-function dailyChangeSeries(d){
+// 1銘柄分の日足から、1日ごとのサンプルを作る
+// y=その日の寄り→引けの騰落率。他はすべて「朝9:00に分かっている」材料
+function buildOCSamples(d){
   var out=[];
-  if(!d||!d.closes||!d.dates||d.dates.length!==d.closes.length)return out;
-  for(var i=1;i<d.closes.length;i++){
-    if(d.closes[i-1]>0&&d.closes[i]!=null)out.push({date:d.dates[i],chg:(d.closes[i]-d.closes[i-1])/d.closes[i-1]*100});
+  if(!d||!d.closes||!d.opens||!d.highs||!d.lows)return out;
+  for(var i=6;i<d.closes.length;i++){
+    var o=d.opens[i],c=d.closes[i],pc=d.closes[i-1],po=d.opens[i-1],ph=d.highs[i-1],pl=d.lows[i-1],c5=d.closes[i-6];
+    if(!(o>0&&c>0&&pc>0&&po>0))continue;
+    var rng=(ph>0&&pl>0)?ph-pl:0;
+    out.push({
+      y:(c-o)/o*100,                       // 寄りで買って引けで売った場合の損益%
+      gap:(o-pc)/pc*100,                   // 当日のギャップ（寄った瞬間に確定）
+      prevOC:(pc-po)/po*100,               // 前日の寄→引
+      prevPos:rng>0?(pc-pl)/rng:0.5,       // 前日の引け位置（1に近いほど高値引け）
+      ret5:c5>0?(pc-c5)/c5*100:0           // 直近5日の騰落率
+    });
   }
   return out;
 }
-// 指定日「より前」で最も新しい足の位置を返す（＝その日の朝までに確定していた足）
-function lastIndexBefore(series,date){
-  var idx=-1;
-  for(var i=0;i<series.length;i++){
-    if(series[i].date<date)idx=i; else break;
+// 検証する条件。すべて朝9:00に判定できるものだけ
+var OC_CONDS=[
+  {label:"全日（比較の基準）",        f:function(x){return true;}},
+  {label:"ギャップアップ +0.5%超",    f:function(x){return x.gap>0.5;}},
+  {label:"ギャップアップ +2%超",      f:function(x){return x.gap>2;}},
+  {label:"ギャップほぼ無し ±0.5%内",  f:function(x){return Math.abs(x.gap)<=0.5;}},
+  {label:"ギャップダウン -0.5%超",    f:function(x){return x.gap<-0.5;}},
+  {label:"ギャップダウン -2%超",      f:function(x){return x.gap<-2;}},
+  {label:"前日が高値引け（70%以上）", f:function(x){return x.prevPos>=0.7;}},
+  {label:"前日が安値引け（30%以下）", f:function(x){return x.prevPos<=0.3;}},
+  {label:"前日が陽線",                f:function(x){return x.prevOC>0;}},
+  {label:"前日が陰線",                f:function(x){return x.prevOC<0;}},
+  {label:"5日で上昇中",               f:function(x){return x.ret5>0;}},
+  {label:"5日で下落中",               f:function(x){return x.ret5<0;}},
+  {label:"ギャップ下げ＋前日陽線",    f:function(x){return x.gap<-0.5&&x.prevOC>0;}},
+  {label:"ギャップ上げ＋前日高値引け",f:function(x){return x.gap>0.5&&x.prevPos>=0.7;}}
+];
+// 条件に合う日を集計。前半・後半に分けて、優位性が両方の期間で続いているかを見る
+function aggOC(samples,cond){
+  var n=0,win=0,sum=0,n1=0,s1=0,w1=0,n2=0,s2=0,w2=0;
+  for(var i=0;i<samples.length;i++){
+    var x=samples[i];
+    if(!cond.f(x))continue;
+    n++;sum+=x.y;if(x.y>0)win++;
+    if(x.half===1){n1++;s1+=x.y;if(x.y>0)w1++;}else{n2++;s2+=x.y;if(x.y>0)w2++;}
   }
-  return idx;
-}
-// shift=0 が本来の対応。日足の日付が1日ズレて記録されている疑いを検証するため、
-// shift=+1（1本後の足）/ -1（1本前の足）でも計算できるようにしている
-function changeShifted(series,date,shift){
-  var i=lastIndexBefore(series,date)+shift;
-  return (i>=0&&i<series.length)?series[i].chg:null;
-}
-// 2変数の最小二乗法（切片あり）。[a,b,c]を返す
-function fitGapCoef(x1,x2,y){
-  var n=y.length,i;
-  if(n<20)return null;
-  var m1=0,m2=0,my=0;
-  for(i=0;i<n;i++){m1+=x1[i];m2+=x2[i];my+=y[i];}
-  m1/=n;m2/=n;my/=n;
-  var s11=0,s12=0,s22=0,s1y=0,s2y=0;
-  for(i=0;i<n;i++){
-    var d1=x1[i]-m1,d2=x2[i]-m2,dy=y[i]-my;
-    s11+=d1*d1;s12+=d1*d2;s22+=d2*d2;s1y+=d1*dy;s2y+=d2*dy;
-  }
-  var det=s11*s22-s12*s12;
-  if(!(Math.abs(det)>1e-9))return null;
-  var a=(s1y*s22-s2y*s12)/det,b=(s2y*s11-s1y*s12)/det;
-  return [a,b,my-a*m1-b*m2];
-}
-// 前半70%で係数を学習し、後半30%（学習に使っていない期間）だけで採点する
-// maxAbs: これを超える大幅ギャップ（決算等）を除外する閾値。nullなら全件
-function gapBacktestCore(x1,x2,y,maxAbs){
-  var X1=[],X2=[],Y=[],i;
-  for(i=0;i<y.length;i++){
-    if(maxAbs==null||Math.abs(y[i])<=maxAbs){X1.push(x1[i]);X2.push(x2[i]);Y.push(y[i]);}
-  }
-  var n=Y.length;
-  if(n<60)return null;
-  var cut=Math.floor(n*0.7);
-  var co=fitGapCoef(X1.slice(0,cut),X2.slice(0,cut),Y.slice(0,cut));
-  if(!co)return null;
-  var hit=0,tot=0,err=0,naive=0,spOnly=0;
-  for(i=cut;i<n;i++){
-    var pred=co[0]*X1[i]+co[1]*X2[i]+co[2];
-    err+=Math.abs(pred-Y[i]);
-    if(Math.abs(Y[i])<0.1)continue; // 誤差レベルの動きは方向判定から除外
-    tot++;
-    if((pred>=0)===(Y[i]>=0))hit++;
-    if(Y[i]>=0)naive++;               // 比較用：常に「上」と予想した場合
-    if((X1[i]>=0)===(Y[i]>=0))spOnly++; // 比較用：S&P500の方向をそのまま使った場合
-  }
-  if(tot<10)return null;
-  return{n:n,testN:tot,hitRate:Math.round(hit/tot*100),naiveRate:Math.round(naive/tot*100),
-    spRate:Math.round(spOnly/tot*100),mae:err/(n-cut),a:co[0],b:co[1],c:co[2]};
-}
-// 1銘柄分の検証（指数データは呼び出し側で1回だけ取得して使い回す）
-async function backtestGapOne(ticker,spSeries,fxSeries,shift){
-  var d=await fetchDaily(ticker);
-  if(!d||!d.closes||!d.opens||d.closes.length<80)return null;
-  var x1=[],x2=[],y=[];
-  for(var i=1;i<d.closes.length;i++){
-    var prevC=d.closes[i-1],op=d.opens[i];
-    if(!(prevC>0)||!(op>0))continue;
-    var sp=changeShifted(spSeries,d.dates[i],shift),fx=changeShifted(fxSeries,d.dates[i],shift);
-    if(sp==null||fx==null)continue;
-    y.push((op-prevC)/prevC*100);x1.push(sp);x2.push(fx);
-  }
-  var all=gapBacktestCore(x1,x2,y,null);
-  var trimmed=gapBacktestCore(x1,x2,y,5); // ±5%超の大幅ギャップ（決算等）を除いた版
-  if(!all&&!trimmed)return null;
-  return{ticker:ticker,all:all,trimmed:trimmed};
+  if(n<30)return null;
+  return{n:n,winRate:Math.round(win/n*100),avg:sum/n,
+    avg1:n1>=15?s1/n1:null,avg2:n2>=15?s2/n2:null,
+    win1:n1>=15?Math.round(w1/n1*100):null,win2:n2>=15?Math.round(w2/n2*100):null};
 }
 
-// ── 🌏 寄り付き予測 検証パネル（ボタンを押した時だけ計算する）───────────────
-function GapBacktestPanel(p){
+// ── ☀️ 寄り→引け 検証パネル（ボタンを押した時だけ計算する）──────────────
+function OpenCloseBacktestPanel(p){
   var runS=useState(false);var running=runS[0],setRunning=runS[1];
   var resS=useState(null);var res=resS[0],setRes=resS[1];
   var msgS=useState("");var msg=msgS[0],setMsg=msgS[1];
@@ -4602,74 +4569,43 @@ function GapBacktestPanel(p){
     var out=[];
     (p.appTrades||[]).concat(p.personalTrades||[]).forEach(function(t){if(out.indexOf(t.ticker)<0)out.push(t.ticker);});
     (p.favs||[]).forEach(function(t){if(out.indexOf(t)<0)out.push(t);});
-    return out.filter(function(t){return typeof t==="string"&&t.endsWith(".T");}); // 日本株のみ
+    return out.filter(function(t){return typeof t==="string"&&t.endsWith(".T");});
   })();
 
   async function run(){
-    setRunning(true);setRes(null);setMsg("地合いデータ取得中...");
+    setRunning(true);setRes(null);setMsg("");
     try{
-      var spD=await fetchDaily(GAP_MKT.sp),fxD=await fetchDaily(GAP_MKT.fx);
-      var spSeries=dailyChangeSeries(spD),fxSeries=dailyChangeSeries(fxD);
-      if(spSeries.length<60||fxSeries.length<60){setMsg("地合いデータが取得できませんでした");setRunning(false);return;}
-      // 全体成績は検証件数で重み付けして平均する
-      function agg(rows,key){
-        var h=0,na=0,sp=0,n=0,mae=0,mn=0;
-        rows.forEach(function(r){
-          var v=r[key];if(!v)return;
-          h+=v.hitRate*v.testN;na+=v.naiveRate*v.testN;sp+=v.spRate*v.testN;n+=v.testN;
-          mae+=v.mae;mn++;
-        });
-        if(!n)return null;
-        return{hitRate:Math.round(h/n),naiveRate:Math.round(na/n),spRate:Math.round(sp/n),testN:n,mae:mae/mn};
+      var pool=[],used=0;
+      for(var i=0;i<targets.length;i++){
+        setMsg("検証中 "+(i+1)+"/"+targets.length+"　"+targets[i].replace(".T",""));
+        var d=await fetchDaily(targets[i]);
+        var sm=buildOCSamples(d);
+        if(sm.length<60)continue;
+        var cut=Math.floor(sm.length/2); // 銘柄ごとに前半・後半を分ける
+        for(var k=0;k<sm.length;k++){sm[k].half=k<cut?1:2;pool.push(sm[k]);}
+        used++;
       }
-      // shift=0が本来の対応。日足の日付が1日ズレていないかを確かめるため±1日も同時に計算する
-      var shifts=[-1,0,1],byShift={},baseRows=null,i,si;
-      for(si=0;si<shifts.length;si++){
-        var rows=[];
-        for(i=0;i<targets.length;i++){
-          setMsg("検証中（"+(si+1)+"/3）"+(i+1)+"/"+targets.length+"　"+targets[i].replace(".T",""));
-          var r=await backtestGapOne(targets[i],spSeries,fxSeries,shifts[si]);
-          if(r)rows.push(r);
-        }
-        byShift[shifts[si]]={all:agg(rows,"all"),trimmed:agg(rows,"trimmed")};
-        if(shifts[si]===0)baseRows=rows;
+      if(pool.length<300){setMsg("データが足りません（対象銘柄を増やしてください）");setRunning(false);return;}
+      var rows=[];
+      for(var ci=0;ci<OC_CONDS.length;ci++){
+        var a=aggOC(pool,OC_CONDS[ci]);
+        if(a)rows.push({label:OC_CONDS[ci].label,d:a});
       }
-      if(!baseRows||!baseRows.length){setMsg("検証できる銘柄がありませんでした（日足が不足）");setRunning(false);return;}
-      // 日付そのものの目視チェック用（末尾3日分）
-      var sampleD=await fetchDaily(targets[0]);
-      var tail=function(a){return a&&a.length?a.slice(-3).join(" / "):"-";};
-      setRes({rows:baseRows,byShift:byShift,
-        all:byShift[0].all,trimmed:byShift[0].trimmed,
-        dateCheck:{stock:targets[0].replace(".T",""),stockDates:tail(sampleD&&sampleD.dates),spDates:tail(spD&&spD.dates)}});
+      setRes({rows:rows,stocks:used,days:pool.length});
       setMsg("");
     }catch(e){setMsg("エラー: "+e.message);}
     setRunning(false);
   }
 
-  function Summary(title,a,note){
-    if(!a)return null;
-    var good=a.hitRate>a.naiveRate&&a.hitRate>a.spRate;
-    return(
-      <div style={{background:"#050e1c",borderRadius:8,padding:"8px 10px",marginBottom:6}}>
-        <div style={{fontSize:11,fontWeight:700,color:"#e0f0ff",marginBottom:2}}>{title}</div>
-        <div style={{fontSize:10,color:"#4a7090",marginBottom:4}}>{note}</div>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"baseline"}}>
-          <div><span style={{fontSize:10,color:"#4a7090"}}>予測式 </span><span style={{fontSize:18,fontWeight:800,color:good?"#22d3a0":"#fbbf24"}}>{a.hitRate}%</span></div>
-          <div><span style={{fontSize:10,color:"#4a7090"}}>常に上 </span><span style={{fontSize:13,fontWeight:700,color:"#4a7090"}}>{a.naiveRate}%</span></div>
-          <div><span style={{fontSize:10,color:"#4a7090"}}>S&P方向のみ </span><span style={{fontSize:13,fontWeight:700,color:"#4a7090"}}>{a.spRate}%</span></div>
-          <div><span style={{fontSize:10,color:"#4a7090"}}>平均誤差 </span><span style={{fontSize:13,fontWeight:700,color:"#b8cce0"}}>{a.mae.toFixed(2)}%</span></div>
-          <div style={{fontSize:10,color:"#2a6090"}}>判定{a.testN}件</div>
-        </div>
-      </div>
-    );
-  }
+  var base=res&&res.rows.length?res.rows[0].d:null;
+  function pct(v){return v==null?"—":(v>=0?"+":"")+v.toFixed(2)+"%";}
 
   return(
     <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
-      <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🌏 寄り付き予測の検証（ギャップ）</div>
+      <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>☀️ 寄り→引けの検証</div>
       <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>
-        「前日終値→翌日始値」のギャップを、朝までに確定しているS&P500とドル円で予測できるかを過去1年の日足で検証します。
-        前半70%で計算式を作り、<b>残り30%（計算に使っていない期間）だけで採点</b>するので、当てはめすぎ（過学習）になりません。
+        「朝の寄り付きで買って、引けで売る」を過去1年の日足で検証します。条件はすべて<b>朝9:00に分かっている材料</b>だけなので、
+        良い条件が見つかればそのまま使えます。<b>前半・後半の両方でプラス</b>でなければ偶然と考えてください。
       </div>
       <button onClick={run} disabled={running||!targets.length} style={{background:running?"#0a1a3a":"#0ea5e9",border:"none",borderRadius:8,color:running?"#4a7090":"#04121f",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
         {running?"検証中...":"▶ 検証を実行（対象"+targets.length+"銘柄）"}
@@ -4678,74 +4614,42 @@ function GapBacktestPanel(p){
       {msg&&<div style={{fontSize:11,color:"#4a7090",marginTop:6}}>{msg}</div>}
       {res&&(
         <div style={{marginTop:10}}>
-          {Summary("全データ",res.all,"決算などの大幅ギャップも含めた素の成績")}
-          {Summary("±5%超の大幅ギャップを除外",res.trimmed,"決算跨ぎなど予測不能な日を外した成績")}
-          {res.byShift&&(
-            <div style={{background:"#0a1020",border:"1px solid #1a3a5a",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#e0f0ff",marginBottom:2}}>🔍 日付ズレの検証</div>
-              <div style={{fontSize:10,color:"#4a7090",marginBottom:6}}>日足の日付が1日ズレて記録されていないかの確認。「現状」が最も高ければ日付は正しい</div>
-              <div style={{display:"flex",fontSize:10,color:"#2a6090",padding:"3px 4px",borderBottom:"1px solid #0f2040"}}>
-                <div style={{flex:1}}>使う地合いの足</div>
-                <div style={{width:54,textAlign:"right"}}>的中率</div>
-                <div style={{width:54,textAlign:"right"}}>常に上</div>
-                <div style={{width:54,textAlign:"right"}}>平均誤差</div>
-              </div>
-              {[{k:-1,label:"1日前にずらす"},{k:0,label:"現状（前営業日）"},{k:1,label:"1日後にずらす"}].map(function(o){
-                var v=res.byShift[o.k]&&res.byShift[o.k].trimmed;
-                if(!v)return null;
-                var base=res.byShift[0]&&res.byShift[0].trimmed;
-                var best=base&&v.hitRate>base.hitRate+2;
-                return(
-                  <div key={o.k} style={{display:"flex",alignItems:"center",fontSize:12,padding:"5px 4px",borderBottom:"1px solid #0a1830"}}>
-                    <div style={{flex:1,color:o.k===0?"#e0f0ff":"#b8cce0",fontWeight:o.k===0?700:400}}>{o.label}{best?"  ⚠":""}</div>
-                    <div style={{width:54,textAlign:"right",fontWeight:700,color:best?"#fbbf24":o.k===0?"#22d3a0":"#4a7090"}}>{v.hitRate}%</div>
-                    <div style={{width:54,textAlign:"right",color:"#4a7090"}}>{v.naiveRate}%</div>
-                    <div style={{width:54,textAlign:"right",color:"#4a7090"}}>{v.mae.toFixed(2)}%</div>
-                  </div>
-                );
-              })}
-              {res.dateCheck&&(
-                <div style={{fontSize:10,color:"#4a7090",marginTop:6,lineHeight:1.6,fontFamily:"monospace"}}>
-                  {res.dateCheck.stock+" 日足の末尾: "+res.dateCheck.stockDates}<br/>
-                  {"S&P500 日足の末尾: "+res.dateCheck.spDates}
-                </div>
-              )}
-              <div style={{fontSize:10,color:"#4a7090",marginTop:6,lineHeight:1.5}}>
-                ⚠が付いた場合は日付がズレている可能性があります。上の日付が実際の営業日と合っているか目視で確認してください
-              </div>
-            </div>
-          )}
-          <div style={{display:"flex",fontSize:10,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
-            <div style={{flex:1}}>銘柄</div>
-            <div style={{width:54,textAlign:"right"}}>的中率</div>
-            <div style={{width:54,textAlign:"right"}}>常に上</div>
-            <div style={{width:54,textAlign:"right"}}>平均誤差</div>
+          <div style={{fontSize:11,color:"#4a7090",marginBottom:6}}>{res.stocks}銘柄・のべ{res.days}日分を集計</div>
+          <div style={{display:"flex",fontSize:10,color:"#2a6090",padding:"4px 6px",borderBottom:"1px solid #0f2040"}}>
+            <div style={{flex:1}}>条件（朝9:00に判定できるもの）</div>
+            <div style={{width:44,textAlign:"right"}}>件数</div>
+            <div style={{width:40,textAlign:"right"}}>勝率</div>
+            <div style={{width:52,textAlign:"right"}}>平均</div>
+            <div style={{width:52,textAlign:"right"}}>前半</div>
+            <div style={{width:52,textAlign:"right"}}>後半</div>
           </div>
-          {res.rows.slice().sort(function(a,b){
-            var av=a.trimmed?a.trimmed.hitRate:-1,bv=b.trimmed?b.trimmed.hitRate:-1;return bv-av;
-          }).map(function(r){
-            var v=r.trimmed||r.all;if(!v)return null;
-            var win=v.hitRate>v.naiveRate;
+          {res.rows.map(function(r,i){
+            var d=r.d,isBase=i===0;
+            // 基準より良く、かつ前半・後半の両方でプラスなら「使えるかもしれない」条件
+            var solid=!isBase&&base&&d.avg>base.avg&&d.avg1>0&&d.avg2>0;
             return(
-              <div key={r.ticker} style={{display:"flex",alignItems:"center",fontSize:12,padding:"5px 8px",borderBottom:"1px solid #0a1830"}}>
-                <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{r.ticker.replace(".T","")}</div>
-                <div style={{width:54,textAlign:"right",fontWeight:700,color:win?"#22d3a0":"#f43f5e"}}>{v.hitRate}%</div>
-                <div style={{width:54,textAlign:"right",color:"#4a7090"}}>{v.naiveRate}%</div>
-                <div style={{width:54,textAlign:"right",color:"#4a7090"}}>{v.mae.toFixed(2)}%</div>
+              <div key={i} style={{display:"flex",alignItems:"center",fontSize:12,padding:"5px 6px",
+                borderBottom:"1px solid #0a1830",background:isBase?"#0a1830":(solid?"#06201a":"transparent")}}>
+                <div style={{flex:1,color:isBase?"#e0f0ff":"#b8cce0",fontWeight:isBase?700:400}}>{r.label}{solid?" ◎":""}</div>
+                <div style={{width:44,textAlign:"right",color:"#4a7090"}}>{d.n}</div>
+                <div style={{width:40,textAlign:"right",color:"#b8cce0"}}>{d.winRate}%</div>
+                <div style={{width:52,textAlign:"right",fontWeight:700,color:d.avg>0?"#22d3a0":"#f43f5e"}}>{pct(d.avg)}</div>
+                <div style={{width:52,textAlign:"right",color:d.avg1>0?"#4a9080":"#8a5060"}}>{pct(d.avg1)}</div>
+                <div style={{width:52,textAlign:"right",color:d.avg2>0?"#4a9080":"#8a5060"}}>{pct(d.avg2)}</div>
               </div>
             );
           })}
           <div style={{fontSize:10,color:"#4a7090",marginTop:8,lineHeight:1.5}}>
-            ・一覧は「大幅ギャップを除外した版」の成績です<br/>
-            ・「常に上」より的中率が高くなければ、その銘柄では予測の意味がありません<br/>
-            ・平均誤差は「予測した%と実際の%のズレ」の平均。小さいほど価格の目安として使えます
+            ・一番上の「全日」が基準です。各条件はこれを上回って初めて意味があります<br/>
+            ・<b>◎</b>＝基準より良く、前半・後半の両方でプラスだった条件<br/>
+            ・平均は手数料を含みません。往復コストを引いても残るかで判断してください<br/>
+            ・条件を14個試しているので、1つくらいは偶然良く見えます。◎が付いても差が小さいものは信用しないでください
           </div>
         </div>
       )}
     </div>
   );
 }
-
 
 function WeightAdjustVerificationPanel(p){
   var doneAll=(p.appTrades||[]).concat(p.personalTrades||[]).filter(function(t){return t.status==="done"&&t.weightAdjustAtAdd!=null;});
