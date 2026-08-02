@@ -757,6 +757,61 @@ function calcVWAP(closes,highs,lows,volumes){var cumTPV=0,cumVol=0;for(var i=0;i
 function calcPivot(closes,highs,lows){var DAY=26,len=closes.length;if(len<DAY*2)return null;var ph=highs.slice(len-DAY*2,len-DAY),pl=lows.slice(len-DAY*2,len-DAY);var prevH=Math.max.apply(null,ph),prevL=Math.min.apply(null,pl),prevC=closes[len-DAY-1];var pp=(prevH+prevL+prevC)/3;return{pp:pp,r1:pp*2-prevL,s1:pp*2-prevH,r2:pp+(prevH-prevL),s2:pp-(prevH-prevL),prevHigh:prevH,prevLow:prevL,prevClose:prevC};}
 // ATR(真の値幅の平均)。period本分のTrue Rangeを単純平均。ボラティリティ判定に使用
 function calcATR(closes,highs,lows,period){var trs=[];for(var i=1;i<closes.length;i++){var h=highs[i]||closes[i],l=lows[i]||closes[i],pc=closes[i-1];trs.push(Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc)));}var slice=trs.slice(-period);return slice.length?slice.reduce(function(a,b){return a+b;},0)/slice.length:null;}
+// ── 買値（デイトレ用エントリー）まわりの共通ヘルパー ──────────────────
+// 東証の呼値（値段の刻み）。これに丸めないと実際には発注できない価格になる
+var TICKS_JP=[[3000,1],[5000,5],[30000,10],[50000,50],[300000,100],[500000,500],[3000000,1000],[5000000,5000]];
+function tickSizeFor(v,isJP){
+  if(!isJP) return 0.01;
+  for(var i=0;i<TICKS_JP.length;i++){ if(v<=TICKS_JP[i][0]) return TICKS_JP[i][1]; }
+  return 10000;
+}
+// 呼値に丸める（dir: 1=切り上げ / -1=切り捨て / 0=四捨五入）
+function roundTickPrice(v,dir,isJP){
+  var t=tickSizeFor(v,isJP),q=v/t;
+  var out=(dir>0?Math.ceil(q):dir<0?Math.floor(q):Math.round(q))*t;
+  return isJP?Math.round(out):parseFloat(out.toFixed(2));
+}
+// 15分足を日付でまとめ直して「日足ATR」を算出する。
+// スコア計算で使うatrは15分足1本分の値幅（数円）しかなく、デイトレの
+// 利確・損切り幅の基準にすると極端に狭くなるため、日足に換算し直して使う。
+// 当日はまだ途中なので除外する。
+function calcDailyATR(closes,highs,lows,dates,period){
+  if(!dates||dates.length!==closes.length||closes.length<2) return null;
+  var dh=[],dl=[],dc=[],cur=null;
+  for(var i=0;i<closes.length;i++){
+    if(dates[i]!==cur){cur=dates[i];dh.push(highs[i]);dl.push(lows[i]);dc.push(closes[i]);}
+    else{var k=dh.length-1;
+      if(highs[i]>dh[k])dh[k]=highs[i];
+      if(lows[i]<dl[k])dl[k]=lows[i];
+      dc[k]=closes[i];}
+  }
+  if(dc.length<4) return null;
+  dh.pop();dl.pop();dc.pop(); // 当日（未完成の足）を除く
+  return calcATR(dc,dh,dl,Math.min(period||14,dc.length-1));
+}
+// 買値・利確・損切りを組み立てる
+// mode: "now"=現在値で追随 / "break"=上抜け待ち(逆指値) / "dip"=押し目待ち(指値)
+// anchor: 買値の基準になる価格（dipならVWAP、breakなら当日高値+1ティック）
+// 利確幅は「日足ATR×0.4」。ただし最低+1.0%・最大+3.0%に収める。損切り幅はその半分（RR約1:2）
+function buildBuyPlan(mode,anchor,atrDaily,isJP,reason,warn){
+  if(anchor==null||!(atrDaily>0)) return null;
+  var entry=roundTickPrice(anchor,mode==="break"?1:mode==="dip"?-1:0,isJP);
+  var up=Math.min(Math.max(atrDaily*0.4,entry*0.010),entry*0.030);
+  var dn=up/2;
+  var target=roundTickPrice(entry+up,-1,isJP);
+  var stop=roundTickPrice(entry-dn,-1,isJP);
+  var tk=tickSizeFor(entry,isJP);
+  if(target<=entry) target=roundTickPrice(entry+tk*2,1,isJP);   // 丸めで同値になった時の保険
+  if(stop>=entry)   stop=roundTickPrice(entry-tk*2,-1,isJP);
+  return{
+    entry:entry,target:target,stop:stop,mode:mode,reason:reason,warn:warn||null,
+    atrDaily:atrDaily,
+    gainPct:parseFloat(((target-entry)/entry*100).toFixed(1)),
+    lossPct:parseFloat(((entry-stop)/entry*100).toFixed(1)),
+    rr:(entry-stop)>0?parseFloat(((target-entry)/(entry-stop)).toFixed(1)):null
+  };
+}
+
 // 上位足の方向判定。factor本ごとに間引いた擬似終値列でEMA5/13クロスを見る（1:上昇 -1:下降 0:横ばい/データ不足）
 function resampleDir(closes,factor){var arr=[];for(var i=closes.length-1;i>=0&&arr.length<40;i-=factor){arr.unshift(closes[i]);}if(arr.length<14)return 0;var e5=calcEMA(arr,5),e13=calcEMA(arr,13),m=arr.length-1;return e5[m]>e13[m]?1:(e5[m]<e13[m]?-1:0);}
 
@@ -1696,18 +1751,8 @@ function analyzeStock(stock,pd,vixVal){
   };
   // ── デイトレ用 買値（エントリー1本）────────────────────────────────
   // VWAPより上の銘柄のみ対象。VWAP下・値幅使い切り時は買値を出さない(null)
-  var TICKS_JP=[[3000,1],[5000,5],[30000,10],[50000,50],[300000,100],[500000,500],[3000000,1000],[5000000,5000]];
-  function tickSize(v){
-    if(!isJPmkt) return 0.01;
-    for(var ti=0;ti<TICKS_JP.length;ti++){ if(v<=TICKS_JP[ti][0]) return TICKS_JP[ti][1]; }
-    return 10000;
-  }
-  // 呼値に丸める（dir: 1=切り上げ / -1=切り捨て / 0=四捨五入）
-  function roundTick(v,dir){
-    var t=tickSize(v),q=v/t;
-    var out=(dir>0?Math.ceil(q):dir<0?Math.floor(q):Math.round(q))*t;
-    return isJPmkt?Math.round(out):parseFloat(out.toFixed(2));
-  }
+  var atrDaily=calcDailyATR(closes,highs,lows,pd.dates,14);
+  if(!(atrDaily>0)) atrDaily=atr*5; // 日足に換算できない時の近似（15分足26本ぶん≒√26倍）
   var buyPlan=null;
   if(pd.real&&vwap!==null&&price>vwap&&atr>0){
     var sigState=function(lbl){var h=signals.find(function(x){return x.label===lbl;});return h?h.state:0;};
@@ -1719,36 +1764,20 @@ function analyzeStock(stock,pd,vixVal){
     }
     if(!overheat){
       var hasMomentum=(sigState("VWAP傾き")===1&&sigState("出来高")===1);
-      var entryRaw,mode,reason;
+      var bpMode,bpAnchor,bpReason;
       if(hasMomentum&&todayHigh!==null&&price>todayHigh){
-        mode="now"; entryRaw=price; reason="当日高値を更新中（現在値で追随）";
+        bpMode="now"; bpAnchor=price; bpReason="当日高値を更新中（現在値で追随）";
       }else if(hasMomentum&&todayHigh!==null){
-        mode="break"; entryRaw=todayHigh+tickSize(todayHigh);
-        reason="当日高値"+roundTick(todayHigh,0)+"の上抜け待ち（逆指値）";
+        bpMode="break"; bpAnchor=todayHigh+tickSizeFor(todayHigh,isJPmkt);
+        bpReason="当日高値"+roundTickPrice(todayHigh,0,isJPmkt)+"の上抜け待ち（逆指値）";
       }else{
-        mode="dip"; entryRaw=vwap; reason="VWAPまでの押し目待ち（指値）";
+        bpMode="dip"; bpAnchor=vwap; bpReason="VWAPまでの押し目待ち（指値）";
       }
-      var entryV=roundTick(entryRaw,mode==="break"?1:mode==="dip"?-1:0);
-      // ATRが極端に小さい低位株では利確・損切りが買値と同値になってしまうため、
-      // 「2ティック」または「0.4%」のうち大きい方を最低の値幅として確保する
-      var minGap=Math.max(tickSize(entryV)*2,entryV*0.004);
-      var stopRaw=(mode==="dip"?vwap:entryV)-Math.max(atr*0.4,minGap*0.5);
-      var targetRaw=entryV+Math.max(atr*0.8,minGap);
-      // Pivot R1が利確目標より手前にある場合は、そこで止められやすいためR1を目標にする
-      if(pivot&&pivot.r1>entryV&&pivot.r1<targetRaw) targetRaw=pivot.r1;
       // 残り時間チェック（日本株・14:30以降のブレイク狙いは伸びきらない可能性）
       var jstNow=new Date(Date.now()+9*3600*1000);
       var jstMin=jstNow.getUTCHours()*60+jstNow.getUTCMinutes();
-      var lateWarn=(isJPmkt&&jstMin>=870&&mode!=="dip")?"引けまで残りわずか":null;
-      var targetV=roundTick(targetRaw,-1),stopV=roundTick(stopRaw,-1);
-      // 丸めた結果が買値と同値になった場合の最終保険
-      if(targetV<=entryV) targetV=roundTick(entryV+tickSize(entryV)*2,1);
-      if(stopV>=entryV)   stopV=roundTick(entryV-tickSize(entryV)*2,-1);
-      buyPlan={
-        entry:entryV,target:targetV,stop:stopV,
-        rr:(targetV-entryV)>0&&(entryV-stopV)>0?parseFloat(((targetV-entryV)/(entryV-stopV)).toFixed(1)):null,
-        mode:mode,reason:reason,warn:lateWarn
-      };
+      var lateWarn=(isJPmkt&&jstMin>=870&&bpMode!=="dip")?"引けまで残りわずか":null;
+      buyPlan=buildBuyPlan(bpMode,bpAnchor,atrDaily,isJPmkt,bpReason,lateWarn);
     }
   }
   // ── 週足高安値（直近5営業日相当）──────────────────────────────────────────
@@ -2903,12 +2932,28 @@ function StatForecastPanel(p){
   );
 }
 // ── 買値パネル（デイトレ用・エントリー1本／横1行コンパクト表示）──────
+// 1分足データが読み込めている時は、当日VWAPを1分足から計算し直して
+// 「押し目待ち(dip)」の買値をチャート表示と同じ基準に揃える
 function BuyPlanPanel(p){
   var isMobile=useIsMobile();
   var b=p.plan;
   if(!b) return null;
-  var unit=p.isJP?"\u00a5":"$";
-  var f=function(v){return unit+(p.isJP?Math.round(v).toLocaleString():v.toFixed(2));};
+  var isJP=p.isJP;
+  var m1=p.intraday&&p.intraday.m1;
+  if(b.mode==="dip"&&m1&&m1.volumes&&m1.closes&&m1.closes.length>1){
+    var ds=m1.dates,st1=0;
+    if(ds&&ds.length===m1.closes.length){
+      var lastD=ds[ds.length-1];
+      for(var i=ds.length-1;i>=0;i--){ if(ds[i]!==lastD){st1=i+1;break;} }
+    }
+    var v1=calcVWAP(m1.closes.slice(st1),(m1.highs||m1.closes).slice(st1),(m1.lows||m1.closes).slice(st1),m1.volumes.slice(st1));
+    if(v1!=null&&v1>0){
+      var rebuilt=buildBuyPlan("dip",v1,b.atrDaily,isJP,"VWAP(1分足)までの押し目待ち（指値）",b.warn);
+      if(rebuilt) b=rebuilt;
+    }
+  }
+  var unit=isJP?"\u00a5":"$";
+  var f=function(v){return unit+(isJP?Math.round(v).toLocaleString():v.toFixed(2));};
   var MODE={
     now:{label:"\u25b6 今すぐ追随",color:"#22d3a0"},
     "break":{label:"\u2934 上抜け待ち",color:"#0ea5e9"},
@@ -2923,17 +2968,18 @@ function BuyPlanPanel(p){
         <span style={{fontSize:isMobile?20:24,fontWeight:800,color:"#e0f0ff",lineHeight:1,flexShrink:0}}>{f(b.entry)}</span>
         <div style={{display:"flex",gap:6,marginLeft:"auto",flexShrink:0}}>
           <div style={{background:"#052e16",borderRadius:5,padding:"3px 7px",textAlign:"right"}}>
-            <div style={{fontSize:9,color:"#22d3a0",lineHeight:1}}>🎯利確</div>
+            <div style={{fontSize:9,color:"#22d3a0",lineHeight:1}}>🎯利確 +{b.gainPct}%</div>
             <div style={Object.assign({color:"#22d3a0"},sub)}>{f(b.target)}</div>
           </div>
           <div style={{background:"#1f0010",borderRadius:5,padding:"3px 7px",textAlign:"right"}}>
-            <div style={{fontSize:9,color:"#f43f5e",lineHeight:1}}>🛑損切り</div>
+            <div style={{fontSize:9,color:"#f43f5e",lineHeight:1}}>🛑損切り −{b.lossPct}%</div>
             <div style={Object.assign({color:"#f43f5e"},sub)}>{f(b.stop)}</div>
           </div>
         </div>
       </div>
       <div style={{fontSize:9,color:"#4a7090",marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
         {b.reason}{b.rr!=null&&" ／ リスクリワード 1:"+b.rr}
+        {b.atrDaily>0&&" ／ 日足ATR "+(isJP?"\u00a5"+Math.round(b.atrDaily):"$"+b.atrDaily.toFixed(2))}
         {b.warn&&<span style={{color:"#fb923c"}}>{" ／ ⚠️"+b.warn}</span>}
       </div>
     </div>
@@ -3082,7 +3128,7 @@ function StockDetailPanel(p){
         </div>
       </div>
 
-      <BuyPlanPanel plan={s.buyPlan} isJP={s.market==="JP"}/>
+      <BuyPlanPanel plan={s.buyPlan} isJP={s.market==="JP"} intraday={intraday}/>
 
       {s.market==="JP"&&<TachibanaBoard ticker={s.ticker} onQuote={function(q){
         // 受信イベントには「全項目入り(FD等)」と「価格だけの軽量な更新」があり、
