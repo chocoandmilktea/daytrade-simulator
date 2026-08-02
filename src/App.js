@@ -1231,6 +1231,17 @@ var EXPECTANCY_MIN_SAMPLES=10;
 function isNegExpectancy(c){
   return !!(c&&c.total>=EXPECTANCY_MIN_SAMPLES&&c.avgPct!=null&&c.avgPct<0);
 }
+// 詳細パネル用：点灯中シグナル1件が「期待値マイナス（勝率の罠）」かを判定。
+// 重み付けと同じ全体統計（JP銘柄・翌営業日ベース）を参照する。
+// 中立シグナルは方向を予想していないため対象外。5営業日分未満は水増しの恐れがあり除外
+function isSigNegExpectancy(sig){
+  if(!sig||!sig.state) return false;
+  var key=baseSigLabel(sig.label)+"#"+sig.state;
+  var s=getUniverseSignalStats()[key];
+  if(!s||s.t<EXPECTANCY_MIN_SAMPLES||sigStatDays(s)<5) return false;
+  var avg=signalAvgPct(s,key);
+  return avg!=null&&avg<0;
+}
 // ── 統計ベースの未来予想（🔮パネル用）──────────────────────────────────────
 // 点灯中シグナルの過去実績（平均騰落率・上昇率）を件数で重み付け平均して
 // 「期待変化率」と「上昇確率の目安」を返す。サンプル10件未満のシグナルは除外し、
@@ -2482,7 +2493,7 @@ function SignalDetailList(p){
         {sortedSignals.map(function(sig,i){
           return(
             <div key={i} onClick={function(){setWeightOpen(true);}} style={{background:"#071428",borderRadius:6,padding:rowPad,display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040",cursor:"pointer"}}>
-              <span style={{fontSize:labelFs,color:"#4a7090"}}>{displaySignalLabel(sig.label)}</span>
+              <span style={{fontSize:labelFs,color:isSigNegExpectancy(sig)?"#fb923c":"#4a7090"}}>{(isSigNegExpectancy(sig)?"⚠️ ":"")+displaySignalLabel(sig.label)}</span>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
                 <span style={{fontSize:valFs,fontWeight:700,color:stateColor(sig.state),textAlign:"right"}}>{sig.val}</span>
               </div>
@@ -2524,6 +2535,10 @@ function SignalWeightModal(p){
 
           <div style={{fontWeight:700,color:"#38bdf8",marginTop:14,marginBottom:4}}>翌日営業日／翌々日営業日について（スコアには含まれません）</div>
           <div>・過去1年の日足から「出来高が直近20営業日平均の1.5倍以上に急増した日」を探し、その翌営業日・翌々営業日の株価が平均何%動いたかを集計した、その銘柄の「値動きの癖」の参考値です。材料に強く反応して伸びやすい銘柄か、逆に急騰後は反落しやすい銘柄かを見る目安になります。過去の統計であり、今後の値動きを保証するものではありません（該当日が3回未満の場合は非表示になります）</div>
+
+          <div style={{fontWeight:700,color:"#fb923c",marginTop:14,marginBottom:4}}>⚠️マークの意味（スコアには含まれません）</div>
+          <div>・シグナル名の左に<b style={{color:"#fb923c"}}>⚠️</b>が付いているものは、過去10件以上・5営業日分以上のデータがあるにもかかわらず、そのシグナル通りに動いた場合の<b>翌営業日の平均騰落率がマイナス</b>だったシグナルです。「当たる回数は多いが、勝ちが小さく負けが大きい（勝率の罠）」の可能性があります</div>
+          <div style={{marginTop:6}}>・加点の主力に⚠️が並んでいる場合は、スコアを額面通りに受け取らず割り引いて見るのが安全です。ただしこれは<b>翌営業日まで持ち越した場合</b>の統計なので、当日中に手仕舞いするデイトレでは結果が異なる可能性があります</div>
 
           <div style={{fontWeight:700,color:"#22d3a0",marginTop:14,marginBottom:4}}>実際の見方の目安</div>
           <div>1つの指標だけで判断せず、「コンフルエンスが強気/弱気で一致 → EMA整列やBBの方向も同じ → 出来高も伴っている」という3つが揃ったときが、このアプリの設計上いちばん重視されている状況です。逆に出来高が「低調」なのに他が強気、というときは騙しの可能性を疑う、という使い方が理にかなっています。</div>
