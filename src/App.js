@@ -2901,10 +2901,23 @@ function findBoardMatch(targetPrice,thickLevels){
 // 　s.scoreを直接上書きすると、これまで蓄積してきた実績勝率(scoreHist)の
 // 　集計基準が変わり、過去データとの比較ができなくなるため。
 // 板が取れない銘柄(米国株)・休場中(stale)はnullを返し、パネル自体を非表示にする。
-var BOARD_MAX_AGE=5*60*1000; // 板が5分以上更新されていなければ休場中とみなし採点しない
+// 板が意味を持つ時間帯かを判定する。範囲外はnullを返しパネルごと非表示にする。
+// 8:00〜 9:00 …寄り前気配。注文が積み上がり寄り付きの方向が読めるため最も価値が高い
+// 11:30〜12:30 …昼休み。12:05から後場の注文受付が始まり後場寄りの方向が読める
+// 15:30〜翌8:00・休場日 …板が引け値で凍結するため採点しない（金曜の板を月曜に使う事故を防ぐ）
+function boardSessionLabel(){
+  if(!isTradingDay("JP")) return null;
+  var jst=new Date(Date.now()+9*60*60*1000);
+  var m=jst.getUTCHours()*60+jst.getUTCMinutes();
+  if(m<8*60||m>=15*60+30) return null;
+  if(m<9*60) return "寄り前気配";
+  if(m>=11*60+30&&m<12*60+30) return "昼休み・後場の気配";
+  return ""; // 取引時間中は補足ラベルなし
+}
 function calcBoardScore(quote,price){
+  var session=boardSessionLabel();
+  if(session==null) return null;
   if(!quote||quote.stale) return null;
-  if(!quote.updatedAt||Date.now()-quote.updatedAt>BOARD_MAX_AGE) return null;
   var ob=parseOrderBookLevels(quote);
   var totalVol=ob.buyVol+ob.sellVol;
   if(!ob.found||totalVol<=0) return null;
@@ -2928,7 +2941,7 @@ function calcBoardScore(quote,price){
     if(nearSell){adj-=4;items.push({label:"すぐ上に大口の売り",val:Math.round(nearSell.price).toLocaleString()+"円",state:-1});}
   }
 
-  return {adj:adj,items:items,buyVol:ob.buyVol,sellVol:ob.sellVol};
+  return {adj:adj,items:items,session:session,buyVol:ob.buyVol,sellVol:ob.sellVol};
 }
 
 // ── 板スコア補正パネル：元スコアと補正後スコアを並べて表示 ──────────────────
@@ -2941,7 +2954,7 @@ function BoardScorePanel(p){
   return(
     <div style={{background:"#071428",borderRadius:8,padding:"8px 12px",display:"flex",flexDirection:"column",gap:4}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <span style={{fontSize:11,fontWeight:700,color:"#4a7090"}}>📡 板スコア補正</span>
+        <span style={{fontSize:11,fontWeight:700,color:"#4a7090"}}>📡 板スコア補正{b.session?"（"+b.session+"）":""}</span>
         <span style={{fontSize:13,fontWeight:800,color:col}}>{base} → {adjusted}（{b.adj>0?"+":""}{b.adj}）</span>
       </div>
       {b.items.map(function(it,i){
@@ -2952,7 +2965,6 @@ function BoardScorePanel(p){
           </div>
         );
       })}
-      <div style={{fontSize:9,color:"#3a5a7a",marginTop:2,lineHeight:1.4}}>※板は数秒で変動します。見せ板（約定させる気のない大量注文）の可能性もあるため、あくまで参考値としてご利用ください</div>
     </div>
   );
 }
