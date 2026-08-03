@@ -460,6 +460,31 @@ function getBuyDirection(t){
   return "down";
 }
 
+// ── R倍数（リスク単位）関連 ─────────────────────────────────
+// 1R＝そのトレードで最初に許容した損失額。(買値−損切り)×株数 で後から算出できるため、
+// 既存トレードも損切りが入っていればそのまま集計対象になる（保存フィールドの追加は不要）
+var RISK_UNIT_KEY="risk_unit_yen",RISK_UNIT_DEFAULT=10000; // 想定元手100万円の1%
+function loadRiskUnit(){var v=parseFloat(localStorage.getItem(RISK_UNIT_KEY));return v>0?v:RISK_UNIT_DEFAULT;}
+function saveRiskUnit(v){try{if(v>0)localStorage.setItem(RISK_UNIT_KEY,String(v));}catch(e){}}
+function tradeRisk(t){
+  if(t.stopPrice==null)return null;
+  var entry=t.startPrice!=null?t.startPrice:t.buyPrice;
+  var r=(entry-t.stopPrice)*(t.shares||1);
+  return r>0?r:null;
+}
+function tradeR(t){var risk=tradeRisk(t);return(risk&&t.pnl!=null)?t.pnl/risk:null;}
+// 完了トレードからR集計（平均R・累計R・プロフィットファクター・損益分岐勝率）を算出
+function calcRStats(doneList){
+  var rows=(doneList||[]).filter(function(t){return tradeR(t)!=null;});
+  if(!rows.length)return{n:0};
+  var totalR=rows.reduce(function(a,t){return a+tradeR(t);},0);
+  var wins=rows.filter(function(t){return t.pnl>0;}),losses=rows.filter(function(t){return t.pnl<=0;});
+  var gp=wins.reduce(function(a,t){return a+t.pnl;},0),gl=Math.abs(losses.reduce(function(a,t){return a+t.pnl;},0));
+  var avgW=wins.length?wins.reduce(function(a,t){return a+tradeR(t);},0)/wins.length:null;
+  var avgL=losses.length?Math.abs(losses.reduce(function(a,t){return a+tradeR(t);},0)/losses.length):null;
+  return{n:rows.length,totalR:totalR,avgR:totalR/rows.length,pf:gl>0?gp/gl:null,
+    beRate:(avgW&&avgL)?Math.round(avgL/(avgW+avgL)*100):null};
+}
 function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection){
   var list=loadTrades(kind);
   var curPrice=s.rawPrice!=null?s.rawPrice:null;
@@ -476,7 +501,7 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection)
     id:"t"+Date.now()+Math.random().toString(36).slice(2,6),
     ticker:s.ticker,name:s.name,market:s.market,
     buyPrice:buyPrice,sellPrice:sellPrice,
-    stopPrice:(stopPrice!=null&&stopPrice>0)?stopPrice:null, // 損切り価格（任意）
+    stopPrice:(stopPrice!=null&&stopPrice>0)?stopPrice:null, // 損切り価格（必須・R計算の基礎）
     shares:shares>0?shares:1,
     buyDirection:buyDirection==="up"?"up":"down", // 登録画面のスイッチで指定された値をそのまま使用（自動判定はしない）
     status:"waiting", // waiting(待機中) → active(進行中) → done(完了)
@@ -2672,12 +2697,22 @@ function TradeAddModal(p){
   var sellS=useState(p.prefill?String(p.prefill.sell):"");var sellVal=sellS[0],setSellVal=sellS[1];
   var stopS=useState(p.prefill&&p.prefill.stop!=null?String(p.prefill.stop):"");var stopVal=stopS[0],setStopVal=stopS[1];
   var sharesS=useState("100");var sharesVal=sharesS[0],setSharesVal=sharesS[1];
+  var riskS=useState(String(loadRiskUnit()));var riskVal=riskS[0],setRiskVal=riskS[1];
+  function riskPerShare(){var b=parseFloat(buyVal),sp=parseFloat(stopVal);return(b>0&&sp>0&&sp<b)?b-sp:null;}
+  function calcShares(){
+    var rps=riskPerShare(),ru=parseFloat(riskVal);
+    if(!rps||!(ru>0))return null;
+    var unit=isJP?100:1; // 日本株は100株単位
+    return Math.max(unit,Math.floor(ru/rps/unit)*unit);
+  }
+  function actualRisk(){var rps=riskPerShare(),sh=parseInt(sharesVal);return(rps&&sh>0)?rps*sh:null;}
   var isJP=s.market==="JP";
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"8px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
   function valid(){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
     if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return false;
-    if(stopVal!==""){var sp=parseFloat(stopVal);if(isNaN(sp)||sp<=0||sp>=se)return false;}
+    var sp=parseFloat(stopVal);
+    if(isNaN(sp)||sp<=0||sp>=b)return false; // 損切りは必須・買い価格より下であること
     return true;
   }
   function add(kind){
@@ -2709,9 +2744,32 @@ function TradeAddModal(p){
           <div><div style={{fontSize:11,color:"#f43f5e",marginBottom:3}}>売り価格（利確）</div><input style={inp} type="number" value={sellVal} onChange={function(e){setSellVal(e.target.value);}}/></div>
           <div><div style={{fontSize:11,color:"#4a7090",marginBottom:3}}>株数</div><input style={inp} type="number" value={sharesVal} onChange={function(e){setSharesVal(e.target.value);}}/></div>
         </div>
-        <div style={{marginBottom:14}}>
-          <div style={{fontSize:11,color:"#fbbf24",marginBottom:3}}>損切り価格（任意・売り価格より低い値）</div>
-          <input style={inp} type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} placeholder="未設定でもOK"/>
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:11,color:"#fbbf24",marginBottom:3}}>損切り価格（必須・買い価格より低い値）</div>
+          <input style={inp} type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} placeholder="必須"/>
+        </div>
+        <div style={{marginBottom:14,background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:11,color:"#0ea5e9",marginBottom:3}}>1R（1回の許容損失額）</div>
+              <input style={inp} type="number" value={riskVal} onChange={function(e){setRiskVal(e.target.value);saveRiskUnit(parseFloat(e.target.value));}}/>
+            </div>
+            <button type="button" disabled={!calcShares()} onClick={function(){setSharesVal(String(calcShares()));}} style={{flexShrink:0,padding:"9px 12px",fontSize:12,fontWeight:700,borderRadius:6,cursor:calcShares()?"pointer":"not-allowed",border:"1px solid "+(calcShares()?"#0ea5e9":"#1e3050"),background:calcShares()?"#0a1a3a":"transparent",color:calcShares()?"#0ea5e9":"#2a4060"}}>📐 株数を逆算</button>
+          </div>
+          {(function(){
+            var rps=riskPerShare(),ar=actualRisk(),ru=parseFloat(riskVal);
+            if(!rps)return <div style={{fontSize:11,color:"#4a7090",marginTop:6}}>買い価格と損切り価格を入れると1株あたりのリスクが出ます</div>;
+            var ratio=(ar&&ru>0)?ar/ru:null;
+            var warn=ratio!=null&&(ratio>1.2||ratio<0.5);
+            return(
+              <div style={{fontSize:11,marginTop:6,color:warn?"#fbbf24":"#4a7090"}}>
+                リスク {Math.round(rps).toLocaleString()}円/株
+                {ar!=null&&" × "+parseInt(sharesVal)+"株 = 実際のリスク ¥"+Math.round(ar).toLocaleString()}
+                {ratio!=null&&"（"+ratio.toFixed(2)+"R）"}
+                {warn&&" ⚠️1Rからズレています"}
+              </div>
+            );
+          })()}
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <button onClick={function(){add("app");}} disabled={!valid()} style={{background:valid()?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>🎯 アプリ予想タブへ追加</button>
@@ -3861,6 +3919,7 @@ function TradePanel(p){
   var totalPnl=doneList.reduce(function(a,t){return a+(t.pnl||0);},0);
   // 勝率：完了トレードのうち損益がプラスだった割合
   var winRate=doneList.length?Math.round(doneList.filter(function(t){return(t.pnl||0)>0;}).length/doneList.length*100):null;
+  var rStats=calcRStats(doneList);
   // 的中率の集計対象：アプリ予想／個人予想を合わせた全登録銘柄（お気に入りタブの集計とは分離）
   // ※シグナル的中率は銘柄ごとのスコア履歴（scoreHist）から算出しており、価格設定(アプリ/個人)とは無関係なため
   //   タブでは分けず、両方に登録した銘柄をまとめて1つの集計として表示する
@@ -3908,7 +3967,7 @@ function TradePanel(p){
         <div style={{width:(!showAccuracy||isMobile)?"100%":"60%",flexShrink:0,display:"flex",flexDirection:"column",gap:10,minWidth:0}}>
           <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
             <div>
-              <div style={{fontSize:10,color:"#4a7090",whiteSpace:"nowrap"}}>合計損益（完了{doneList.length}件）</div>
+              <div style={{fontSize:10,color:"#4a7090",whiteSpace:"nowrap"}}>合計損益（完了{doneList.length}件）{rStats.n>0&&<span style={{marginLeft:6,color:rStats.avgR>=0?"#22d3a0":"#f43f5e",fontWeight:700}}>平均{(rStats.avgR>=0?"+":"")+rStats.avgR.toFixed(2)}R ／ 累計{(rStats.totalR>=0?"+":"")+rStats.totalR.toFixed(1)}R ／ PF{rStats.pf!=null?rStats.pf.toFixed(2):"—"} ／ 損益分岐勝率{rStats.beRate!=null?rStats.beRate+"%":"—"}<span style={{color:"#2a6090"}}>（R集計{rStats.n}件）</span></span>}</div>
               <div style={{fontSize:20,fontWeight:800,color:totalPnl>=0?"#22d3a0":"#f43f5e"}}>{doneList.length?fmtPnl(totalPnl,true):"—"}</div>
             </div>
             <div style={{display:"flex",gap:10,alignItems:"center"}}>
@@ -3992,8 +4051,8 @@ function TradeDetailModal(p){
   function saveEdit(){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
     if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return;
-    var sp=stopVal!==""?parseFloat(stopVal):null;
-    if(sp!=null&&(isNaN(sp)||sp<=0))return;
+    var sp=parseFloat(stopVal);
+    if(isNaN(sp)||sp<=0||sp>=b){alert("損切り価格は必須です。買い価格より低い値を入力してください（R集計に必要）");return;}
     var updates={buyPrice:b,sellPrice:se,shares:sh,stopPrice:sp};
     if(t.status==="waiting")updates.buyDirection=buyDir; // 待機中のみ手動指定を反映
     p.onEditTrade(kind,t.id,updates);
@@ -4025,7 +4084,7 @@ function TradeDetailModal(p){
               <div><div style={{fontSize:10,color:"#f43f5e",marginBottom:2}}>売り（利確）</div><input type="number" value={sellVal} onChange={function(e){setSellVal(e.target.value);}} style={editInp}/></div>
               <div><div style={{fontSize:10,color:"#4a7090",marginBottom:2}}>株数</div><input type="number" value={sharesVal} onChange={function(e){setSharesVal(e.target.value);}} style={editInp}/></div>
             </div>
-            <div><div style={{fontSize:10,color:"#fbbf24",marginBottom:2}}>損切り（任意）</div><input type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} style={editInp} placeholder="未設定でもOK"/></div>
+            <div><div style={{fontSize:10,color:"#fbbf24",marginBottom:2}}>損切り（必須）</div><input type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} style={editInp} placeholder="買い価格より低い値"/></div>
             {t.status==="waiting"&&(
               <div>
                 <div style={{fontSize:10,color:"#4a7090",marginBottom:2}}>買い方向</div>
@@ -4059,7 +4118,7 @@ function TradeDetailModal(p){
           </div>
         )}
 
-        {t.status==="done"&&<div style={{fontSize:16,fontWeight:800,color:t.pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnl(t.pnl,isJP)} <span style={{fontSize:11,fontWeight:400}}>({t.pnlPercent>=0?"+":""}{t.pnlPercent.toFixed(1)}%)</span></div>}
+        {t.status==="done"&&<div style={{fontSize:16,fontWeight:800,color:t.pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnl(t.pnl,isJP)} <span style={{fontSize:11,fontWeight:400}}>({t.pnlPercent>=0?"+":""}{t.pnlPercent.toFixed(1)}%)</span>{tradeR(t)!=null&&<span style={{fontSize:13,marginLeft:8}}>{(tradeR(t)>=0?"+":"")+tradeR(t).toFixed(2)}R</span>}{tradeRisk(t)!=null&&<span style={{fontSize:10,fontWeight:400,color:"#4a7090",marginLeft:6}}>1R=¥{Math.round(tradeRisk(t)).toLocaleString()}</span>}</div>}
         {t.status==="active"&&unrealized!=null&&<div style={{fontSize:13,color:unrealized>=0?"#22d3a0":"#f43f5e"}}>含み損益 {fmtPnl(unrealized,isJP)}</div>}
 
         {!editing&&t.status!=="done"&&<button onClick={forceComplete} style={{background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:8,color:"#f43f5e",padding:"8px",fontSize:12,fontWeight:700,cursor:"pointer"}}>⏹ 現在価格で強制完了</button>}
@@ -4856,7 +4915,7 @@ function GuidePanel(){
     ]},
     {key:"trade",icon:"🎯",label:"トレード",sections:[
       {title:null,items:[
-        "銘柄カードの🎯ボタンからトレード登録（買い価格・売り価格＝利確ライン・株数を入力。損切り価格は任意）",
+        "銘柄カードの🎯ボタンからトレード登録（買い価格・売り価格＝利確ライン・株数を入力。損切り価格は必須）",
         "「🎯アプリ予想」：アプリの買いシグナル判断を忠実に守った場合の検証用タブ",
         "「👤個人予想」：アプリの判断とは別に、自分自身の判断を検証するためのタブ",
         "価格が指定値に到達すると自動で「待機中→進行中→完了」に遷移（判定は🔄価格更新ボタンで反映）",
