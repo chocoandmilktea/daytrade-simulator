@@ -661,7 +661,7 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
       ?"  シグナル全項目:\n"+s.signals.map(function(sig){return"    "+sig.label+": "+sig.val;}).join("\n")+"\n"
       :"";
     return(i+1)+". "+s.ticker+" ("+s.name+") ["+s.market+"]\n"+
-      "  現在値: "+unit+s.price+"  前日比: "+s.change+"%\n"+
+      "  現在値: "+s.price+"  前日比: "+s.change+"%\n"+ // s.price(dispPrice)には既に¥/$が入っているためunitは付けない
       "  出来高: "+(s.volume||0).toLocaleString()+"（急増率: "+(s.volSurge?s.volSurge.toFixed(1)+"倍":"─")+"）\n"+
       "  総合スコア: "+s.score+"/100  トレードタイプ: "+s.tradeLabel+"\n"+
       trendLine+
@@ -5387,7 +5387,8 @@ export default function App(){
   var reloadCurrentUniverse=useCallback(async function(){
     setLoading(true);
     CACHE={};
-    var universe=stocks.map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol};});
+    // volume/changeも引き継ぐ（引き継がないとanalyzeStock側で出来高が0になる）
+    var universe=stocks.map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume,change:s.change};});
     setProgress({done:0,total:universe.length,msg:null});
     try{
       // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
