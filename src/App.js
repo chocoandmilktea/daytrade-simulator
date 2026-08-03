@@ -4531,7 +4531,7 @@ function groupBarsByDay(j){
     cur.close=c;
     if(h>cur.high)cur.high=h;
     if(l<cur.low)cur.low=l;
-    cur.bars.push({h:h,l:l,c:c});
+    cur.bars.push({o:o,h:h,l:l,c:c});
   }
   return days.filter(function(x){return x.bars.length>=3;}); // 半日しかない日は除く
 }
@@ -4564,9 +4564,9 @@ function groupBarsDual(j){
     cur.close=c;
     if(h>cur.high)cur.high=h;
     if(l<cur.low)cur.low=l;
-    cur.bars.push({h:h,l:l});
+    cur.bars.push({o:o,h:h,l:l});
     var hk=Math.floor(((j.times&&j.times[i]?j.times[i]:0)+off)/3600); // 1時間ごとの区切り
-    if(cur.hk!==hk){cur.coarse.push({h:h,l:l});cur.hk=hk;}
+    if(cur.hk!==hk){cur.coarse.push({o:o,h:h,l:l});cur.hk=hk;}
     else{var cb=cur.coarse[cur.coarse.length-1];if(h>cb.h)cb.h=h;if(l<cb.l)cb.l=l;}
   }
   return days.filter(function(x){return x.bars.length>=20;});
@@ -4589,14 +4589,21 @@ function accumulateCalibration(days,acc){
     else if(fine.why==="tp"){acc.all.tp++;acc[grp].tp++;}
   }
 }
-function simulateDay(day,entry,tp,sl,pessimistic){
+// slip: 損切り約定時に余分に引く価格（呼値1つ分など）。省略時は0
+function simulateDay(day,entry,tp,sl,pessimistic,slip){
+  var sp=slip||0;
   for(var i=0;i<day.bars.length;i++){
-    var b=day.bars[i],hitTp=b.h>=tp,hitSl=b.l<=sl;
-    if(hitTp&&hitSl)return{px:pessimistic?sl:tp,why:pessimistic?"sl":"tp",amb:true};
-    if(hitTp)return{px:tp,why:"tp",amb:false};
-    if(hitSl)return{px:sl,why:"sl",amb:false};
+    var b=day.bars[i];
+    // その足の始値が既に損切り価格を下回っている＝逆指値を飛び越えた日。
+    // 損切り価格ではなく、実際に約定するその価格で決済したものとして扱う
+    if(b.o!=null&&b.o<=sl)return{px:b.o-sp,why:"sl",amb:false,thru:true};
+    var hitTp=b.h>=tp,hitSl=b.l<=sl;
+    // 利確は指値なので、上に飛んでも利確価格でしか約定しない（有利な方には寄せない）
+    if(hitTp&&hitSl)return{px:pessimistic?sl-sp:tp,why:pessimistic?"sl":"tp",amb:true,thru:false};
+    if(hitTp)return{px:tp,why:"tp",amb:false,thru:false};
+    if(hitSl)return{px:sl-sp,why:"sl",amb:false,thru:false};
   }
-  return{px:day.close,why:"close",amb:false};
+  return{px:day.close,why:"close",amb:false,thru:false};
 }
 // 1銘柄分のサンプルを作る
 function buildOCSamples(days){
@@ -4675,12 +4682,15 @@ function buildSLSamples(days){
     var d=days[i],entry=d.open,a=atr[i];
     if(!(entry>0&&a>0))continue;
     var up=Math.min(Math.max(a*0.4,entry*0.010),entry*0.030);
+    var tick=tickSizeFor(entry,true); // 滑りは呼値1つ分とみなす
     var row=[];
     for(var v=0;v<SL_VARIANTS.length;v++){
       var dn=up*SL_VARIANTS[v].k,tp=entry+up,sl=entry-dn;
-      var pes=simulateDay(d,entry,tp,sl,true);
-      row.push({pes:(pes.px-entry)/entry*100,why:pes.why,amb:pes.amb,
-        tpPct:up/entry*100,slPct:-dn/entry*100});
+      var pes=simulateDay(d,entry,tp,sl,true,0);
+      var pesS=simulateDay(d,entry,tp,sl,true,tick);
+      row.push({pes:(pes.px-entry)/entry*100,slip:(pesS.px-entry)/entry*100,
+        why:pes.why,amb:pes.amb,thru:pes.thru,
+        tpPct:up/entry*100,slPct:(pes.why==="sl"?(pes.px-entry)/entry*100:-dn/entry*100)});
     }
     out.push(row);
   }
@@ -4705,10 +4715,12 @@ function accumulateSLCalibration(days,acc){
 }
 // 判定不能な日は「利確が先だった実測割合」で按分する（利確率・損切率・勝率も同様）
 function aggSL(pool,vi,ratio){
-  var n=0,win=0,sum=0,tp=0,sl=0,cl=0,amb=0,worst=0,n1=0,s1=0,n2=0,s2=0,wid=0;
+  var n=0,win=0,sum=0,tp=0,sl=0,cl=0,amb=0,worst=0,n1=0,s1=0,n2=0,s2=0,wid=0,sumS=0,thru=0;
   for(var i=0;i<pool.length;i++){
     var x=pool[i].v[vi],val,r=ratio;
     n++;wid+=-x.slPct;
+    sumS+=(x.amb&&r!=null)?(r*x.tpPct+(1-r)*x.slPct):x.slip;
+    if(x.thru)thru++;
     if(x.amb&&r!=null){
       val=r*x.tpPct+(1-r)*x.slPct;
       tp+=r;sl+=1-r;win+=r;amb++;
@@ -4723,7 +4735,7 @@ function aggSL(pool,vi,ratio){
     if(pool[i].half===1){n1++;s1+=val;}else{n2++;s2+=val;}
   }
   if(n<100)return null;
-  return{n:n,winRate:Math.round(win/n*100),avg:sum/n,width:wid/n,
+  return{n:n,winRate:Math.round(win/n*100),avg:sum/n,slip:sumS/n,thruRate:Math.round(thru/n*1000)/10,width:wid/n,
     tpRate:Math.round(tp/n*100),slRate:Math.round(sl/n*100),clRate:Math.round(cl/n*100),
     ambRate:Math.round(amb/n*100),worst:worst,
     h1:n1>=50?s1/n1:null,h2:n2>=50?s2/n2:null};
@@ -4869,7 +4881,8 @@ function OpenCloseBacktestPanel(p){
                   <div style={{width:62,textAlign:"right",fontWeight:800,fontSize:14,color:r.d.avg>0?"#22d3a0":"#f43f5e"}}>{pct(r.d.avg)}</div>
                 </div>
                 <div style={{fontSize:10,color:"#4a7090",marginTop:2,lineHeight:1.5}}>
-                  リスクリワード{r.sv.rr}（勝率{r.sv.need}%で損益ゼロ）／平均損切り幅 {r.d.width.toFixed(2)}%<br/>
+                  リスクリワード{r.sv.rr}（勝率{r.sv.need}%で損益ゼロ）／平均損切り幅 {r.d.width.toFixed(2)}%　
+                  <span style={{color:"#fbbf24"}}>滑り1呼値込み {pct(r.d.slip)}</span>　逆指値を飛び越えた日 {r.d.thruRate}%<br/>
                   利確{r.d.tpRate}%・損切{r.d.slRate}%・引け{r.d.clRate}%　前半{pct(r.d.h1)}・後半{pct(r.d.h2)}　最悪{pct(r.d.worst)}
                   {r.ratio==null?"　※較正なし":"　較正"+Math.round(r.ratio*100)+"%("+r.calN+"日)"}
                 </div>
@@ -4877,7 +4890,9 @@ function OpenCloseBacktestPanel(p){
             );
           })}
           <div style={{fontSize:10,color:"#4a7090",marginTop:6,lineHeight:1.5}}>
-            ・右端の数字が<b>1回あたりの平均損益</b>です。ここが最大になる幅が最良<br/>
+            ・右端の数字が<b>1回あたりの平均損益</b>（実際の約定価格で計算）<br/>
+            ・<span style={{color:"#fbbf24"}}>滑り1呼値込み</span>は、損切りのたびに呼値1つ分だけ不利に約定した場合。狭い損切りほど影響が大きく出ます<br/>
+            ・「逆指値を飛び越えた日」は、損切り価格より下で寄り直して約定した日の割合<br/>
             ・「勝率○%で損益ゼロ」を実際の勝率が上回っているかを見てください<br/>
             ・損切りを広げると勝率は上がりますが、1回の負けも大きくなります。<b>最悪</b>の欄も確認を<br/>
             ・これは寄り付きで買った場合の検証です。他のタイミングでも同じ傾向とは限りません<br/>
