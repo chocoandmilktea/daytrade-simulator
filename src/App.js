@@ -466,6 +466,9 @@ function getBuyDirection(t){
 var RISK_UNIT_KEY="risk_unit_yen",RISK_UNIT_DEFAULT=10000; // 想定元手100万円の1%
 function loadRiskUnit(){var v=parseFloat(localStorage.getItem(RISK_UNIT_KEY));return v>0?v:RISK_UNIT_DEFAULT;}
 function saveRiskUnit(v){try{if(v>0)localStorage.setItem(RISK_UNIT_KEY,String(v));}catch(e){}}
+var CAPITAL_KEY="capital_yen",CAPITAL_DEFAULT=1000000; // 想定元手
+function loadCapital(){var v=parseFloat(localStorage.getItem(CAPITAL_KEY));return v>0?v:CAPITAL_DEFAULT;}
+function saveCapital(v){try{if(v>0)localStorage.setItem(CAPITAL_KEY,String(v));}catch(e){}}
 function tradeRisk(t){
   if(t.stopPrice==null)return null;
   var entry=t.startPrice!=null?t.startPrice:t.buyPrice;
@@ -2698,14 +2701,23 @@ function TradeAddModal(p){
   var stopS=useState(p.prefill&&p.prefill.stop!=null?String(p.prefill.stop):"");var stopVal=stopS[0],setStopVal=stopS[1];
   var sharesS=useState("100");var sharesVal=sharesS[0],setSharesVal=sharesS[1];
   var riskS=useState(String(loadRiskUnit()));var riskVal=riskS[0],setRiskVal=riskS[1];
+  var capS=useState(String(loadCapital()));var capVal=capS[0],setCapVal=capS[1];
   function riskPerShare(){var b=parseFloat(buyVal),sp=parseFloat(stopVal);return(b>0&&sp>0&&sp<b)?b-sp:null;}
-  function calcShares(){
-    var rps=riskPerShare(),ru=parseFloat(riskVal);
-    if(!rps||!(ru>0))return null;
+  // 1R基準の理想株数と、元手で実際に買える株数の両方を返す
+  // （損切りが近い銘柄ほど必要資金が跨ね上がるため、元手で上限をかける）
+  function calcSharesInfo(){
+    var rps=riskPerShare(),ru=parseFloat(riskVal),b=parseFloat(buyVal),cap=parseFloat(capVal);
+    if(!rps||!(ru>0)||!(b>0))return null;
     var unit=isJP?100:1; // 日本株は100株単位
-    return Math.max(unit,Math.floor(ru/rps/unit)*unit);
+    var ideal=Math.max(unit,Math.floor(ru/rps/unit)*unit);
+    // 米国株は1R・元手と通貨単位が揃わないため、元手キャップは日本株のみ適用
+    var shares=ideal;
+    if(isJP&&cap>0)shares=Math.min(ideal,Math.floor(cap/b/unit)*unit);
+    return{unit:unit,ideal:ideal,shares:shares,capped:shares<ideal,ok:shares>=unit,
+      idealCost:b*ideal,cost:b*shares,idealRisk:rps*ideal,risk:rps*shares};
   }
   function actualRisk(){var rps=riskPerShare(),sh=parseInt(sharesVal);return(rps&&sh>0)?rps*sh:null;}
+  function yen(v){return "¥"+Math.round(v).toLocaleString();}
   var isJP=s.market==="JP";
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"8px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
   function valid(){
@@ -2749,24 +2761,47 @@ function TradeAddModal(p){
           <input style={inp} type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} placeholder="必須"/>
         </div>
         <div style={{marginBottom:14,background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
-          <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+          <div style={{display:"flex",gap:8}}>
             <div style={{flex:1}}>
               <div style={{fontSize:11,color:"#0ea5e9",marginBottom:3}}>1R（1回の許容損失額）</div>
               <input style={inp} type="number" value={riskVal} onChange={function(e){setRiskVal(e.target.value);saveRiskUnit(parseFloat(e.target.value));}}/>
             </div>
-            <button type="button" disabled={!calcShares()} onClick={function(){setSharesVal(String(calcShares()));}} style={{flexShrink:0,padding:"9px 12px",fontSize:12,fontWeight:700,borderRadius:6,cursor:calcShares()?"pointer":"not-allowed",border:"1px solid "+(calcShares()?"#0ea5e9":"#1e3050"),background:calcShares()?"#0a1a3a":"transparent",color:calcShares()?"#0ea5e9":"#2a4060"}}>📐 株数を逆算</button>
+            <div style={{flex:1}}>
+              <div style={{fontSize:11,color:"#a78bfa",marginBottom:3}}>想定元手</div>
+              <input style={inp} type="number" value={capVal} onChange={function(e){setCapVal(e.target.value);saveCapital(parseFloat(e.target.value));}}/>
+            </div>
           </div>
           {(function(){
-            var rps=riskPerShare(),ar=actualRisk(),ru=parseFloat(riskVal);
+            var info=calcSharesInfo(),can=info&&info.ok;
+            return <button type="button" disabled={!can} onClick={function(){setSharesVal(String(info.shares));}} style={{width:"100%",marginTop:8,padding:"9px 12px",fontSize:12,fontWeight:700,borderRadius:6,cursor:can?"pointer":"not-allowed",border:"1px solid "+(can?"#0ea5e9":"#1e3050"),background:can?"#0a1a3a":"transparent",color:can?"#0ea5e9":"#2a4060"}}>📐 株数を逆算{can?"（"+info.shares+"株）":""}</button>;
+          })()}
+          {(function(){
+            var rps=riskPerShare(),ar=actualRisk(),ru=parseFloat(riskVal),info=calcSharesInfo();
             if(!rps)return <div style={{fontSize:11,color:"#4a7090",marginTop:6}}>買い価格と損切り価格を入れると1株あたりのリスクが出ます</div>;
             var ratio=(ar&&ru>0)?ar/ru:null;
             var warn=ratio!=null&&(ratio>1.2||ratio<0.5);
             return(
-              <div style={{fontSize:11,marginTop:6,color:warn?"#fbbf24":"#4a7090"}}>
-                リスク {Math.round(rps).toLocaleString()}円/株
-                {ar!=null&&" × "+parseInt(sharesVal)+"株 = 実際のリスク ¥"+Math.round(ar).toLocaleString()}
-                {ratio!=null&&"（"+ratio.toFixed(2)+"R）"}
-                {warn&&" ⚠️1Rからズレています"}
+              <div style={{fontSize:11,marginTop:6,lineHeight:1.7}}>
+                <div style={{color:warn?"#fbbf24":"#4a7090"}}>
+                  リスク {Math.round(rps).toLocaleString()}円/株
+                  {ar!=null&&" × "+parseInt(sharesVal)+"株 = 実際のリスク "+yen(ar)}
+                  {ratio!=null&&"（"+ratio.toFixed(2)+"R）"}
+                  {warn&&" ⚠️1Rからズレています"}
+                </div>
+                {ar!=null&&parseInt(sharesVal)>0&&(
+                  <div style={{color:(isJP&&parseFloat(capVal)>0&&parseFloat(buyVal)*parseInt(sharesVal)>parseFloat(capVal))?"#f43f5e":"#4a7090"}}>
+                    必要資金 {yen(parseFloat(buyVal)*parseInt(sharesVal))} ／ 元手 {yen(parseFloat(capVal)||0)}
+                    {isJP&&parseFloat(capVal)>0&&parseFloat(buyVal)*parseInt(sharesVal)>parseFloat(capVal)&&" ⚠️元手超過"}
+                  </div>
+                )}
+                {info&&info.capped&&info.ok&&(
+                  <div style={{color:"#fbbf24"}}>
+                    ⚠️ 1R基準なら{info.ideal}株（必要資金{yen(info.idealCost)}）ですが、元手上限のため{info.shares}株に制限（{(info.risk/(parseFloat(riskVal)||1)).toFixed(2)}R）。この銘柄は損切りが近すぎてR基準では戦えません
+                  </div>
+                )}
+                {info&&!info.ok&&(
+                  <div style={{color:"#f43f5e"}}>⚠️ 元手では1単元も買えません（必要資金{yen(parseFloat(buyVal)*info.unit)}）</div>
+                )}
               </div>
             );
           })()}
