@@ -3040,6 +3040,117 @@ function findThickLevels(levels){
   if(avg<=0) return [];
   return valid.filter(function(l){return l.vol>=avg*THICK_ORDER_MULTIPLIER;});
 }
+
+// ── ①板の時系列記録＋②見せ板検出 ────────────────────────────────────────
+// 板は「今いくら並んでいるか」より「増えているか減っているか」に方向性が出る。
+// 7秒おきに届く気配値をticker別に貯めておき、買い比率の推移と、厚い注文が
+// 出たり消えたりを繰り返していないか（＝見せ板の疑い）を判定する。
+var BOARD_HIST={};              // ticker → [{t,buyPct,tb,ts}]
+var BOARD_HIST_MAX=45;          // 7秒×45 ≒ 5分ぶん保持
+var BOARD_HIST_GAP=10*60*1000;  // 10分以上あいたら別セッションとみなしリセット
+var SPOOF_MIN_SAMPLES=8;        // これだけ記録が貯まってから見せ板判定を始める
+var SPOOF_VANISH_RATIO=0.4;     // 厚い注文がピークの4割未満に減ったら「消えた」扱い
+
+// 厚い注文を「値段→株数」の対応表にする（前回スナップショットとの比較用）
+function boardThickMap(levels){
+  var m={};
+  findThickLevels(levels).forEach(function(l){m[l.price]=l.vol;});
+  return m;
+}
+// 気配値1件を履歴に追加する（同じ更新時刻は二重記録しない）
+function pushBoardHistory(ticker,quote){
+  if(!ticker||!quote||quote.stale) return;
+  var ob=parseOrderBookLevels(quote);
+  var total=ob.buyVol+ob.sellVol;
+  if(!ob.found||total<=0) return;
+  var h=BOARD_HIST[ticker]||(BOARD_HIST[ticker]=[]);
+  var t=quote.updatedAt||Date.now();
+  var last=h[h.length-1];
+  if(last){
+    if(last.t===t) return;
+    if(t-last.t>BOARD_HIST_GAP) h.length=0;
+  }
+  h.push({t:t,buyPct:ob.buyVol/total*100,tb:boardThickMap(ob.buyLevels),ts:boardThickMap(ob.sellLevels)});
+  if(h.length>BOARD_HIST_MAX) h.shift();
+}
+// 買い比率の推移と、前半→後半の変化量（pt）を返す
+function boardTrend(ticker){
+  var h=BOARD_HIST[ticker]||[];
+  if(h.length<3) return null;
+  var ser=h.map(function(x){return x.buyPct;});
+  function avg(a){return a.reduce(function(s,v){return s+v;},0)/a.length;}
+  var w=Math.min(5,Math.floor(ser.length/2))||1;
+  return{
+    series:ser,
+    now:ser[ser.length-1],
+    diff:avg(ser.slice(-w))-avg(ser.slice(0,w)),
+    spanSec:Math.round((h[h.length-1].t-h[0].t)/1000)
+  };
+}
+// 厚い注文が出現→消滅を何回繰り返したかを数える（多いほど見せ板の疑いが濃い）
+function detectSpoof(ticker){
+  var h=BOARD_HIST[ticker]||[];
+  if(h.length<SPOOF_MIN_SAMPLES) return null;
+  function scan(key){
+    var events=0,peak={};
+    h.forEach(function(snap){
+      var m=snap[key];
+      Object.keys(peak).forEach(function(price){
+        var p=peak[price];
+        if(p.alive&&(m[price]==null||m[price]<p.vol*SPOOF_VANISH_RATIO)){p.alive=false;events++;}
+      });
+      Object.keys(m).forEach(function(price){
+        var p=peak[price];
+        if(!p) peak[price]={vol:m[price],alive:true};
+        else if(!p.alive){p.alive=true;p.vol=m[price];}
+        else if(m[price]>p.vol) p.vol=m[price];
+      });
+    });
+    return events;
+  }
+  var buy=scan("tb"),sell=scan("ts");
+  if(buy===0&&sell===0) return null;
+  return{buy:buy,sell:sell};
+}
+
+// ── 📈 板の勢いパネル：買い比率の推移グラフ＋見せ板の警告 ────────────────────
+function BoardMomentumPanel(p){
+  if(!p.isJP) return null;
+  var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"};
+  var title=<div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:4}}>📈 板の勢い</div>;
+  var tr=boardTrend(p.ticker);
+  if(!tr) return <div style={box}>{title}<div style={{fontSize:10,color:"#4a7090"}}>記録中…（20秒ほどで表示）</div></div>;
+  var dir=tr.diff>=1.5?{t:"↑ 買い増加中",c:"#22d3a0"}
+         :tr.diff<=-1.5?{t:"↓ 売り増加中",c:"#f43f5e"}
+         :{t:"→ 横ばい",c:"#fbbf24"};
+  var W=100,H=24,ser=tr.series;
+  var mn=Math.min.apply(null,ser),mx=Math.max.apply(null,ser);
+  if(mx-mn<6){var mid=(mx+mn)/2;mn=mid-3;mx=mid+3;}
+  var pts=ser.map(function(v,i){
+    return (i/(ser.length-1)*W).toFixed(1)+","+(H-(v-mn)/(mx-mn)*H).toFixed(1);
+  }).join(" ");
+  var y50=(mn<50&&mx>50)?(H-(50-mn)/(mx-mn)*H):null;
+  var sp=detectSpoof(p.ticker);
+  return(
+    <div style={box}>
+      {title}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+        <span style={{fontSize:13,fontWeight:800,color:"#d8eeff"}}>買い {tr.now.toFixed(1)}%</span>
+        <span style={{fontSize:10,fontWeight:700,color:dir.c}}>{dir.t}（{tr.diff>=0?"+":""}{tr.diff.toFixed(1)}pt）</span>
+      </div>
+      <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block",marginTop:3}}>
+        {y50!=null&&<line x1="0" y1={y50} x2={W} y2={y50} stroke="#2a4060" strokeWidth="0.7" strokeDasharray="2,2"/>}
+        <polyline points={pts} fill="none" stroke={dir.c} strokeWidth="1.4" vectorEffect="non-scaling-stroke"/>
+      </svg>
+      <div style={{fontSize:9,color:"#4a7090",marginTop:2}}>直近{tr.spanSec}秒の買い比率（点線＝50%）</div>
+      {sp&&(
+        <div style={{marginTop:5,fontSize:10,color:"#fb923c",background:"#2a1400",border:"1px solid #fb923c50",borderRadius:5,padding:"3px 6px"}}>
+          ⚠️ 見せ板の疑い（買{sp.buy}回・売{sp.sell}回 出入り）
+        </div>
+      )}
+    </div>
+  );
+}
 // ── サポートゾーン可視化：チャート由来の節目（S1/S2/ATR下限）と、板の厚い買い注文が
 // 近い値段で重なっているかを照合する。二階堂式「節目＋厚い買い注文＝支えが強い」の考え方。
 var SUPPORT_MATCH_TOLERANCE=0.01; // 節目からこの割合以内に厚い注文があれば「重なり」とみなす（1%）
@@ -3362,6 +3473,11 @@ function StockDetailPanel(p){
   var boardPrice=(liveTick&&liveTick.price!=null)?liveTick.price:s.rawPrice;
   var boardScore=s.market==="JP"?calcBoardScore(tachibanaQuote,boardPrice):null;
 
+  // 板の勢い用：気配値が更新されるたびに履歴へ記録する（日本株のみ）
+  useEffect(function(){
+    if(s.market==="JP") pushBoardHistory(s.ticker,tachibanaQuote);
+  },[tachibanaQuote]);
+
   return(
     <div style={{background:"#050e1c",border:"none",borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
@@ -3403,7 +3519,6 @@ function StockDetailPanel(p){
         </div>
       </div>
 
-      <BoardScorePanel board={boardScore} baseScore={s.score}/>
 
       <BuyPlanPanel plan={s.buyPlan} isJP={s.market==="JP"} intraday={intraday}/>
 
@@ -3450,6 +3565,8 @@ function StockDetailPanel(p){
           <SignalDetailList signals={s.signals} breakdown={s.breakdown} daily={daily}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
+          <BoardScorePanel board={boardScore} baseScore={s.score}/>
+          <BoardMomentumPanel ticker={s.ticker} isJP={s.market==="JP"} quote={tachibanaQuote}/>
           <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
         </div>
       </div>
