@@ -4654,11 +4654,85 @@ function aggOC(pool,test,cal){
     h1:n1>=15?s1/n1:null,h2:n2>=15?s2/n2:null};
 }
 
+// ── 🛡 損切り幅の比較 ──────────────────────────────────────────────
+// アプリの買いプランは「損切り幅＝利確幅の半分」で固定されている。
+// この比率を変えると成績がどう変わるかを、同じ日・同じ利確幅のまま横並びで比較する。
+// 検証で分かったのは「損切りが利確の2倍以上発動している」という事実で、
+// 損切りが浅すぎて日中の普通の揺れで切られている可能性がある。
+var SL_VARIANTS=[
+  {k:0.5, label:"現状（利確の1/2）", rr:"2.0 : 1", need:33},
+  {k:0.75,label:"利確の3/4",         rr:"1.3 : 1", need:43},
+  {k:1.0, label:"利確と同じ幅",       rr:"1.0 : 1", need:50},
+  {k:1.5, label:"利確の1.5倍",        rr:"0.7 : 1", need:60},
+  {k:2.0, label:"利確の2倍",          rr:"0.5 : 1", need:67}
+];
+// 1日を、損切り幅の候補ごとにシミュレーションする（利確幅とエントリーは全候補で共通）
+function buildSLSamples(days){
+  var out=[],atr=atrSeries(days,14);
+  for(var i=1;i<days.length;i++){
+    var d=days[i],entry=d.open,a=atr[i];
+    if(!(entry>0&&a>0))continue;
+    var up=Math.min(Math.max(a*0.4,entry*0.010),entry*0.030);
+    var row=[];
+    for(var v=0;v<SL_VARIANTS.length;v++){
+      var dn=up*SL_VARIANTS[v].k,tp=entry+up,sl=entry-dn;
+      var pes=simulateDay(d,entry,tp,sl,true);
+      row.push({pes:(pes.px-entry)/entry*100,why:pes.why,amb:pes.amb,
+        tpPct:up/entry*100,slPct:-dn/entry*100});
+    }
+    out.push(row);
+  }
+  return out;
+}
+// 較正も損切り幅ごとに測る（幅が変われば「判定不能になる日」も変わるため）
+function accumulateSLCalibration(days,acc){
+  var atr=atrSeries(days,14);
+  for(var i=1;i<days.length;i++){
+    var d=days[i],entry=d.open,a=atr[i];
+    if(!(entry>0&&a>0))continue;
+    var up=Math.min(Math.max(a*0.4,entry*0.010),entry*0.030);
+    for(var v=0;v<SL_VARIANTS.length;v++){
+      var dn=up*SL_VARIANTS[v].k,tp=entry+up,sl=entry-dn;
+      var c=simulateDay({bars:d.coarse,close:d.close},entry,tp,sl,true);
+      if(!c.amb)continue;
+      var f=simulateDay({bars:d.bars,close:d.close},entry,tp,sl,true);
+      acc[v].n++;
+      if(f.amb)acc[v].tp+=0.5; else if(f.why==="tp")acc[v].tp++;
+    }
+  }
+}
+// 判定不能な日は「利確が先だった実測割合」で按分する（利確率・損切率・勝率も同様）
+function aggSL(pool,vi,ratio){
+  var n=0,win=0,sum=0,tp=0,sl=0,cl=0,amb=0,worst=0,n1=0,s1=0,n2=0,s2=0,wid=0;
+  for(var i=0;i<pool.length;i++){
+    var x=pool[i].v[vi],val,r=ratio;
+    n++;wid+=-x.slPct;
+    if(x.amb&&r!=null){
+      val=r*x.tpPct+(1-r)*x.slPct;
+      tp+=r;sl+=1-r;win+=r;amb++;
+    }else{
+      val=x.pes;
+      if(x.why==="tp")tp++;else if(x.why==="sl")sl++;else cl++;
+      if(val>0)win++;
+      if(x.amb)amb++;
+    }
+    sum+=val;
+    if(x.pes<worst)worst=x.pes;
+    if(pool[i].half===1){n1++;s1+=val;}else{n2++;s2+=val;}
+  }
+  if(n<100)return null;
+  return{n:n,winRate:Math.round(win/n*100),avg:sum/n,width:wid/n,
+    tpRate:Math.round(tp/n*100),slRate:Math.round(sl/n*100),clRate:Math.round(cl/n*100),
+    ambRate:Math.round(amb/n*100),worst:worst,
+    h1:n1>=50?s1/n1:null,h2:n2>=50?s2/n2:null};
+}
+
 function OpenCloseBacktestPanel(p){
   var runS=useState(false);var running=runS[0],setRunning=runS[1];
   var resS=useState(null);var res=resS[0],setRes=resS[1];
   var msgS=useState("");var msg=msgS[0],setMsg=msgS[1];
   var ivS=useState("60m");var iv=ivS[0],setIv=ivS[1];
+  var slS=useState(null);var slRes=slS[0],setSlRes=slS[1];
 
   var targets=(function(){
     var out=[];
@@ -4710,6 +4784,40 @@ function OpenCloseBacktestPanel(p){
     setRunning(false);
   }
 
+  // 損切り幅の比較。5分足で較正比率を測ってから、60分足2年分に適用する
+  async function runSL(){
+    setRunning(true);setSlRes(null);setRes(null);setMsg("");
+    try{
+      var acc=[];SL_VARIANTS.forEach(function(){acc.push({n:0,tp:0});});
+      for(var ci=0;ci<targets.length;ci++){
+        setMsg("較正中（5分足）"+(ci+1)+"/"+targets.length+"　"+targets[ci].replace(".T",""));
+        var cj=await fetchBars(targets[ci],"5m","60d");
+        if(cj)accumulateSLCalibration(groupBarsDual(cj),acc);
+      }
+      var pool=[],used=0;
+      for(var i=0;i<targets.length;i++){
+        setMsg("検証中 "+(i+1)+"/"+targets.length+"　"+targets[i].replace(".T",""));
+        var j=await fetchBars(targets[i],"60m","2y");
+        if(!j)continue;
+        var sm=buildSLSamples(groupBarsByDay(j));
+        if(sm.length<40)continue;
+        var cut=Math.floor(sm.length/2);
+        for(var k=0;k<sm.length;k++)pool.push({v:sm[k],half:k<cut?1:2});
+        used++;
+      }
+      if(pool.length<300){setMsg("データが足りませんでした");setRunning(false);return;}
+      var rows=[];
+      SL_VARIANTS.forEach(function(sv,vi){
+        var ratio=acc[vi].n>=40?acc[vi].tp/acc[vi].n:null; // 較正サンプルが少なければ較正しない
+        var a=aggSL(pool,vi,ratio);
+        if(a)rows.push({sv:sv,d:a,ratio:ratio,calN:acc[vi].n});
+      });
+      setSlRes({rows:rows,stocks:used,days:pool.length});
+      setMsg("");
+    }catch(e){setMsg("エラー: "+e.message);}
+    setRunning(false);
+  }
+
   function pct(v){return v==null?"—":(v>=0?"+":"")+v.toFixed(2)+"%";}
   var base=res&&res.rows[0]?res.rows[0].d:null;
 
@@ -4730,9 +4838,51 @@ function OpenCloseBacktestPanel(p){
         <button onClick={function(){run("5m",false);}} disabled={running||!targets.length} style={{background:"transparent",border:"1px solid #1a3a5a",borderRadius:8,color:"#4a7090",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
           5分足・60日で答え合わせ
         </button>
+        <button onClick={runSL} disabled={running||!targets.length} style={{background:running?"#0a1a3a":"#f59e0b",border:"none",borderRadius:8,color:running?"#4a7090":"#1a1000",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
+          🛡 損切り幅の比較
+        </button>
       </div>
       {!targets.length&&<div style={{fontSize:11,color:"#f43f5e",marginTop:6}}>対象がありません。お気に入り登録かトレード登録をしてください（日本株のみ対象）</div>}
       {msg&&<div style={{fontSize:11,color:"#4a7090",marginTop:6}}>{msg}</div>}
+      {slRes&&(
+        <div style={{marginTop:10}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#fbbf24",marginBottom:2}}>🛡 損切り幅を変えた場合の比較</div>
+          <div style={{fontSize:11,color:"#4a7090",marginBottom:6}}>
+            同じ日・同じ利確幅のまま、損切り幅だけを変えて比較しています（{slRes.stocks}銘柄・のべ{slRes.days}日分）。
+            利確が先か損切りが先か分からない日は、5分足で測った実測割合で按分しています。
+          </div>
+          {slRes.rows.map(function(r,i){
+            var best=slRes.rows.reduce(function(a,b){return b.d.avg>a.d.avg?b:a;});
+            var isBest=r===best&&r.d.avg>0;
+            var isNow=r.sv.k===0.5;
+            return(
+              <div key={i} style={{padding:"6px 8px",marginBottom:4,borderRadius:6,
+                border:isNow?"1px solid #1a3a5a":"1px solid #0f2040",
+                background:isBest?"#06201a":(isNow?"#0a1830":"transparent")}}>
+                <div style={{display:"flex",alignItems:"center",fontSize:12}}>
+                  <div style={{flex:1,color:"#e0f0ff",fontWeight:700}}>
+                    {r.sv.label}{isNow?"  ←今":""}{isBest?"  ★最良":""}
+                  </div>
+                  <div style={{width:44,textAlign:"right",color:"#b8cce0"}}>{r.d.winRate}%</div>
+                  <div style={{width:62,textAlign:"right",fontWeight:800,fontSize:14,color:r.d.avg>0?"#22d3a0":"#f43f5e"}}>{pct(r.d.avg)}</div>
+                </div>
+                <div style={{fontSize:10,color:"#4a7090",marginTop:2,lineHeight:1.5}}>
+                  リスクリワード{r.sv.rr}（勝率{r.sv.need}%で損益ゼロ）／平均損切り幅 {r.d.width.toFixed(2)}%<br/>
+                  利確{r.d.tpRate}%・損切{r.d.slRate}%・引け{r.d.clRate}%　前半{pct(r.d.h1)}・後半{pct(r.d.h2)}　最悪{pct(r.d.worst)}
+                  {r.ratio==null?"　※較正なし":"　較正"+Math.round(r.ratio*100)+"%("+r.calN+"日)"}
+                </div>
+              </div>
+            );
+          })}
+          <div style={{fontSize:10,color:"#4a7090",marginTop:6,lineHeight:1.5}}>
+            ・右端の数字が<b>1回あたりの平均損益</b>です。ここが最大になる幅が最良<br/>
+            ・「勝率○%で損益ゼロ」を実際の勝率が上回っているかを見てください<br/>
+            ・損切りを広げると勝率は上がりますが、1回の負けも大きくなります。<b>最悪</b>の欄も確認を<br/>
+            ・これは寄り付きで買った場合の検証です。他のタイミングでも同じ傾向とは限りません<br/>
+            ・平均は手数料を含みません
+          </div>
+        </div>
+      )}
       {res&&(
         <div style={{marginTop:10}}>
           <div style={{fontSize:11,color:"#4a7090",marginBottom:6}}>
