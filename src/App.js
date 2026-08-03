@@ -661,7 +661,7 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
       ?"  シグナル全項目:\n"+s.signals.map(function(sig){return"    "+sig.label+": "+sig.val;}).join("\n")+"\n"
       :"";
     return(i+1)+". "+s.ticker+" ("+s.name+") ["+s.market+"]\n"+
-      "  現在値: "+s.price+"  前日比: "+s.change+"%\n"+ // s.price(dispPrice)には既に¥/$が入っているためunitは付けない
+      "  現在値: "+unit+s.price+"  前日比: "+s.change+"%\n"+
       "  出来高: "+(s.volume||0).toLocaleString()+"（急増率: "+(s.volSurge?s.volSurge.toFixed(1)+"倍":"─")+"）\n"+
       "  総合スコア: "+s.score+"/100  トレードタイプ: "+s.tradeLabel+"\n"+
       trendLine+
@@ -4551,6 +4551,44 @@ function atrSeries(days,period){
   return out;
 }
 // 1日分のシミュレーション。足を時系列に見て、先に触れた方で決済する
+// 5分足を読みつつ、同時に「60分足にまとめ直した足」も作る。
+// 同じ日を粗い足と細かい足の両方で判定できるので、
+// 「60分足では判定不能だった日が、実際はどちらが先だったか」を数えられる（＝較正）
+function groupBarsDual(j){
+  var off=(typeof j.gmtoffset==="number")?j.gmtoffset:0;
+  var days=[],cur=null;
+  for(var i=0;i<j.closes.length;i++){
+    var o=j.opens[i],c=j.closes[i],h=j.highs[i],l=j.lows[i],d=j.dates[i];
+    if(!(o>0&&c>0&&h>0&&l>0))continue;
+    if(!cur||cur.date!==d){cur={date:d,open:o,close:c,high:h,low:l,bars:[],coarse:[],hk:null};days.push(cur);}
+    cur.close=c;
+    if(h>cur.high)cur.high=h;
+    if(l<cur.low)cur.low=l;
+    cur.bars.push({h:h,l:l});
+    var hk=Math.floor(((j.times&&j.times[i]?j.times[i]:0)+off)/3600); // 1時間ごとの区切り
+    if(cur.hk!==hk){cur.coarse.push({h:h,l:l});cur.hk=hk;}
+    else{var cb=cur.coarse[cur.coarse.length-1];if(h>cb.h)cb.h=h;if(l<cb.l)cb.l=l;}
+  }
+  return days.filter(function(x){return x.bars.length>=20;});
+}
+// 較正：60分足で判定不能だった日を5分足で解き直し、「利確が先だった割合」を数える
+function accumulateCalibration(days,acc){
+  var atr=atrSeries(days,14);
+  for(var i=1;i<days.length;i++){
+    var d=days[i],prevC=days[i-1].close,entry=d.open,a=atr[i];
+    if(!(entry>0&&prevC>0&&a>0))continue;
+    var up=Math.min(Math.max(a*0.4,entry*0.010),entry*0.030),dn=up/2;
+    var tp=entry+up,sl=entry-dn;
+    var coarse=simulateDay({bars:d.coarse,close:d.close},entry,tp,sl,true);
+    if(!coarse.amb)continue; // 60分足で判定できた日は較正に使わない
+    var fine=simulateDay({bars:d.bars,close:d.close},entry,tp,sl,true);
+    var g=(entry-prevC)/prevC*100;
+    var grp=(g<=-1)?"dn":"up"; // 下ヒゲの出やすい大きめの下ギャップは別勘定にする
+    acc.all.n++;acc[grp].n++;
+    if(fine.amb){acc.tie++;acc.all.tp+=0.5;acc[grp].tp+=0.5;} // 5分足でも同時に触れた日は半々として扱う
+    else if(fine.why==="tp"){acc.all.tp++;acc[grp].tp++;}
+  }
+}
 function simulateDay(day,entry,tp,sl,pessimistic){
   for(var i=0;i<day.bars.length;i++){
     var b=day.bars[i],hitTp=b.h>=tp,hitSl=b.l<=sl;
@@ -4574,7 +4612,7 @@ function buildOCSamples(days){
       pes:(pes.px-entry)/entry*100,
       opt:(opt.px-entry)/entry*100,
       why:pes.why,amb:pes.amb,
-      upPct:up/entry*100
+      tpPct:up/entry*100, slPct:-dn/entry*100
     });
   }
   return out;
@@ -4592,12 +4630,17 @@ var GAP_BUCKETS=[
   {label:"　　　 -3〜-2.5%",   f:function(g){return g>-3&&g<=-2.5;}},
   {label:"ギャップ -3%以下",   f:function(g){return g<=-3;}}
 ];
-function aggOC(pool,test){
-  var n=0,win=0,sp=0,so=0,tp=0,sl=0,cl=0,amb=0,worst=0,n1=0,s1=0,n2=0,s2=0;
+// cal: 較正比率 {up:利確が先だった割合, dn:同（下ギャップ日）}。nullなら較正なし
+function aggOC(pool,test,cal){
+  var n=0,win=0,sp=0,so=0,sc=0,tp=0,sl=0,cl=0,amb=0,worst=0,n1=0,s1=0,n2=0,s2=0;
   for(var i=0;i<pool.length;i++){
     var x=pool[i];
     if(test&&!test(x.gap))continue;
     n++;sp+=x.pes;so+=x.opt;
+    if(cal&&x.amb){
+      var r=(x.gap<=-1?cal.dn:cal.up);
+      sc+=r*x.tpPct+(1-r)*x.slPct; // 判定不能な日は実測比率で按分
+    }else sc+=x.pes;
     if(x.pes>0)win++;
     if(x.why==="tp")tp++;else if(x.why==="sl")sl++;else cl++;
     if(x.amb)amb++;
@@ -4605,7 +4648,7 @@ function aggOC(pool,test){
     if(x.half===1){n1++;s1+=x.pes;}else{n2++;s2+=x.pes;}
   }
   if(n<30)return null;
-  return{n:n,winRate:Math.round(win/n*100),pes:sp/n,opt:so/n,
+  return{n:n,winRate:Math.round(win/n*100),pes:sp/n,opt:so/n,cal:cal?sc/n:null,
     tpRate:Math.round(tp/n*100),slRate:Math.round(sl/n*100),clRate:Math.round(cl/n*100),
     ambRate:Math.round(amb/n*100),worst:worst,
     h1:n1>=15?s1/n1:null,h2:n2>=15?s2/n2:null};
@@ -4624,10 +4667,26 @@ function OpenCloseBacktestPanel(p){
     return out.filter(function(t){return typeof t==="string"&&t.endsWith(".T");});
   })();
 
-  async function run(interval){
+  async function run(interval,doCal){
     var range=interval==="5m"?"60d":"2y";
     setRunning(true);setRes(null);setMsg("");setIv(interval);
     try{
+      var cal=null,calInfo=null;
+      if(doCal){
+        // ① 5分足60日で「60分足なら判定不能だった日」の決着を実測する
+        var acc={all:{n:0,tp:0},up:{n:0,tp:0},dn:{n:0,tp:0},tie:0};
+        for(var ci=0;ci<targets.length;ci++){
+          setMsg("較正中（5分足）"+(ci+1)+"/"+targets.length+"　"+targets[ci].replace(".T",""));
+          var cj=await fetchBars(targets[ci],"5m","60d");
+          if(cj)accumulateCalibration(groupBarsDual(cj),acc);
+        }
+        if(acc.all.n<40){setMsg("較正のサンプルが足りませんでした（"+acc.all.n+"件）");setRunning(false);return;}
+        var rAll=acc.all.tp/acc.all.n;
+        // 区分ごとの件数が少ない場合は全体の比率で代用する
+        cal={up:acc.up.n>=25?acc.up.tp/acc.up.n:rAll, dn:acc.dn.n>=25?acc.dn.tp/acc.dn.n:rAll};
+        calInfo={n:acc.all.n,all:rAll,up:cal.up,dn:cal.dn,upN:acc.up.n,dnN:acc.dn.n,tie:acc.tie};
+      }
+      // ② 60分足2年で本番の集計（較正比率があれば判定不能日に適用する）
       var pool=[],used=0;
       for(var i=0;i<targets.length;i++){
         setMsg("検証中 "+(i+1)+"/"+targets.length+"　"+targets[i].replace(".T",""));
@@ -4640,12 +4699,12 @@ function OpenCloseBacktestPanel(p){
         used++;
       }
       if(pool.length<300){setMsg("データが足りませんでした（取得失敗の可能性）");setRunning(false);return;}
-      var rows=[{label:"全日（比較の基準）",d:aggOC(pool,null)}];
+      var rows=[{label:"全日（比較の基準）",d:aggOC(pool,null,cal)}];
       GAP_BUCKETS.forEach(function(b){
-        var a=aggOC(pool,b.f);
+        var a=aggOC(pool,b.f,cal);
         if(a)rows.push({label:b.label,d:a});
       });
-      setRes({rows:rows,stocks:used,days:pool.length,interval:interval});
+      setRes({rows:rows,stocks:used,days:pool.length,interval:interval,calInfo:calInfo});
       setMsg("");
     }catch(e){setMsg("エラー: "+e.message);}
     setRunning(false);
@@ -4662,10 +4721,13 @@ function OpenCloseBacktestPanel(p){
         同じ足の中で利確と損切りの両方に触れた日は順番が分からないため、<b>悲観（損切り優先）と楽観（利確優先）の両方</b>を出します。実際はこの間に入ります。
       </div>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <button onClick={function(){run("60m");}} disabled={running||!targets.length} style={{background:running?"#0a1a3a":"#0ea5e9",border:"none",borderRadius:8,color:running?"#4a7090":"#04121f",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
+        <button onClick={function(){run("60m",true);}} disabled={running||!targets.length} style={{background:running?"#0a1a3a":"#22d3a0",border:"none",borderRadius:8,color:running?"#4a7090":"#04121f",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
+          {running?"実行中...":"🎯 較正版（5分足で補正した2年分）"}
+        </button>
+        <button onClick={function(){run("60m",false);}} disabled={running||!targets.length} style={{background:running?"#0a1a3a":"#0ea5e9",border:"none",borderRadius:8,color:running?"#4a7090":"#04121f",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
           {running?"検証中...":"▶ 60分足・2年で検証（"+targets.length+"銘柄）"}
         </button>
-        <button onClick={function(){run("5m");}} disabled={running||!targets.length} style={{background:"transparent",border:"1px solid #1a3a5a",borderRadius:8,color:"#4a7090",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
+        <button onClick={function(){run("5m",false);}} disabled={running||!targets.length} style={{background:"transparent",border:"1px solid #1a3a5a",borderRadius:8,color:"#4a7090",padding:"8px 14px",fontSize:12,fontWeight:700,cursor:running?"default":"pointer"}}>
           5分足・60日で答え合わせ
         </button>
       </div>
@@ -4676,24 +4738,40 @@ function OpenCloseBacktestPanel(p){
           <div style={{fontSize:11,color:"#4a7090",marginBottom:6}}>
             {res.interval==="5m"?"5分足・60日":"60分足・2年"}／{res.stocks}銘柄・のべ{res.days}日分
           </div>
+          {res.calInfo&&(
+            <div style={{background:"#06201a",border:"1px solid #14503a",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#e0f0ff",marginBottom:3}}>🎯 較正の実測値</div>
+              <div style={{fontSize:11,color:"#b8cce0",lineHeight:1.6}}>
+                60分足で判定不能だった{res.calInfo.n}日を5分足で解き直した結果、<br/>
+                <b>利確が先だった割合は全体{Math.round(res.calInfo.all*100)}%</b>
+                （下ギャップ日{Math.round(res.calInfo.dn*100)}%・{res.calInfo.dnN}件／その他{Math.round(res.calInfo.up*100)}%・{res.calInfo.upN}件）
+              </div>
+              <div style={{fontSize:10,color:"#4a7090",marginTop:3}}>
+                この割合を2年分の判定不能日に当てはめたのが「較正」列です。5分足でも同時に触れた{res.calInfo.tie}日は半々として扱っています
+              </div>
+            </div>
+          )}
           <div style={{display:"flex",fontSize:10,color:"#2a6090",padding:"4px 6px",borderBottom:"1px solid #0f2040"}}>
             <div style={{flex:1}}>ギャップ区分</div>
             <div style={{width:44,textAlign:"right"}}>件数</div>
             <div style={{width:40,textAlign:"right"}}>勝率</div>
-            <div style={{width:54,textAlign:"right"}}>悲観</div>
-            <div style={{width:54,textAlign:"right"}}>楽観</div>
+            <div style={{width:52,textAlign:"right"}}>悲観</div>
+            <div style={{width:54,textAlign:"right",color:"#22d3a0"}}>較正</div>
+            <div style={{width:52,textAlign:"right"}}>楽観</div>
           </div>
           {res.rows.map(function(r,i){
             var d=r.d,isBase=i===0;
-            var solid=!isBase&&base&&d.pes>base.pes&&d.pes>0&&d.h1>0&&d.h2>0;
+            var v=(d.cal==null?d.pes:d.cal),bv=(base?(base.cal==null?base.pes:base.cal):0);
+                var solid=!isBase&&base&&v>bv&&v>0&&d.h1>0&&d.h2>0;
             return(
               <div key={i} style={{padding:"5px 6px",borderBottom:"1px solid #0a1830",background:isBase?"#0a1830":(solid?"#06201a":"transparent")}}>
                 <div style={{display:"flex",alignItems:"center",fontSize:12}}>
                   <div style={{flex:1,color:isBase?"#e0f0ff":"#b8cce0",fontWeight:isBase?700:400,whiteSpace:"pre"}}>{r.label}{solid?" ◎":""}</div>
                   <div style={{width:44,textAlign:"right",color:"#4a7090"}}>{d.n}</div>
                   <div style={{width:40,textAlign:"right",color:"#b8cce0"}}>{d.winRate}%</div>
-                  <div style={{width:54,textAlign:"right",fontWeight:700,color:d.pes>0?"#22d3a0":"#f43f5e"}}>{pct(d.pes)}</div>
-                  <div style={{width:54,textAlign:"right",fontWeight:700,color:d.opt>0?"#4a9080":"#8a5060"}}>{pct(d.opt)}</div>
+                  <div style={{width:52,textAlign:"right",color:d.pes>0?"#4a9080":"#8a5060"}}>{pct(d.pes)}</div>
+                  <div style={{width:54,textAlign:"right",fontWeight:800,fontSize:13,color:d.cal==null?"#2a6090":(d.cal>0?"#22d3a0":"#f43f5e")}}>{d.cal==null?"—":pct(d.cal)}</div>
+                  <div style={{width:52,textAlign:"right",color:d.opt>0?"#4a9080":"#8a5060"}}>{pct(d.opt)}</div>
                 </div>
                 <div style={{fontSize:10,color:"#2a6090",marginTop:2}}>
                   利確{d.tpRate}%／損切{d.slRate}%／引け{d.clRate}%　前半{pct(d.h1)}・後半{pct(d.h2)}　最悪{pct(d.worst)}　判定不能{d.ambRate}%
@@ -4702,7 +4780,7 @@ function OpenCloseBacktestPanel(p){
             );
           })}
           <div style={{fontSize:10,color:"#4a7090",marginTop:8,lineHeight:1.5}}>
-            ・<b>悲観</b>が実際に近い下限、<b>楽観</b>が上限です。悲観でもプラスなら信頼できます<br/>
+            ・<b>較正</b>が最も実態に近い数字です。悲観と楽観はその下限・上限<br/>
             ・上から下へ数字が一直線に並んでいれば、偶然ではなく本物の性質です<br/>
             ・<b>◎</b>＝基準を上回り、悲観でもプラスで、前半・後半の両方でプラス<br/>
             ・「判定不能」は同じ足の中で利確と損切りの両方に触れた割合。ここが高いほど悲観と楽観の差が開きます<br/>
@@ -5387,8 +5465,7 @@ export default function App(){
   var reloadCurrentUniverse=useCallback(async function(){
     setLoading(true);
     CACHE={};
-    // volume/changeも引き継ぐ（引き継がないとanalyzeStock側で出来高が0になる）
-    var universe=stocks.map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume,change:s.change};});
+    var universe=stocks.map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol};});
     setProgress({done:0,total:universe.length,msg:null});
     try{
       // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
