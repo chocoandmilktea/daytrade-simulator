@@ -208,6 +208,31 @@ async function fetchIntraday(ticker){
 // 直近1年分の日足終値・出来高。値の変化が緩やかなので30分キャッシュ、分足用の直列
 // キューとは別枠で（軽いデータなので待たせる必要が薄いため）直接取得する。
 var DAILY_CACHE={}, DAILY_TTL=30*60*1000, DAILY_INFLIGHT={};
+// ── ☀️ 日中型/夜間型の判定 ──────────────────────────────────────────────
+// 過去1年の値動きを「日中分（始値→終値）」と「夜間分（前日終値→始値）」に分解して累積する。
+// 検証（50銘柄・のべ23,105日）で、上昇銘柄でも寄り→引けの平均はマイナスと分かった。
+// つまり上昇の大半は夜間に発生している。持ち越さないデイトレで取れるのは日中分だけなので、
+// 日中分がプラスの「日中型」銘柄を選ぶことが、そのまま優位性になる
+var DAYNIGHT={};
+function computeDayNight(d){
+  if(!d||!d.closes||!d.opens||d.closes.length<30)return null;
+  var day=0,night=0,n=0;
+  for(var i=1;i<d.closes.length;i++){
+    var o=d.opens[i],c=d.closes[i],pc=d.closes[i-1];
+    if(!(o>0&&c>0&&pc>0))continue;
+    day+=(c-o)/o*100;night+=(o-pc)/pc*100;n++;
+  }
+  return n>=30?{day:Math.round(day),night:Math.round(night),days:n}:null;
+}
+// 一覧の並び替え用：日足がまだ無い銘柄の分を順番に取得してDAYNIGHTを埋める
+async function fillDayNightFor(list,onProgress){
+  var need=list.filter(function(s){return s.market==="JP"&&s.real&&!DAYNIGHT[s.ticker];});
+  for(var i=0;i<need.length;i++){
+    await fetchDaily(need[i].ticker);
+    if(onProgress&&(i%5===4||i===need.length-1))onProgress(i+1,need.length);
+  }
+  return need.length;
+}
 async function fetchDaily(ticker){
   var now=Date.now();
   if(DAILY_CACHE[ticker]&&now-DAILY_CACHE[ticker].ts<DAILY_TTL) return DAILY_CACHE[ticker].data;
@@ -220,6 +245,7 @@ async function fetchDaily(ticker){
       if(!json||!json.closes||json.closes.length<2) return null;
       var result={closes:json.closes,dates:json.dates||[],volumes:json.volumes||[],opens:json.opens||[],highs:json.highs||[],lows:json.lows||[]};
       DAILY_CACHE[ticker]={ts:now,data:result};
+      try{var dn=computeDayNight(result);if(dn)DAYNIGHT[ticker]=dn;}catch(e){}
       return result;
     }catch(e){return null;}
   })();
@@ -1354,10 +1380,6 @@ function getSignalWeight(sigKey){
   var mult=1+(quality-0.5)*2*maxAdjust;
   return Math.max(1-maxAdjust,Math.min(1+maxAdjust,mult));
 }
-// ── 銘柄選定フィルター：株価100〜800円 ＋ 出来高急増（自分比2倍以上）のJP銘柄を抽出 ──
-function isLowPriceSurge(s){
-  return s.market==="JP"&&s.rawPrice!=null&&s.rawPrice>=100&&s.rawPrice<=800&&(s.volSurge||0)>=2.0;
-}
 // breakdown表示名 → 実際に積み上がるシグナルラベル群のマッピング（重み適用用）
 var CATEGORY_SIGNAL_MAP={
   "VWAP":["VWAP"],"VWAP傾き":["VWAP傾き"],"Pivot":["Pivot"],"ATR(値幅)":["ATR"],"ATR消化率":["ATR消化率"],"対TOPIX":["対TOPIX"],
@@ -1695,6 +1717,11 @@ function analyzeStock(stock,pd,vixVal){
     }else{
       signals.push({label:"ギャップ",val:"ギャップなし",state:0});
     }
+    // ── ギャップ過熱（配点0・観測用）────────────────────────────────
+    // 検証（60分足2年×3回）で「+2%超で寄り付いた日は日中失速しやすい」傾向が一貫して出たため、
+    // まず配点ゼロのシグナルとして搭載し、的中率パネルで実績を観測する。
+    // 効くと確認できたら配点する（既存の実績反映調整・自動ミュートの枠組みに乗る）
+    if(gapPct>=2){signals.push({label:"ギャップ過熱",val:"+"+gapPct.toFixed(1)+"%で寄り付き(日中失速警戒)",state:-1});}
   }
   breakdown.push({label:"ギャップ",delta:sc-scChk});scChk=sc;
 
@@ -2764,7 +2791,7 @@ function StockCard(p){
           <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:2}}>
             {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
             {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
-            {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}
+            {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}{(function(){var dn=DAYNIGHT[s.ticker];if(!dn)return null;var pos=dn.day>0;return <span style={bStyle(pos?"#052e16":"#101826","1px solid "+(pos?"#22d3a0":"#2a4060"),pos?"#22d3a0":"#4a7090")} title={"過去1年の値動きの分解（"+dn.days+"日分）: 日中(始値→終値)の累積"+(dn.day>=0?"+":"")+dn.day+"% / 夜間(前日終値→始値)の累積"+(dn.night>=0?"+":"")+dn.night+"%。日中分がプラスなら、持ち越さないデイトレと相性が良い日中型"}>{(pos?"☀️日中+":"🌙日中")+dn.day+"%"}</span>;})()}
             {(function(){var si=relStrengthInfo(s.sectorRelStrength);return si&&<span style={bStyle(si.strong?"#052e16":"#1f0010","1px solid "+(si.strong?"#22d3a0":"#f43f5e"),si.strong?"#22d3a0":"#f43f5e")} title={"対"+(s.sectorName||"業種")+"相対(前日比差): "+si.label}>{si.strong?"🔥対業種":"🧊対業種"}{si.label}</span>;})()}
             {(function(){var sf=scalpFitInfo(s);return sf&&<span style={bStyle("#2a1400","1px solid #fb923c","#fb923c")} title={"スキャル・デイトレに不向きな可能性："+sf.label+"（出来高とATR%のみの簡易判定。板情報・スプレッドは考慮していません）"}>⚠️{sf.label}</span>;})()}
           </div>
@@ -3254,7 +3281,7 @@ function StockDetailPanel(p){
               {s.tradeLabel&&<span style={bStyle("#0a0a1a","1px solid "+s.tradeColor,s.tradeColor)}>{s.tradeLabel}</span>}
               {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
               {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
-          {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}
+          {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}{(function(){var dn=DAYNIGHT[s.ticker];if(!dn)return null;var pos=dn.day>0;return <span style={bStyle(pos?"#052e16":"#101826","1px solid "+(pos?"#22d3a0":"#2a4060"),pos?"#22d3a0":"#4a7090")} title={"過去1年の値動きの分解（"+dn.days+"日分）: 日中(始値→終値)の累積"+(dn.day>=0?"+":"")+dn.day+"% / 夜間(前日終値→始値)の累積"+(dn.night>=0?"+":"")+dn.night+"%。日中分がプラスなら、持ち越さないデイトレと相性が良い日中型"}>{(pos?"☀️日中+":"🌙日中")+dn.day+"%"}</span>;})()}
           {(function(){var si=relStrengthInfo(s.sectorRelStrength);return si&&<span style={bStyle(si.strong?"#052e16":"#1f0010","1px solid "+(si.strong?"#22d3a0":"#f43f5e"),si.strong?"#22d3a0":"#f43f5e")} title={"対"+(s.sectorName||"業種")+"相対(前日比差): "+si.label}>{si.strong?"🔥対業種":"🧊対業種"}{si.label}</span>;})()}
           {(function(){var sf=scalpFitInfo(s);return sf&&<span style={bStyle("#2a1400","1px solid #fb923c","#fb923c")} title={"スキャル・デイトレに不向きな可能性："+sf.label+"（出来高とATR%のみの簡易判定。板情報・スプレッドは考慮していません）"}>⚠️{sf.label}</span>;})()}
             </div>
@@ -3590,14 +3617,13 @@ function AllStocksPanel(p){
 
   function isFavRef(t){return favs.indexOf(t)>=0;}
 
-  var sortModeS=useState("score");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "score"=スコア順(既定) / "lowPrice"=低株価順(株価100〜800円＋出来高急増を上位に並べる)
-  var lowPriceMatchCount=stocks.filter(isLowPriceSurge).length;
-  var displayStocks=sortMode==="lowPrice"
+  var sortModeS=useState("score");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "score"=スコア順(既定) / "dayType"=日中型順(日中分の累積が高い順)
+  var dnProgS=useState(null);var dnProg=dnProgS[0],setDnProg=dnProgS[1]; // 日中型順のための日足取得の進捗
+  var displayStocks=sortMode==="dayType"
     ?stocks.slice().sort(function(a,b){
-        var am=isLowPriceSurge(a)?0:1,bm=isLowPriceSurge(b)?0:1;
-        if(am!==bm) return am-bm;
-        var ap=a.rawPrice!=null?a.rawPrice:Infinity,bp=b.rawPrice!=null?b.rawPrice:Infinity;
-        return ap-bp;
+        var ad=DAYNIGHT[a.ticker],bd=DAYNIGHT[b.ticker];
+        var av=ad?ad.day:-Infinity,bv=bd?bd.day:-Infinity;
+        return bv-av;
       })
     :stocks.slice().sort(function(a,b){return b.score-a.score;});
 
@@ -3628,12 +3654,10 @@ function AllStocksPanel(p){
   var cardGrid=(
     <>
       <MarketRegimeBanner stocks={stocks}/>
-      {sortMode==="lowPrice"&&lowPriceMatchCount===0&&<div style={{textAlign:"center",padding:"24px 12px",color:"#4a7090",fontSize:12}}>条件（株価100〜800円・出来高急増）に合う銘柄がありません</div>}
+      {sortMode==="dayType"&&dnProg&&<div style={{textAlign:"center",padding:"6px 0",color:"#fbbf24",fontSize:11}}>日中/夜間を計算中... {dnProg.d}/{dnProg.t}（日足を取得しています）</div>}
       <div style={{display:"grid",gridTemplateColumns:"repeat("+cols+",1fr)",gap:8}}>
         {displayStocks.map(function(s,i){
-          var divider=sortMode==="lowPrice"&&i===lowPriceMatchCount&&lowPriceMatchCount>0&&lowPriceMatchCount<displayStocks.length
-            ?<div key="lowprice-divider" style={{gridColumn:"1/-1",fontSize:10,color:"#2a5070",textAlign:"center",padding:"4px 0",borderTop:"1px dashed #1e3050"}}>── ここから条件対象外 ──</div>:null;
-          return <div key={s.ticker} style={{display:"contents"}}>{divider}<StockCard s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/></div>;
+          return <div key={s.ticker} style={{display:"contents"}}><StockCard s={s} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/></div>;
         })}
       </div>
     </>
@@ -3647,7 +3671,7 @@ function AllStocksPanel(p){
             <span>/{stocks.length}</span>
           </span>
           {ts&&<span style={{fontSize:10,color:"#2a6090",flexShrink:0,whiteSpace:"nowrap"}}>{ts}</span>}
-          <button onClick={function(){setSortMode(function(m){return m==="lowPrice"?"score":"lowPrice";});}} title="株価100〜800円＋出来高急増(自分比2倍以上)のJP銘柄を上位に、株価が低い順に並べます（非該当の銘柄も下に表示されます）" style={{marginLeft:"auto",flexShrink:0,background:sortMode==="lowPrice"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="lowPrice"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="lowPrice"?"#fbbf24":"#4a6080",padding:"4px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="lowPrice"?700:400,whiteSpace:"nowrap"}}>🪙低株価順{sortMode==="lowPrice"?"✓":""}</button>
+          <button onClick={function(){var next=sortMode==="dayType"?"score":"dayType";setSortMode(next);if(next==="dayType"){fillDayNightFor(stocks,function(d,t){setDnProg(d<t?{d:d,t:t}:null);}).then(function(){setDnProg(null);});}}} title="過去1年で日中（始値→終値）に上がる癖が強い順に並べます。持ち越さないデイトレは日中分しか取れないため、日中型の銘柄ほど相性が良い。日足が未取得の銘柄は自動で取得し、取得できないものは下に並びます" style={{marginLeft:"auto",flexShrink:0,background:sortMode==="dayType"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="dayType"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="dayType"?"#fbbf24":"#4a6080",padding:"4px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="dayType"?700:400,whiteSpace:"nowrap"}}>☀️日中型順{sortMode==="dayType"?"✓":""}</button>
           <button onClick={onScan} style={{flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
         </div>
       </div>
@@ -3682,7 +3706,7 @@ function FavPanel(p){
   var extraH=isMobile?MOBILE_TABBAR_H:0; // スマホ用タブバー分の高さを差し引く
   // お気に入り登録順（新しく登録した銘柄が先頭）をデフォルト順にする
   var favStocks=favs.slice().reverse().map(function(t){return stocks.find(function(s){return s.ticker===t;});}).filter(Boolean);
-  var sortModeS=useState("reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "reg"=登録順(新しい順) / "lowPrice"=銘柄選定フィルター(低株価順)
+  var sortModeS=useState("reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "reg"=登録順(新しい順) / "dayType"=日中型順(日中分の累積が高い順)
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
   var filterS=useState("ALL");var filterMkt=filterS[0],setFilterMkt=filterS[1];
@@ -3708,13 +3732,12 @@ function FavPanel(p){
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
   var groupedStocks=groupFilter===0?favStocks:favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
   var mktFiltered=filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;});
-  var lowPriceMatchCount=mktFiltered.filter(isLowPriceSurge).length;
-  var displayStocks=sortMode==="lowPrice"
+  var dnProgS=useState(null);var dnProg=dnProgS[0],setDnProg=dnProgS[1]; // 日中型順のための日足取得の進捗
+  var displayStocks=sortMode==="dayType"
     ?mktFiltered.slice().sort(function(a,b){
-        var am=isLowPriceSurge(a)?0:1,bm=isLowPriceSurge(b)?0:1;
-        if(am!==bm) return am-bm;
-        var ap=a.rawPrice!=null?a.rawPrice:Infinity,bp=b.rawPrice!=null?b.rawPrice:Infinity;
-        return ap-bp;
+        var ad=DAYNIGHT[a.ticker],bd=DAYNIGHT[b.ticker];
+        var av=ad?ad.day:-Infinity,bv=bd?bd.day:-Infinity;
+        return bv-av;
       })
     :mktFiltered;
   function fBtn(val,label,activeColor){
@@ -3734,13 +3757,11 @@ function FavPanel(p){
   var cardGrid=(
     <>
       <MarketRegimeBanner stocks={stocks}/>
-      {sortMode==="lowPrice"&&lowPriceMatchCount===0&&<div style={{textAlign:"center",padding:"24px 12px",color:"#4a7090",fontSize:12}}>条件（株価100〜800円・出来高急増）に合うお気に入り銘柄がありません</div>}
+      {sortMode==="dayType"&&dnProg&&<div style={{textAlign:"center",padding:"6px 0",color:"#fbbf24",fontSize:11}}>日中/夜間を計算中... {dnProg.d}/{dnProg.t}（日足を取得しています）</div>}
       <div style={{display:"grid",gridTemplateColumns:"repeat("+favCols+",1fr)",gap:8}}>
         {displayStocks.map(function(s,i){
           var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-          var divider=sortMode==="lowPrice"&&i===lowPriceMatchCount&&lowPriceMatchCount>0&&lowPriceMatchCount<displayStocks.length
-            ?<div key="lowprice-divider" style={{gridColumn:"1/-1",fontSize:10,color:"#2a5070",textAlign:"center",padding:"4px 0",borderTop:"1px dashed #1e3050"}}>── ここから条件対象外 ──</div>:null;
-          return <div key={s.ticker} style={{display:"contents"}}>{divider}<StockCard s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/></div>;
+          return <div key={s.ticker} style={{display:"contents"}}><StockCard s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/></div>;
         })}
       </div>
     </>
@@ -3780,7 +3801,7 @@ function FavPanel(p){
             {fBtn("ALL","全て","#60a5fa")}
             {fBtn("US","US","#3b82f6")}
             {fBtn("JP","JP","#f87171")}
-            <button onClick={function(){setSortMode(function(m){return m==="lowPrice"?"reg":"lowPrice";});}} title="株価100〜800円＋出来高急増(自分比2倍以上)のJP銘柄を上位に、株価が低い順に並べます（非該当の銘柄も下に表示されます）" style={{marginLeft:"auto",background:sortMode==="lowPrice"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="lowPrice"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="lowPrice"?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="lowPrice"?700:400}}>🪙低株価順{sortMode==="lowPrice"?"✓":""}</button>
+            <button onClick={function(){var next=sortMode==="dayType"?"reg":"dayType";setSortMode(next);if(next==="dayType"){fillDayNightFor(mktFiltered,function(d,t){setDnProg(d<t?{d:d,t:t}:null);}).then(function(){setDnProg(null);});}}} title="過去1年で日中（始値→終値）に上がる癖が強い順に並べます。持ち越さないデイトレは日中分しか取れないため、日中型の銘柄ほど相性が良い。日足が未取得の銘柄は自動で取得し、取得できないものは下に並びます" style={{marginLeft:"auto",background:sortMode==="dayType"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="dayType"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="dayType"?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="dayType"?700:400}}>☀️日中型順{sortMode==="dayType"?"✓":""}</button>
             <button onClick={function(){setShowAcc(true);}} style={{background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
           </div>
         )}
@@ -3797,7 +3818,7 @@ function FavPanel(p){
             <span style={{fontSize:11,color:"#2a6090"}}>グループ:</span>
             {gBtn(0,"全体")}
             {[1,2,3,4,5].map(function(n){return <span key={n} style={{display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
-            <button onClick={function(){setSortMode(function(m){return m==="lowPrice"?"reg":"lowPrice";});}} title="株価100〜800円＋出来高急増(自分比2倍以上)のJP銘柄を上位に、株価が低い順に並べます（非該当の銘柄も下に表示されます）" style={{background:sortMode==="lowPrice"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="lowPrice"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="lowPrice"?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="lowPrice"?700:400}}>🪙低株価順{sortMode==="lowPrice"?"✓":""}</button>
+            <button onClick={function(){var next=sortMode==="dayType"?"reg":"dayType";setSortMode(next);if(next==="dayType"){fillDayNightFor(mktFiltered,function(d,t){setDnProg(d<t?{d:d,t:t}:null);}).then(function(){setDnProg(null);});}}} title="過去1年で日中（始値→終値）に上がる癖が強い順に並べます。持ち越さないデイトレは日中分しか取れないため、日中型の銘柄ほど相性が良い。日足が未取得の銘柄は自動で取得し、取得できないものは下に並びます" style={{background:sortMode==="dayType"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="dayType"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="dayType"?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="dayType"?700:400}}>☀️日中型順{sortMode==="dayType"?"✓":""}</button>
             <button onClick={function(){setShowAcc(true);}} style={{background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
           </div>
           {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
@@ -4588,9 +4609,12 @@ function SignalAccuracyContent(p){
             {horizons.map(function(hz){return <div key={hz.k} style={{width:48,flexShrink:0,textAlign:"right"}}>{hz.h}</div>;})}
           </div>
           {data.map(function(row,i){
+            // 🔄反転観測：50件以上あるのに的中率40%未満＝外れ方が安定しているシグナル。
+            // 逆に読んだ場合の的中率を目安として表示する（観測のみ・スコアには反映しない）
+            var rev=row.d1&&row.d1.total>=50&&row.d1.winRate!=null&&row.d1.winRate<40;
             return(
               <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
-                <div title={isNegExpectancy(row.d1)?"件数十分だが1日後の平均騰落率がマイナス。小さく勝って大きく負ける傾向のシグナルです":""} style={{flex:1,minWidth:0,color:isNegExpectancy(row.d1)?"#fb923c":"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(isNegExpectancy(row.d1)?"⚠️ ":"")+formatSigKeyLabel(row.signal)}</div>
+                <div title={isNegExpectancy(row.d1)?"件数十分だが1日後の平均騰落率がマイナス。小さく勝って大きく負ける傾向のシグナルです":""} style={{flex:1,minWidth:0,color:isNegExpectancy(row.d1)?"#fb923c":"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(isNegExpectancy(row.d1)?"⚠️ ":"")+formatSigKeyLabel(row.signal)}{rev?<span style={{color:"#a78bfa"}} title={"50件以上あるのに的中率"+row.d1.winRate+"%と低く、外れ方が安定しています。逆に読むと"+(100-row.d1.winRate)+"%相当（観測中・スコアには反映していません）"}>{" 🔄逆"+(100-row.d1.winRate)+"%"}</span>:null}</div>
                 {horizons.map(function(hz){
                   var c=row[hz.k],reliable=c.total>=5;
                   var avgLabel=c.avgPct!=null?((c.avgPct>=0?"+":"")+c.avgPct.toFixed(1)+"%"):null;
@@ -4606,6 +4630,7 @@ function SignalAccuracyContent(p){
           })}
           <div style={{fontSize:11,color:"#2a6090",marginTop:10}}>※薄字は件数5件未満（参考値）。数値をタップ/ホバーで件数を確認できます</div>
           <div style={{fontSize:11,color:"#fb923c",marginTop:4}}>※<b>⚠️</b>＝10件以上あるのに1日後の平均騰落率がマイナスのシグナル。勝率が高くても「小さく勝って大きく負ける」ため、スコアの主力がこれなら額面通り受け取らない方が安全です</div>
+          <div style={{fontSize:11,color:"#a78bfa",marginTop:4}}>※<b>🔄</b>＝50件以上あるのに1日後の的中率が40%未満のシグナル。外れ方が安定しているため「逆に読むと◯%」の目安を表示しています。まだ観測段階で、スコア計算は変えていません</div>
         </div>
       )}
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
