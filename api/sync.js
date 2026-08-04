@@ -1,5 +1,5 @@
 // api/sync.js
-// お気に入り・お気に入りグループ・スコア履歴・トレード記録のデバイス間同期
+// お気に入り・お気に入りグループ・スコア履歴・トレード記録・予測ログのデバイス間同期
 // TTL: アクセスのたびに90日延長
 //
 // resource=tachibana-watch / tachibana-quote のときは、立花証券リアルタイム連携用の
@@ -128,7 +128,7 @@ export default async function handler(req, res) {
 
   if (req.method === 'POST') {
     try {
-      const { favs, scoreHist, groups, groupNames, appTrades, personalTrades } = readBody(req);
+      const { favs, scoreHist, groups, groupNames, appTrades, personalTrades, forecasts } = readBody(req);
       await redis.set(key, packForRedis({
         favs: favs || [],
         scoreHist: scoreHist || {},
@@ -136,6 +136,7 @@ export default async function handler(req, res) {
         groupNames: groupNames || {},
         appTrades: appTrades || [],
         personalTrades: personalTrades || [],
+        forecasts: forecasts || [],
       }), { ex: TTL });
       return res.status(200).json({ ok: true });
     } catch (e) {
@@ -149,7 +150,7 @@ export default async function handler(req, res) {
       const data = await redis.get(key);
       const parsed = unpackFromRedis(data);
       if (!parsed) {
-        return res.status(200).json({ found: false, favs: [], scoreHist: {}, groups: {}, groupNames: {}, appTrades: [], personalTrades: [] });
+        return res.status(200).json({ found: false, favs: [], scoreHist: {}, groups: {}, groupNames: {}, appTrades: [], personalTrades: [], forecasts: [] });
       }
       await redis.expire(key, TTL);
       return res.status(200).json({
@@ -160,6 +161,7 @@ export default async function handler(req, res) {
         groupNames: parsed.groupNames || {},
         appTrades: parsed.appTrades || [],
         personalTrades: parsed.personalTrades || [],
+        forecasts: parsed.forecasts || [],
       });
     } catch (e) {
       return res.status(500).json({ error: 'load failed: ' + e.message });
