@@ -304,6 +304,7 @@ async function fetchDaily(ticker){
       var result={closes:json.closes,dates:json.dates||[],volumes:json.volumes||[],opens:json.opens||[],highs:json.highs||[],lows:json.lows||[]};
       DAILY_CACHE[ticker]={ts:now,data:result};
       try{var dn=computeDayNight(result);if(dn)DAYNIGHT[ticker]=dn;}catch(e){}
+      try{updateForecastLog(ticker,result);}catch(e){}
       return result;
     }catch(e){return null;}
   })();
@@ -962,6 +963,84 @@ function volBandAt(price,sigma,days,k){
   return{u:price*Math.exp(w),l:price*Math.exp(-w)};
 }
 var BAND_K68=1.0, BAND_K90=1.645, BAND_DAYS=5; // 68%帯・90%帯・予測日数
+
+// ===== 予測レンジの記録と較正 =====
+// 保存するのは {t:銘柄, d:予測日, p:基準価格, s:σ, a:5営業日後の実際の終値} だけ。
+// 帯そのものは持たない。p・s・aさえあれば、どんな係数kでも後から成績を計算し直せる
+var FC_KEY="fc_log_v1", FC_MAX_DAYS=180, FC_MAX_ROWS=3000, FC_MIN_SAMPLES=30;
+var FC_CAL_CACHE=null, FC_CAL_TS=0;
+function fcLoad(){try{var v=localStorage.getItem(FC_KEY);return v?JSON.parse(v):[];}catch(e){return[];}}
+function fcSave(list){try{localStorage.setItem(FC_KEY,JSON.stringify(list));FC_CAL_CACHE=null;}catch(e){}}
+function fcIsFav(t){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]").indexOf(t)>=0;}catch(e){return false;}}
+
+// 日足を取ったタイミングで呼ぶ。(1)期日が来た予測の答え合わせ (2)当日分の記録
+function updateForecastLog(ticker,d){
+  if(!fcIsFav(ticker))return;                                   // お気に入り銘柄のみ対象
+  if(!d||!d.closes||!d.dates||d.closes.length<30)return;
+  var list=fcLoad(),changed=false,n=d.closes.length;
+  var idx={};for(var i=0;i<d.dates.length;i++)idx[d.dates[i]]=i;
+
+  // (1) 答え合わせ：予測日から5営業日後の終値が出ていれば書き込む
+  for(var j=0;j<list.length;j++){
+    var r=list[j];
+    if(r.t!==ticker||r.a!=null)continue;
+    var bi=idx[r.d];
+    if(bi==null||bi+BAND_DAYS>=n)continue;
+    r.a=d.closes[bi+BAND_DAYS];changed=true;
+  }
+
+  // (2) 当日分を記録（同じ銘柄・同じ日は1件だけ）
+  var today=d.dates[n-1];
+  var dup=false;for(var k=0;k<list.length;k++){if(list[k].t===ticker&&list[k].d===today){dup=true;break;}}
+  if(!dup){
+    var sg=calcVolSigma(d.closes,20);
+    if(sg>0){list.push({t:ticker,d:today,p:d.closes[n-1],s:Math.round(sg*100000)/100000});changed=true;}
+  }
+
+  if(!changed)return;
+  // 古い記録は捨てる（180日より前 or 3000件超）
+  var limit=new Date(Date.now()-FC_MAX_DAYS*86400000).toISOString().slice(0,10);
+  list=list.filter(function(r){return r.d>=limit;});
+  if(list.length>FC_MAX_ROWS)list=list.slice(list.length-FC_MAX_ROWS);
+  fcSave(list);
+}
+
+// 実測から係数を求める。z=|ln(実績/基準)|/(σ√5) の分位点が、そのまま最適なkになる
+function fcCalibration(){
+  var now=Date.now();
+  if(FC_CAL_CACHE&&now-FC_CAL_TS<60000)return FC_CAL_CACHE;
+  var list=fcLoad(),z=[],rt=Math.sqrt(BAND_DAYS);
+  for(var i=0;i<list.length;i++){
+    var r=list[i];
+    if(r.a>0&&r.p>0&&r.s>0)z.push(Math.abs(Math.log(r.a/r.p))/(r.s*rt));
+  }
+  var out;
+  if(z.length<FC_MIN_SAMPLES){
+    out={n:z.length,k68:1,k90:1,ready:false};
+  }else{
+    z.sort(function(a,b){return a-b;});
+    function q(pp){return z[Math.min(z.length-1,Math.floor(pp*z.length))];}
+    function cov(k){var c=0;for(var i2=0;i2<z.length;i2++)if(z[i2]<=k)c++;return Math.round(c/z.length*100);}
+    out={n:z.length,k68:q(0.68)/BAND_K68,k90:q(0.90)/BAND_K90,ready:true,cov68:cov(BAND_K68),cov90:cov(BAND_K90)};
+  }
+  FC_CAL_CACHE=out;FC_CAL_TS=now;return out;
+}
+
+// 別デバイスの記録と突き合わせる。同じ銘柄・同じ日は「答え合わせ済み」を優先して残す
+function fcMerge(remote){
+  if(!remote||!remote.length)return;
+  var map={},list=fcLoad();
+  function put(r){
+    if(!r||!r.t||!r.d)return;
+    var key=r.t+"|"+r.d,old=map[key];
+    if(!old||(old.a==null&&r.a!=null))map[key]=r;
+  }
+  list.forEach(put);remote.forEach(put);
+  var merged=Object.keys(map).map(function(k){return map[k];});
+  merged.sort(function(a,b){return a.d<b.d?-1:a.d>b.d?1:0;});
+  if(merged.length>FC_MAX_ROWS)merged=merged.slice(merged.length-FC_MAX_ROWS);
+  fcSave(merged);
+}
 
 // ── 買値（デイトレ用エントリー）まわりの共通ヘルパー ──────────────────
 // 東証の呼値（値段の刻み）。これに丸めないと実際には発注できない価格になる
@@ -2428,7 +2507,8 @@ function computeVolumeSpikePattern(daily){
 // 帯は右端15%の枠に5営業日分を割り当てて描く（そのままだと細すぎて見えないため）
 function DailyChartWithBand(p){
   var d=p.daily,H=p.height||180,W=360,FX=306,BARS=126; // BARS=約6ヶ月
-  var k68=p.k68||1,k90=p.k90||1; // 較正係数（ステップ2で使用。今は1固定）
+  var cal=fcCalibration(); // 実測から求めた較正係数（件数が足りないうちは1のまま）
+  var k68=p.k68||cal.k68,k90=p.k90||cal.k90;
   if(!d||!d.closes||d.closes.length<30)
     return(<div style={{height:H,display:"flex",alignItems:"center",justifyContent:"center",color:"#4a7090",fontSize:11}}>日足データ取得中…</div>);
 
@@ -2505,6 +2585,9 @@ function DailyChartWithBand(p){
           <span>1日後 <b style={{color:"#38bdf8"}}>{fmt(b68[0].l)}〜{fmt(b68[0].u)}</b></span>
           <span>5日後 <b style={{color:"#38bdf8"}}>{fmt(b68[4].l)}〜{fmt(b68[4].u)}</b></span>
           <span style={{color:"#4a7090"}}>(68%目安・濃い帯)</span>
+          {cal.ready
+            ? <span style={{color:"#22d3a0"}} title={"90%帯の実カバー率 "+cal.cov90+"%（較正前）"}>較正済 {cal.n}件</span>
+            : <span style={{color:"#4a7090"}}>記録中 {cal.n}/{FC_MIN_SAMPLES}件</span>}
         </div>
       ):(
         <div style={{fontSize:10,color:"#4a7090",padding:"5px 4px"}}>データ不足のため予測レンジは非表示</div>
@@ -5417,6 +5500,7 @@ export default function App(){
     fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       favs:nextFavs,
       scoreHist:getAllScoreHist(),
+      forecasts:fcLoad(),
       groups:nextGroups,
       groupNames:nextGroupNames,
       appTrades:nextAppTrades!==undefined?nextAppTrades:appTrades,
@@ -5634,6 +5718,7 @@ export default function App(){
         if(data.appTrades){saveTrades("app",data.appTrades);setAppTrades(data.appTrades);}
         if(data.personalTrades){saveTrades("personal",data.personalTrades);setPersonalTrades(data.personalTrades);}
         if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(ticker){localStorage.setItem("sh_"+ticker,JSON.stringify(data.scoreHist[ticker]));});}catch(e){}}
+        if(data.forecasts){try{fcMerge(data.forecasts);}catch(e){}}
       })
       .catch(function(){})
       .finally(function(){setSyncLoaded(true);}); // 成功・失敗どちらでも保存ロックを解除
