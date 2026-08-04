@@ -942,6 +942,27 @@ function calcVWAP(closes,highs,lows,volumes){var cumTPV=0,cumVol=0;for(var i=0;i
 function calcPivot(closes,highs,lows){var DAY=26,len=closes.length;if(len<DAY*2)return null;var ph=highs.slice(len-DAY*2,len-DAY),pl=lows.slice(len-DAY*2,len-DAY);var prevH=Math.max.apply(null,ph),prevL=Math.min.apply(null,pl),prevC=closes[len-DAY-1];var pp=(prevH+prevL+prevC)/3;return{pp:pp,r1:pp*2-prevL,s1:pp*2-prevH,r2:pp+(prevH-prevL),s2:pp-(prevH-prevL),prevHigh:prevH,prevLow:prevL,prevClose:prevC};}
 // ATR(真の値幅の平均)。period本分のTrue Rangeを単純平均。ボラティリティ判定に使用
 function calcATR(closes,highs,lows,period){var trs=[];for(var i=1;i<closes.length;i++){var h=highs[i]||closes[i],l=lows[i]||closes[i],pc=closes[i-1];trs.push(Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc)));}var slice=trs.slice(-period);return slice.length?slice.reduce(function(a,b){return a+b;},0)/slice.length:null;}
+
+// ===== 予測レンジ（簡易版） =====
+// 直近period日の値動きの荒さσを求める。σ＝1日あたり何%動くかの目安（対数ベース）
+function calcVolSigma(closes,period){
+  if(!closes||closes.length<period+2)return null;
+  var r=[],st=closes.length-period;
+  for(var i=st;i<closes.length;i++){
+    if(closes[i-1]>0&&closes[i]>0)r.push(Math.log(closes[i]/closes[i-1]));
+  }
+  if(r.length<5)return null;
+  var m=0;for(var a=0;a<r.length;a++)m+=r[a];m/=r.length;
+  var v=0;for(var b=0;b<r.length;b++)v+=(r[b]-m)*(r[b]-m);
+  return Math.sqrt(v/(r.length-1));
+}
+// days営業日先のレンジ。√days＝時間の平方根ルール（日数が伸びるほど緩やかに広がる）
+function volBandAt(price,sigma,days,k){
+  var w=k*sigma*Math.sqrt(days);
+  return{u:price*Math.exp(w),l:price*Math.exp(-w)};
+}
+var BAND_K68=1.0, BAND_K90=1.645, BAND_DAYS=5; // 68%帯・90%帯・予測日数
+
 // ── 買値（デイトレ用エントリー）まわりの共通ヘルパー ──────────────────
 // 東証の呼値（値段の刻み）。これに丸めないと実際には発注できない価格になる
 var TICKS_JP=[[3000,1],[5000,5],[30000,10],[50000,50],[300000,100],[500000,500],[3000000,1000],[5000000,5000]];
@@ -2403,6 +2424,81 @@ function computeVolumeSpikePattern(daily){
   function avg(arr){return arr.reduce(function(a,b){return a+b;},0)/arr.length;}
   return{count1:next1.length,avgNext1:avg(next1),count2:next2.length,avgNext2:next2.length?avg(next2):null};
 }
+// 日足6ヶ月チャート＋予測レンジ（右端に帯を描く）
+// 帯は右端15%の枠に5営業日分を割り当てて描く（そのままだと細すぎて見えないため）
+function DailyChartWithBand(p){
+  var d=p.daily,H=p.height||180,W=360,FX=306,BARS=126; // BARS=約6ヶ月
+  var k68=p.k68||1,k90=p.k90||1; // 較正係数（ステップ2で使用。今は1固定）
+  if(!d||!d.closes||d.closes.length<30)
+    return(<div style={{height:H,display:"flex",alignItems:"center",justifyContent:"center",color:"#4a7090",fontSize:11}}>日足データ取得中…</div>);
+
+  var full=d.closes;
+  var ma25a=trailingSMA(full,25),ma75a=trailingSMA(full,75);
+  var closes=full.slice(-BARS),ma25=ma25a.slice(-BARS),ma75=ma75a.slice(-BARS);
+  var n=closes.length,last=closes[n-1];
+  var sigma=calcVolSigma(full,20);
+
+  // 1〜5営業日先の帯を作る
+  var b68=[],b90=[];
+  if(sigma){
+    for(var t=1;t<=BAND_DAYS;t++){
+      b68.push(volBandAt(last,sigma,t,BAND_K68*k68));
+      b90.push(volBandAt(last,sigma,t,BAND_K90*k90));
+    }
+  }
+
+  // 縦軸の範囲（帯の一番外側まで入るようにする）
+  var vals=closes.slice();
+  [ma25,ma75].forEach(function(arr){arr.forEach(function(v){if(v!=null)vals.push(v);});});
+  if(b90.length){vals.push(b90[BAND_DAYS-1].u);vals.push(b90[BAND_DAYS-1].l);}
+  var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);
+  var rng=(mx-mn)||1;mn-=rng*0.05;mx+=rng*0.05;rng=mx-mn;
+
+  function toY(v){return H-((v-mn)/rng)*(H-6)-3;}
+  function toXh(i){return n>1?(i/(n-1))*FX:0;}        // 履歴部のX
+  function toXf(t){return FX+(t/BAND_DAYS)*(W-FX);}   // 予測部のX
+  function lineOf(arr){
+    var o=[];for(var i=0;i<arr.length;i++){if(arr[i]!=null)o.push(toXh(i)+","+toY(arr[i]));}
+    return o.join(" ");
+  }
+  function bandPts(b){
+    var up=[],lo=[];
+    for(var t=1;t<=BAND_DAYS;t++){up.push(toXf(t)+","+toY(b[t-1].u));lo.unshift(toXf(t)+","+toY(b[t-1].l));}
+    return FX+","+toY(last)+" "+up.join(" ")+" "+lo.join(" ");
+  }
+  function fmt(v){return Math.round(v).toLocaleString();}
+
+  return(
+    <div>
+      <div style={{position:"relative"}}>
+        <div style={{position:"absolute",top:3,left:4,zIndex:2,display:"flex",flexDirection:"column",gap:2,pointerEvents:"none"}}>
+          <span style={{fontSize:9,color:"#a3e635"}}>25日MA</span>
+          <span style={{fontSize:9,color:"#f472b6"}}>75日MA</span>
+        </div>
+        <span style={{position:"absolute",top:3,right:4,zIndex:2,fontSize:9,color:"#6a90b0",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"2px 5px"}}>日足6ヶ月</span>
+        <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
+          {b90.length>0&&<polygon points={bandPts(b90)} fill="#38bdf8" opacity={0.10}/>}
+          {b68.length>0&&<polygon points={bandPts(b68)} fill="#38bdf8" opacity={0.20}/>}
+          <line x1={FX} y1={0} x2={FX} y2={H} stroke="#2a4060" strokeWidth={1} strokeDasharray="2,2" vectorEffect="non-scaling-stroke"/>
+          <line x1={FX} y1={toY(last)} x2={W} y2={toY(last)} stroke="#8a9bb0" strokeWidth={1} strokeDasharray="3,2" vectorEffect="non-scaling-stroke"/>
+          <polyline points={lineOf(ma75)} fill="none" stroke="#f472b6" strokeWidth={1} vectorEffect="non-scaling-stroke"/>
+          <polyline points={lineOf(ma25)} fill="none" stroke="#a3e635" strokeWidth={1} vectorEffect="non-scaling-stroke"/>
+          <polyline points={lineOf(closes)} fill="none" stroke="#e8eef5" strokeWidth={1.4} vectorEffect="non-scaling-stroke"/>
+        </svg>
+      </div>
+      {sigma?(
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:10,color:"#6a90b0",padding:"5px 4px 2px",fontFamily:"monospace"}}>
+          <span>1日後 <b style={{color:"#38bdf8"}}>{fmt(b68[0].l)}〜{fmt(b68[0].u)}</b></span>
+          <span>5日後 <b style={{color:"#38bdf8"}}>{fmt(b68[4].l)}〜{fmt(b68[4].u)}</b></span>
+          <span style={{color:"#4a7090"}}>(68%目安・濃い帯)</span>
+        </div>
+      ):(
+        <div style={{fontSize:10,color:"#4a7090",padding:"5px 4px"}}>データ不足のため予測レンジは非表示</div>
+      )}
+    </div>
+  );
+}
+
 function IntradayChart1m(p){
   var data=p.data,H=p.height||140,BUCKET=1,CANDLE_W=13,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
@@ -3485,6 +3581,7 @@ function StockDetailPanel(p){
   var tachibanaQuoteS=useState(null);var tachibanaQuote=tachibanaQuoteS[0],setTachibanaQuote=tachibanaQuoteS[1]; // 株価タップ時のモーダル表示用の生データ
   var showTachibanaS=useState(false);var showTachibana=showTachibanaS[0],setShowTachibana=showTachibanaS[1];
   var dailyS=useState(undefined);var daily=dailyS[0],setDaily=dailyS[1]; // 出来高急増後の値動きパターン分析用（過去1年日足）
+  var chartModeS=useState("1m");var chartMode=chartModeS[0],setChartMode=chartModeS[1]; // "1m"=1分足 / "1d"=日足6ヶ月
   useEffect(function(){
     setIntraday(undefined);
     setLiveTick(null);
@@ -3608,9 +3705,15 @@ function StockDetailPanel(p){
         <button onClick={function(){setTradePrefill(null);setShowTrade(function(v){return !v;});}} title="トレード登録" style={{flexShrink:0,background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
       </div>
 
-      {/* チャート（1分足＋週足MA） */}
+      {/* チャート（1分足／日足6ヶ月＋予測レンジ を切替） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px",marginTop:-6}}>
-        <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?150:250} aiEntry={aiEntry}/>
+        <div style={{display:"flex",gap:6,padding:"2px 0 4px"}}>
+          <TabBtn active={chartMode==="1m"} color="#38bdf8" label="1分足" onClick={function(){setChartMode("1m");}}/>
+          <TabBtn active={chartMode==="1d"} color="#38bdf8" label="日足＋予測" onClick={function(){setChartMode("1d");}}/>
+        </div>
+        {chartMode==="1m"
+          ? <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?150:250} aiEntry={aiEntry}/>
+          : <DailyChartWithBand daily={daily} height={isMobile?150:250}/>}
       </div>
 
             {/* シグナル詳細（出来高急増後の値動きを内包）／板情報・利確損切りライン（右） */}
