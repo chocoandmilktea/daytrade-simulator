@@ -87,12 +87,12 @@ def main():
             MODEL, device_map="cpu", torch_dtype=torch.float32)
         for i in range(0, len(series), BATCH):
             chunk = series[i:i + BATCH]
-                        q, _ = pipe.predict_quantiles(
+            q, _ = pipe.predict_quantiles(
                 chunk, prediction_length=HORIZON,
                 quantile_levels=[0.1, 0.5, 0.9])
             for j, m in enumerate(meta[i:i + BATCH]):
-                                a = q[j]
-                if a.ndim == 3:
+                a = q[j]                       # 形は (HORIZON, 3)
+                if a.ndim == 3:                # 新しいモデルは次元が1つ多い場合がある
                     a = a[0]
                 items[m["ticker"]] = {
                     "d": m["date"],
