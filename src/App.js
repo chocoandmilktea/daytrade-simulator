@@ -2404,7 +2404,7 @@ function computeVolumeSpikePattern(daily){
   return{count1:next1.length,avgNext1:avg(next1),count2:next2.length,avgNext2:next2.length?avg(next2):null};
 }
 function IntradayChart1m(p){
-  var data=p.data,H=p.height||140,BUCKET=1,CANDLE_W=8,RIGHT_GUTTER=52;
+  var data=p.data,H=p.height||140,BUCKET=1,CANDLE_W=13,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   var scrollRef=useRef(null);
   var isMobile=useIsMobile();
@@ -2475,27 +2475,27 @@ function IntradayChart1m(p){
   var visCandles=candles.slice(rangeStart,rangeEnd+1);
   var visMa25=ma25.slice(rangeStart,rangeEnd+1),visMa75=ma75.slice(rangeStart,rangeEnd+1);
   var visVwap=vwapLine?vwapLine.slice(rangeStart,rangeEnd+1):null;
-  var allVals=visCandles.reduce(function(a,c){return a.concat([c.high,c.low]);},[])
-    .concat(visMa25.filter(function(v){return v!=null;})).concat(visMa75.filter(function(v){return v!=null;}));
-  if(visVwap)allVals=allVals.concat(visVwap.filter(function(v){return v!=null;}));
-  if(allVals.length===0)allVals=candles.reduce(function(a,c){return a.concat([c.high,c.low]);},[]);
-  if(aiLevels){
-    [aiLevels.entry,aiLevels.target,aiLevels.stop].forEach(function(v){if(v!=null)allVals.push(v);});
-  }
-  var mn=Math.min.apply(null,allVals),mx=Math.max.apply(null,allVals);
+  // ── 縦軸レンジ ──
+  // 基準は「ローソク足の高値・安値」だけ。MA/VWAP/AIラインが大きく外れていても、
+  // そこまで軸を広げるとローソク足が潰れてしまうため、広げる量に上限を設ける。
+  var baseVals=visCandles.reduce(function(a,c){return a.concat([c.high,c.low]);},[]);
+  if(baseVals.length===0)baseVals=candles.reduce(function(a,c){return a.concat([c.high,c.low]);},[]);
+  var mn=Math.min.apply(null,baseVals),mx=Math.max.apply(null,baseVals);
   var rng=mx-mn||1;
-  // AI分析ライン（エントリー/利確/損切り）が値動きから遠い価格だと、そこまで軸を広げてローソク足が潰れてしまうため、
-  // ローソク足本来の値幅の2倍までしか軸を広げないようにする（それより遠いラインは端で見切れる形で表示）
-  if(aiLevels){
-    var aiVals=[aiLevels.entry,aiLevels.target,aiLevels.stop].filter(function(v){return v!=null;});
-    if(aiVals.length){
-      var maxExpand=rng*2;
-      mn=Math.max(mn-maxExpand,Math.min(mn,Math.min.apply(null,aiVals)));
-      mx=Math.min(mx+maxExpand,Math.max(mx,Math.max.apply(null,aiVals)));
-      rng=mx-mn||1;
-    }
+  // vals を取り込むために軸を広げる。ただしローソク足の値幅×ratio が上限。
+  function expandTo(vals,ratio){
+    vals=vals.filter(function(v){return v!=null;});
+    if(!vals.length)return;
+    var lim=rng*ratio;
+    mn=Math.max(mn-lim,Math.min(mn,Math.min.apply(null,vals)));
+    mx=Math.min(mx+lim,Math.max(mx,Math.max.apply(null,vals)));
   }
-  var pad=rng*0.1;
+  var lineVals=visMa25.concat(visMa75);
+  if(visVwap)lineVals=lineVals.concat(visVwap);
+  expandTo(lineVals,0.5);                                                  // MA/VWAPは値幅の50%まで
+  if(aiLevels)expandTo([aiLevels.entry,aiLevels.target,aiLevels.stop],1);  // AIラインは100%まで
+  rng=mx-mn||1;
+  var pad=rng*0.05;
   mn-=pad;mx+=pad;rng=mx-mn||1;
   function toY(v){return H-((v-mn)/rng)*(H-4)-2;}
   function toX(i){return i*CANDLE_W+CANDLE_W/2;} // 全期間を通した絶対px座標
