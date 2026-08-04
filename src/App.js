@@ -2435,6 +2435,7 @@ function DailyChartWithBand(p){
   var full=d.closes;
   var ma25a=trailingSMA(full,25),ma75a=trailingSMA(full,75);
   var closes=full.slice(-BARS),ma25=ma25a.slice(-BARS),ma75=ma75a.slice(-BARS);
+  var dates=(d.dates||[]).slice(-BARS);
   var n=closes.length,last=closes[n-1];
   var sigma=calcVolSigma(full,20);
 
@@ -2483,9 +2484,17 @@ function DailyChartWithBand(p){
           <line x1={FX} y1={toY(last)} x2={W} y2={toY(last)} stroke="#8a9bb0" strokeWidth={1} strokeDasharray="3,2" vectorEffect="non-scaling-stroke"/>
           <polyline points={lineOf(ma75)} fill="none" stroke="#f472b6" strokeWidth={1} vectorEffect="non-scaling-stroke"/>
           <polyline points={lineOf(ma25)} fill="none" stroke="#a3e635" strokeWidth={1} vectorEffect="non-scaling-stroke"/>
-          <polyline points={lineOf(closes)} fill="none" stroke="#e8eef5" strokeWidth={1.4} vectorEffect="non-scaling-stroke"/>
+          <polyline points={lineOf(closes)} fill="none" stroke="#e8eef5" strokeWidth={0.9} vectorEffect="non-scaling-stroke"/>
         </svg>
       </div>
+      {dates.length>1&&(
+        <div style={{position:"relative",height:13,marginTop:1}}>
+          {pickDateLabels(dates,5).map(function(t,i){
+            return(<span key={i} style={{position:"absolute",left:(toXh(t.index)/W)*100+"%",top:0,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",transform:i===0?"translateX(0%)":"translateX(-50%)"}}>{t.label}</span>);
+          })}
+          <span style={{position:"absolute",right:0,top:0,fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>+5日</span>
+        </div>
+      )}
       {sigma?(
         <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:10,color:"#6a90b0",padding:"5px 4px 2px",fontFamily:"monospace"}}>
           <span>1日後 <b style={{color:"#38bdf8"}}>{fmt(b68[0].l)}〜{fmt(b68[0].u)}</b></span>
