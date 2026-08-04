@@ -2,12 +2,42 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
 // ── スマホ幅判定（768px未満をスマホ扱い。画面回転・分割表示にも追従）─────────
+// iPadのSafariは「デスクトップ用Webサイトを表示」が既定のため、画面を半分にしても
+// 広いレイアウト幅（≈980px）のまま縮小表示される。そのため window.innerWidth だけでは
+// 「実際は狭い」ことを判定できない。iOS端末では devicePixelRatio から縮小率を逆算し、
+// 画面上で実際に見えている幅に換算してスマホ判定する。
+var MOBILE_BP=768; // この幅未満（見た目換算）をスマホ表示にする
+function isIOSDevice(){
+  var ua=navigator.userAgent||"";
+  if(/iPad|iPhone|iPod/.test(ua)) return true;
+  // iPadOS 13以降のSafariはMacintoshを名乗るのでタッチ数で判別
+  return /Macintosh/.test(ua)&&(navigator.maxTouchPoints||0)>1;
+}
+function calcIsMobile(){
+  var w=window.innerWidth||document.documentElement.clientWidth||0;
+  if(w<MOBILE_BP) return true;          // 素直に狭い場合はそのままスマホ判定
+  if(!isIOSDevice()) return false;      // PCブラウザは幅どおりに判定
+  var dpr=window.devicePixelRatio||1;
+  // iOS端末の本来の倍率は2か3。縮小表示中はdprがその値より小さくなる
+  var base=Math.max(2,Math.ceil(dpr-0.01));
+  var scale=dpr/base;                   // 1未満＝ページが縮小表示されている
+  if(scale>=0.98) return false;         // 縮小なし＝実寸どおりの幅
+  return w*scale<MOBILE_BP;             // 見た目の幅で再判定
+}
 function useIsMobile(){
-  var s=useState(window.innerWidth<768);var isMobile=s[0],setIsMobile=s[1];
+  var s=useState(calcIsMobile);var isMobile=s[0],setIsMobile=s[1];
   useEffect(function(){
-    function onResize(){setIsMobile(window.innerWidth<768);}
+    function onResize(){setIsMobile(calcIsMobile());}
+    var vv=window.visualViewport;
     window.addEventListener("resize",onResize);
-    return function(){window.removeEventListener("resize",onResize);};
+    window.addEventListener("orientationchange",onResize);
+    if(vv&&vv.addEventListener) vv.addEventListener("resize",onResize);
+    onResize(); // マウント直後にも一度判定（分割表示で開いた場合の取りこぼし防止）
+    return function(){
+      window.removeEventListener("resize",onResize);
+      window.removeEventListener("orientationchange",onResize);
+      if(vv&&vv.removeEventListener) vv.removeEventListener("resize",onResize);
+    };
   },[]);
   return isMobile;
 }
@@ -3301,8 +3331,8 @@ function StatForecastPanel(p){
     var hi=withRange&&dailyVol!=null?price*(1+(f.expPct+dailyVol)/100):null;
     return(
       <div key={titleLabel} style={{marginBottom:3}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontSize:10,color:"#8aa8c8"}}>{titleLabel}</span>
+        <div style={{display:"flex",alignItems:"baseline",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:10,color:"#8aa8c8",whiteSpace:"nowrap"}}>{titleLabel}</span>
           <span style={{fontSize:10,fontWeight:700,color:d.color}}>{d.label}（過去傾向 上昇{f.upRate}%・{f.totalN}件）</span>
         </div>
         <div style={{fontSize:11,color:"#d8eeff",fontWeight:700,marginTop:1}}>
@@ -3316,13 +3346,14 @@ function StatForecastPanel(p){
   return(
     <div onClick={p.onInfoClick} style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"5px 8px",cursor:"pointer"}}>
       <div style={{fontSize:10,fontWeight:700,color:"#4a90c0",marginBottom:3}}>🔮 統計ベースの目安（過去実績のみで算出・AI不使用）</div>
-      <div style={{display:"flex",gap:10}}>
-        <div style={{flex:1,minWidth:0}}>
+      {/* 左揃えの2段組み（上＝今日の引けまで／下＝翌営業日）。横2列だと幅が狭く折り返すため */}
+      <div style={{display:"flex",flexDirection:"column",gap:3,textAlign:"left"}}>
+        <div style={{minWidth:0}}>
           {today?renderRow("今日の引けまで",today,false):(
             <div style={{fontSize:9,color:"#2a6090",marginBottom:4}}>「今日の引けまで」版は取引時間中（9:00〜15:30）のみ表示されます</div>
           )}
         </div>
-        <div style={{flex:1,minWidth:0}}>
+        <div style={{minWidth:0,borderTop:"1px solid #16283f",paddingTop:3}}>
           {renderRow("翌営業日",next,true)}
         </div>
       </div>
