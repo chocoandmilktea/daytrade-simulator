@@ -994,7 +994,13 @@ function updateForecastLog(ticker,d){
   var dup=false;for(var k=0;k<list.length;k++){if(list[k].t===ticker&&list[k].d===today){dup=true;break;}}
   if(!dup){
     var sg=calcVolSigma(d.closes,20);
-    if(sg>0){list.push({t:ticker,d:today,p:d.closes[n-1],s:Math.round(sg*100000)/100000});changed=true;}
+    if(sg>0){
+      var rec={t:ticker,d:today,p:d.closes[n-1],s:Math.round(sg*100000)/100000};
+      var cx=CHRONOS&&CHRONOS.items?CHRONOS.items[ticker]:null;
+      // cr = Chronosが見込む「5営業日後の倍率」。基準価格が違っても比較できるよう倍率で持つ
+      if(cx&&cx.p>0&&cx.q50&&cx.q50.length>=BAND_DAYS)rec.cr=Math.round(cx.q50[BAND_DAYS-1]/cx.p*10000)/10000;
+      list.push(rec);changed=true;
+    }
   }
 
   if(!changed)return;
@@ -1042,6 +1048,17 @@ function fcMerge(remote){
   fcSave(merged);
 }
 
+// GitHub Actionsが毎晩作る予測ファイルを1回だけ読む（無い場合はnullのまま動く）
+var CHRONOS=null, CHRONOS_P=null;
+function loadChronos(){
+  if(CHRONOS_P)return CHRONOS_P;
+  CHRONOS_P=fetch("/forecasts.json",{cache:"no-store"})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(j){CHRONOS=j;return j;})
+    .catch(function(){return null;});
+  return CHRONOS_P;
+}
+
 // お気に入り全銘柄の予測を1日1回まとめて記録する（1銘柄ずつ開かなくても貯まるように）
 var FC_RUN_KEY="fc_last_run";
 function fcTodayJST(){return new Date(Date.now()+9*3600000).toISOString().slice(0,10);}
@@ -1049,6 +1066,7 @@ async function recordFavForecasts(favs){
   if(!favs||!favs.length)return;
   var today=fcTodayJST();
   try{if(localStorage.getItem(FC_RUN_KEY)===today)return;}catch(e){} // その日すでに実行済みなら何もしない
+  await loadChronos(); // 記録にChronosの予測も含めたいので先に読む
   for(var i=0;i<favs.length;i++){
     await fetchDaily(favs[i]); // この中で updateForecastLog が走る
     await new Promise(function(r){setTimeout(r,400);}); // Yahooに負担をかけない間隔
@@ -2523,6 +2541,14 @@ function DailyChartWithBand(p){
   var d=p.daily,H=p.height||180,W=360,FX=306,BARS=126; // BARS=約6ヶ月
   var cal=fcCalibration(); // 実測から求めた較正係数（件数が足りないうちは1のまま）
   var k68=p.k68||cal.k68,k90=p.k90||cal.k90;
+  var chS=useState(null);var ch=chS[0],setCh=chS[1]; // この銘柄のChronos予測
+  useEffect(function(){
+    var alive=true;
+    loadChronos().then(function(j){
+      if(alive)setCh(j&&j.items&&p.ticker?(j.items[p.ticker]||null):null);
+    });
+    return function(){alive=false;};
+  },[p.ticker]);
   if(!d||!d.closes||d.closes.length<30)
     return(<div style={{height:H,display:"flex",alignItems:"center",justifyContent:"center",color:"#4a7090",fontSize:11}}>日足データ取得中…</div>);
 
@@ -2546,6 +2572,10 @@ function DailyChartWithBand(p){
   var vals=closes.slice();
   [ma25,ma75].forEach(function(arr){arr.forEach(function(v){if(v!=null)vals.push(v);});});
   if(b90.length){vals.push(b90[BAND_DAYS-1].u);vals.push(b90[BAND_DAYS-1].l);}
+  // Chronosの予測は「予測時点の株価」を基準にしているので、現在値に合わせて倍率で寄せる
+  var chScale=(ch&&ch.p>0)?last/ch.p:1;
+  var chQ50=(ch&&ch.q50&&ch.q50.length>=BAND_DAYS)?ch.q50.map(function(v){return v*chScale;}):null;
+  if(chQ50)chQ50.forEach(function(v){vals.push(v);});
   var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);
   var rng=(mx-mn)||1;mn-=rng*0.05;mx+=rng*0.05;rng=mx-mn;
 
@@ -2563,6 +2593,18 @@ function DailyChartWithBand(p){
   }
   function fmt(v){return Math.round(v).toLocaleString();}
   var dateLabels=dates.length>1?pickDateLabels(dates,5):[]; // 日付ラベル＋その位置の縦目盛線
+  // Chronosの5日後が、簡易版の帯の内側か外側かを見る（外側＝平常の値動きを超える動き）
+  var chLine=null,chJudge=null;
+  if(chQ50&&b68.length){
+    var cp=[FX+","+toY(last)];
+    for(var ct=1;ct<=BAND_DAYS;ct++)cp.push(toXf(ct)+","+toY(chQ50[ct-1]));
+    chLine=cp.join(" ");
+    var ce=chQ50[BAND_DAYS-1];
+    var lv=(ce>b90[BAND_DAYS-1].u||ce<b90[BAND_DAYS-1].l)?2:(ce>b68[BAND_DAYS-1].u||ce<b68[BAND_DAYS-1].l)?1:0;
+    chJudge={v:ce,up:ce>last,pct:(ce/last-1)*100,lv:lv,
+             txt:lv===2?"平常を大きく超える":lv===1?"平常よりやや大きい":"平常の範囲内",
+             col:lv===2?"#fbbf24":lv===1?"#a3e635":"#6a90b0"};
+  }
   var priceLevels=[mx,mn+rng*2/3,mn+rng/3,mn]; // 右端に出す価格目盛（4本）
   var GUTTER=46; // 価格ラベル用の右余白
 
@@ -2590,6 +2632,7 @@ function DailyChartWithBand(p){
           <polyline points={lineOf(ma75)} fill="none" stroke="#f472b6" strokeWidth={1} vectorEffect="non-scaling-stroke"/>
           <polyline points={lineOf(ma25)} fill="none" stroke="#a3e635" strokeWidth={1} vectorEffect="non-scaling-stroke"/>
           <polyline points={lineOf(closes)} fill="none" stroke="#e8eef5" strokeWidth={0.9} vectorEffect="non-scaling-stroke"/>
+          {chLine&&<polyline points={chLine} fill="none" stroke="#fbbf24" strokeWidth={1.3} strokeDasharray="4,2" vectorEffect="non-scaling-stroke"/>}
         </svg>
       </div>
       <div style={{width:GUTTER,flexShrink:0,position:"relative",height:H}}>
@@ -2615,6 +2658,9 @@ function DailyChartWithBand(p){
           <span>1日後 <b style={{color:"#38bdf8"}}>{fmt(b68[0].l)}〜{fmt(b68[0].u)}</b></span>
           <span>5日後 <b style={{color:"#38bdf8"}}>{fmt(b68[4].l)}〜{fmt(b68[4].u)}</b></span>
           <span style={{color:"#4a7090"}}>(68%目安・濃い帯)</span>
+          {chJudge&&<span style={{color:chJudge.col}} title="毎晩の自動予測(Chronos)。黄色い点線がその中心線">
+            ┈AI予測 {fmt(chJudge.v)} {chJudge.up?"↑":"↓"}{(chJudge.pct>0?"+":"")+chJudge.pct.toFixed(1)}%・{chJudge.txt}
+          </span>}
           {cal.ready
             ? <span style={{color:"#22d3a0"}} title={"較正前の実カバー率: 68%帯="+cal.cov68+"% / 90%帯="+cal.cov90+"%"}>較正済 判定{cal.n}件</span>
             : <span style={{color:"#4a7090"}} title="記録は毎日たまります。判定は5営業日後に自動でつきます">記録{cal.total}件 / 判定{cal.n}件（較正まで{FC_MIN_SAMPLES}件）</span>}
@@ -3840,7 +3886,7 @@ function StockDetailPanel(p){
         </div>
         {chartMode==="1m"
           ? <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?150:250} aiEntry={aiEntry}/>
-          : <DailyChartWithBand daily={daily} height={isMobile?150:250}/>}
+          : <DailyChartWithBand daily={daily} ticker={s.ticker} height={isMobile?150:250}/>}
       </div>
 
             {/* シグナル詳細（出来高急増後の値動きを内包）／板情報・利確損切りライン（右） */}
