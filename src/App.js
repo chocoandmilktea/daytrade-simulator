@@ -2468,6 +2468,7 @@ function DailyChartWithBand(p){
     return FX+","+toY(last)+" "+up.join(" ")+" "+lo.join(" ");
   }
   function fmt(v){return Math.round(v).toLocaleString();}
+  var dateLabels=dates.length>1?pickDateLabels(dates,5):[]; // 日付ラベル＋その位置の縦目盛線
 
   return(
     <div>
@@ -2478,6 +2479,10 @@ function DailyChartWithBand(p){
         </div>
         <span style={{position:"absolute",top:3,right:4,zIndex:2,fontSize:9,color:"#6a90b0",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"2px 5px"}}>日足6ヶ月</span>
         <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
+          {dateLabels.map(function(t,i){
+            if(i===0)return null; // 左端は枠と重なるので引かない
+            return(<line key={"g"+i} x1={toXh(t.index)} y1={0} x2={toXh(t.index)} y2={H} stroke="#1a2c44" strokeWidth={1} vectorEffect="non-scaling-stroke"/>);
+          })}
           {b90.length>0&&<polygon points={bandPts(b90)} fill="#38bdf8" opacity={0.10}/>}
           {b68.length>0&&<polygon points={bandPts(b68)} fill="#38bdf8" opacity={0.20}/>}
           <line x1={FX} y1={0} x2={FX} y2={H} stroke="#2a4060" strokeWidth={1} strokeDasharray="2,2" vectorEffect="non-scaling-stroke"/>
@@ -2489,7 +2494,7 @@ function DailyChartWithBand(p){
       </div>
       {dates.length>1&&(
         <div style={{position:"relative",height:13,marginTop:1}}>
-          {pickDateLabels(dates,5).map(function(t,i){
+          {dateLabels.map(function(t,i){
             return(<span key={i} style={{position:"absolute",left:(toXh(t.index)/W)*100+"%",top:0,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",transform:i===0?"translateX(0%)":"translateX(-50%)"}}>{t.label}</span>);
           })}
           <span style={{position:"absolute",right:0,top:0,fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>+5日</span>
