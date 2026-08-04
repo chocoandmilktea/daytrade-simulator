@@ -2,12 +2,11 @@ name: forecast
 
 on:
   schedule:
-    # 15:00 UTC = 日本時間 翌0:00。曜日は 0-4(日〜木 UTC) = 月〜金(JST)
     - cron: '0 15 * * 0-4'
-  workflow_dispatch:   # 手動実行用のボタンが出る（初回テストはこれを使う）
+  workflow_dispatch:
 
 permissions:
-  contents: write      # 結果をコミットするために必要
+  contents: write
 
 jobs:
   run:
@@ -20,27 +19,25 @@ jobs:
         with:
           python-version: '3.11'
 
-      # モデル本体（数百MB）を毎回ダウンロードしないよう保存しておく
-      - name: モデルのキャッシュ
+      - name: Cache model
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
           key: hf-chronos-bolt-small-v1
 
-      # GPU版のtorchは2GB近くあるのでCPU版だけを入れる（数分の短縮になる）
-      - name: ライブラリの導入
+      - name: Install libraries
         run: |
           pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install chronos-forecasting requests
 
-      - name: 予測を実行
+      - name: Run forecast
         env:
           SYNC_URL: ${{ secrets.SYNC_URL }}
           USER_ID: ${{ secrets.USER_ID }}
         run: python scripts/forecast.py
 
-      - name: 結果をコミット
+      - name: Commit result
         run: |
           git config user.name  "forecast-bot"
           git config user.email "actions@users.noreply.github.com"
