@@ -91,7 +91,9 @@ def main():
                 chunk, prediction_length=HORIZON,
                 quantile_levels=[0.1, 0.5, 0.9])
             for j, m in enumerate(meta[i:i + BATCH]):
-                a = q[j]                       # 形は (HORIZON, 3)
+                                a = q[j]
+                if a.ndim == 3:
+                    a = a[0]
                 items[m["ticker"]] = {
                     "d": m["date"],
                     "p": round(m["base"], 2),
