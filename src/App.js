@@ -1009,19 +1009,19 @@ function updateForecastLog(ticker,d){
 function fcCalibration(){
   var now=Date.now();
   if(FC_CAL_CACHE&&now-FC_CAL_TS<60000)return FC_CAL_CACHE;
-  var list=fcLoad(),z=[],rt=Math.sqrt(BAND_DAYS);
+  var list=fcLoad(),z=[],rt=Math.sqrt(BAND_DAYS),total=list.length;
   for(var i=0;i<list.length;i++){
     var r=list[i];
     if(r.a>0&&r.p>0&&r.s>0)z.push(Math.abs(Math.log(r.a/r.p))/(r.s*rt));
   }
   var out;
   if(z.length<FC_MIN_SAMPLES){
-    out={n:z.length,k68:1,k90:1,ready:false};
+    out={n:z.length,total:total,k68:1,k90:1,ready:false};
   }else{
     z.sort(function(a,b){return a-b;});
     function q(pp){return z[Math.min(z.length-1,Math.floor(pp*z.length))];}
     function cov(k){var c=0;for(var i2=0;i2<z.length;i2++)if(z[i2]<=k)c++;return Math.round(c/z.length*100);}
-    out={n:z.length,k68:q(0.68)/BAND_K68,k90:q(0.90)/BAND_K90,ready:true,cov68:cov(BAND_K68),cov90:cov(BAND_K90)};
+    out={n:z.length,total:total,k68:q(0.68)/BAND_K68,k90:q(0.90)/BAND_K90,ready:true,cov68:cov(BAND_K68),cov90:cov(BAND_K90)};
   }
   FC_CAL_CACHE=out;FC_CAL_TS=now;return out;
 }
@@ -2586,8 +2586,8 @@ function DailyChartWithBand(p){
           <span>5日後 <b style={{color:"#38bdf8"}}>{fmt(b68[4].l)}〜{fmt(b68[4].u)}</b></span>
           <span style={{color:"#4a7090"}}>(68%目安・濃い帯)</span>
           {cal.ready
-            ? <span style={{color:"#22d3a0"}} title={"90%帯の実カバー率 "+cal.cov90+"%（較正前）"}>較正済 {cal.n}件</span>
-            : <span style={{color:"#4a7090"}}>記録中 {cal.n}/{FC_MIN_SAMPLES}件</span>}
+            ? <span style={{color:"#22d3a0"}} title={"較正前の実カバー率: 68%帯="+cal.cov68+"% / 90%帯="+cal.cov90+"%"}>較正済 判定{cal.n}件</span>
+            : <span style={{color:"#4a7090"}} title="記録は毎日たまります。判定は5営業日後に自動でつきます">記録{cal.total}件 / 判定{cal.n}件（較正まで{FC_MIN_SAMPLES}件）</span>}
         </div>
       ):(
         <div style={{fontSize:10,color:"#4a7090",padding:"5px 4px"}}>データ不足のため予測レンジは非表示</div>
