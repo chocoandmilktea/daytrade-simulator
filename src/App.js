@@ -133,6 +133,34 @@ var DAILY_API="https://daytrade-simulator.vercel.app/api/daily";
 var TACHIBANA_WATCH_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-watch";
 var TACHIBANA_QUOTE_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-quote";
 
+// ── 立花証券のリアルタイム現在値を1銘柄ぶん取得する ──────────────────────
+// しくみ：サーバー(VPS)が立花証券から受け取った値をRedisに書き込み、アプリはそれを読む。
+// タップ直後はRedisにまだ値が無いので、①「この銘柄を見ている」と登録(watch) →
+// ②1秒おきに最大8回まで取りに行く、という順番が必要。
+// 取れなければ null を返し、呼び出し側でYahoo（約20分遅れ）にフォールバックする。
+async function fetchTachibanaPrice(ticker){
+  if(!ticker||!ticker.endsWith(".T")) return null; // 日本株のみ対応
+  var code=ticker.replace(".T","");
+  try{
+    await fetch(TACHIBANA_WATCH_API,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({ticker:code}),signal:AbortSignal.timeout(8000)});
+  }catch(e){ return null; }
+  for(var i=0;i<8;i++){
+    try{
+      var res=await fetch(TACHIBANA_QUOTE_API+"&ticker="+encodeURIComponent(code),{signal:AbortSignal.timeout(8000)});
+      var json=await res.json();
+      if(json&&json.found){
+        if(json.stale) return null;                      // 休場中の古い値ならYahooに任せる
+        var raw=json.fields&&json.fields["p_1_DPP"];     // p_1_DPP＝現在値
+        var p=raw!=null?parseFloat(raw):NaN;
+        if(isFinite(p)&&p>0) return p;
+      }
+    }catch(e){}
+    await new Promise(function(r){setTimeout(r,1000);});
+  }
+  return null;
+}
+
 // ── 当日5分足（カード常時ミニ表示用）─────────────────────────────────────
 // J-Quantsの1分足をサーバー側(api/intraday.js)で5分足に集約して返す想定
 // 土日・休場日はサーバー側で自動的に直近の取引日まで遡るため、date（実際の取引日）も受け取る
@@ -3585,14 +3613,11 @@ function StockDetailPanel(p){
         <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?150:250} aiEntry={aiEntry}/>
       </div>
 
-            {/* 統計ベースの目安（全幅・出来高急増後の値動きより上） */}
-      <div style={{marginBottom:2}}>
-        <StatForecastPanel s={s} onInfoClick={function(){setShowStatInfo(true);}}/>
-      </div>
-
             {/* シグナル詳細（出来高急増後の値動きを内包）／板情報・利確損切りライン（右） */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:isMobile?6:10,alignItems:"start"}}>
-        <div style={{minWidth:0}}>
+        <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
+          {/* 統計ベースの目安（シグナル詳細と同じ左列・同じ幅） */}
+          <StatForecastPanel s={s} onInfoClick={function(){setShowStatInfo(true);}}/>
           <SignalDetailList signals={s.signals} breakdown={s.breakdown} daily={daily}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
@@ -5345,6 +5370,7 @@ export default function App(){
     else{setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,undefined,next);}
   }
   // 保有中（waiting/active）のトレード銘柄の価格を手動で更新（🔄ボタン）。自動の定期更新は行わない
+  // 日本株は立花証券のリアルタイム値を最優先。取れない場合のみYahoo（約20分遅れ）を使う
   function refreshTradePrices(){
     var tickers=[];
     appTrades.concat(personalTrades).forEach(function(t){
@@ -5354,7 +5380,10 @@ export default function App(){
     setTradeRefreshing(true);
     tickers.forEach(function(ticker){delete CACHE[ticker];}); // キャッシュを無視して必ず最新価格を取得
     Promise.all(tickers.map(function(ticker){
-      return fetchYahoo(ticker).then(function(pd){return{ticker:ticker,price:pd.currentPrice};}).catch(function(){return{ticker:ticker,price:null};});
+      return fetchTachibanaPrice(ticker).then(function(live){
+        if(live!=null) return{ticker:ticker,price:live};                       // 立花のリアルタイム値
+        return fetchYahoo(ticker).then(function(pd){return{ticker:ticker,price:pd.currentPrice};}); // 取れなければYahoo
+      }).catch(function(){return{ticker:ticker,price:null};});
     })).then(function(results){
       var priceMap={};results.forEach(function(r){if(r.price!=null)priceMap[r.ticker]=r.price;});
       if(Object.keys(priceMap).length>0){
