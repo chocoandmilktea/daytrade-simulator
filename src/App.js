@@ -1042,6 +1042,20 @@ function fcMerge(remote){
   fcSave(merged);
 }
 
+// お気に入り全銘柄の予測を1日1回まとめて記録する（1銘柄ずつ開かなくても貯まるように）
+var FC_RUN_KEY="fc_last_run";
+function fcTodayJST(){return new Date(Date.now()+9*3600000).toISOString().slice(0,10);}
+async function recordFavForecasts(favs){
+  if(!favs||!favs.length)return;
+  var today=fcTodayJST();
+  try{if(localStorage.getItem(FC_RUN_KEY)===today)return;}catch(e){} // その日すでに実行済みなら何もしない
+  for(var i=0;i<favs.length;i++){
+    await fetchDaily(favs[i]); // この中で updateForecastLog が走る
+    await new Promise(function(r){setTimeout(r,400);}); // Yahooに負担をかけない間隔
+  }
+  try{localStorage.setItem(FC_RUN_KEY,today);}catch(e){}
+}
+
 // ── 買値（デイトレ用エントリー）まわりの共通ヘルパー ──────────────────
 // 東証の呼値（値段の刻み）。これに丸めないと実際には発注できない価格になる
 var TICKS_JP=[[3000,1],[5000,5],[30000,10],[50000,50],[300000,100],[500000,500],[3000000,1000],[5000000,5000]];
@@ -2549,16 +2563,22 @@ function DailyChartWithBand(p){
   }
   function fmt(v){return Math.round(v).toLocaleString();}
   var dateLabels=dates.length>1?pickDateLabels(dates,5):[]; // 日付ラベル＋その位置の縦目盛線
+  var priceLevels=[mx,mn+rng*2/3,mn+rng/3,mn]; // 右端に出す価格目盛（4本）
+  var GUTTER=46; // 価格ラベル用の右余白
 
   return(
     <div>
-      <div style={{position:"relative"}}>
+      <div style={{display:"flex",gap:4}}>
+      <div style={{position:"relative",flex:1,minWidth:0}}>
         <div style={{position:"absolute",top:3,left:4,zIndex:2,display:"flex",flexDirection:"column",gap:2,pointerEvents:"none"}}>
           <span style={{fontSize:9,color:"#a3e635"}}>25日MA</span>
           <span style={{fontSize:9,color:"#f472b6"}}>75日MA</span>
         </div>
         <span style={{position:"absolute",top:3,right:4,zIndex:2,fontSize:9,color:"#6a90b0",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"2px 5px"}}>日足6ヶ月</span>
         <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
+          {priceLevels.map(function(v,i){
+            return(<line key={"h"+i} x1={0} y1={toY(v)} x2={W} y2={toY(v)} stroke="#1a2c44" strokeWidth={1} vectorEffect="non-scaling-stroke"/>);
+          })}
           {dateLabels.map(function(t,i){
             if(i===0)return null; // 左端は枠と重なるので引かない
             return(<line key={"g"+i} x1={toXh(t.index)} y1={0} x2={toXh(t.index)} y2={H} stroke="#1a2c44" strokeWidth={1} vectorEffect="non-scaling-stroke"/>);
@@ -2572,12 +2592,22 @@ function DailyChartWithBand(p){
           <polyline points={lineOf(closes)} fill="none" stroke="#e8eef5" strokeWidth={0.9} vectorEffect="non-scaling-stroke"/>
         </svg>
       </div>
+      <div style={{width:GUTTER,flexShrink:0,position:"relative",height:H}}>
+        {priceLevels.map(function(v,i){
+          var tf=i===0?"translateY(0%)":i===priceLevels.length-1?"translateY(-100%)":"translateY(-50%)";
+          return(<span key={i} style={{position:"absolute",right:0,top:(toY(v)/H)*100+"%",transform:tf,fontSize:10,color:"#a8c0d8",whiteSpace:"nowrap"}}>{fmtPriceLabel(v,rng)}</span>);
+        })}
+      </div>
+      </div>
       {dates.length>1&&(
-        <div style={{position:"relative",height:13,marginTop:1}}>
+        <div style={{display:"flex",gap:4}}>
+        <div style={{position:"relative",flex:1,minWidth:0,height:13,marginTop:1}}>
           {dateLabels.map(function(t,i){
             return(<span key={i} style={{position:"absolute",left:(toXh(t.index)/W)*100+"%",top:0,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",transform:i===0?"translateX(0%)":"translateX(-50%)"}}>{t.label}</span>);
           })}
           <span style={{position:"absolute",right:0,top:0,fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>+5日</span>
+        </div>
+        <div style={{width:GUTTER,flexShrink:0}}/>
         </div>
       )}
       {sigma?(
@@ -5723,6 +5753,11 @@ export default function App(){
       .catch(function(){})
       .finally(function(){setSyncLoaded(true);}); // 成功・失敗どちらでも保存ロックを解除
   },[]);
+  // お気に入りが揃ったら、その日ぶんの予測をまとめて記録する（1日1回だけ動く）
+  useEffect(function(){
+    if(!syncLoaded)return;
+    recordFavForecasts(favs);
+  },[syncLoaded,favs]);
   var TABS=[["all","📋"],["fav","⭐"],["trade","🎯"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"],["guide","📘"]];
   var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期","guide":"使い方"};
 
