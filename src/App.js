@@ -1405,6 +1405,47 @@ function getRegimeSignalStats(){
   REGIME_STATS_CACHE=stats;REGIME_STATS_TS=now;
   return stats;
 }
+// ── トレンド局面別（初動 / 過熱）シグナル的中率 ────────────────────────────
+// 直近3回分の対TOPIX相対(ctx.rel)を合計し、上げ始めたばかり（初動）か、
+// すでに市場を大きく上回った後（過熱）かでシグナルの効き方の違いを見る。
+// 相対で負けている状態（合計マイナス＝トレンドに乗っていない）は対象外。
+// ctx.relを記録し始めた新しい記録だけが対象なので、貯まると自動で表示が始まる
+var TREND_PHASE_LOOKBACK=3; // 何回分の記録をさかのぼって累積するか
+var TREND_PHASE_HOT=3;      // 累積相対が何%以上なら「過熱」とみなすか
+var PHASE_STATS_CACHE=null,PHASE_STATS_TS=0;
+function getTrendPhaseSignalStats(){
+  var now=Date.now();
+  if(PHASE_STATS_CACHE&&now-PHASE_STATS_TS<UNIVERSE_STATS_TTL) return PHASE_STATS_CACHE;
+  var stats={early:{},hot:{}};
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_")!==0||k.indexOf("sh_intraday_")===0) return;
+      if(!/\.T$/.test(k.slice(3))) return; // 対TOPIX相対のためJP銘柄のみ
+      var hist;try{hist=JSON.parse(localStorage.getItem(k)||"[]");}catch(e){hist=[];}
+      for(var i=0;i<hist.length-1;i++){
+        var cur=hist[i],nxt=hist[i+1];
+        if(cur.p==null||nxt.p==null||!cur.sig||!cur.ctx||cur.ctx.rel==null) continue;
+        if(bizDayDiff(cur.d,nxt.d)!==1) continue;
+        var sum=0,n=0;
+        for(var j=Math.max(0,i-TREND_PHASE_LOOKBACK+1);j<=i;j++){
+          var e=hist[j];
+          if(e&&e.ctx&&e.ctx.rel!=null){sum+=e.ctx.rel;n++;}
+        }
+        if(n<2||sum<0) continue;
+        var move=priceMoveState(cur.p,nxt.p);
+        if(move===0) continue;
+        var bucket=sum>=TREND_PHASE_HOT?stats.hot:stats.early;
+        cur.sig.forEach(function(key){
+          if(!bucket[key])bucket[key]={w:0,t:0};
+          bucket[key].t++;
+          if(move>0)bucket[key].w++;
+        });
+      }
+    });
+  }catch(e){}
+  PHASE_STATS_CACHE=stats;PHASE_STATS_TS=now;
+  return stats;
+}
 // ── 実トレード×シグナル：完了トレードの損益と、登録時に点灯していたシグナルの関係 ──
 // sigKeysAtAddを保存し始めた新しいトレードだけが対象。完了トレードが貯まると自動で表示される
 function calcTradeSignalStats(){
@@ -2274,7 +2315,8 @@ function analyzeStock(stock,pd,vixVal){
       var sigKeys=signals.map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
       // 地合い情報（対TOPIX前日比・VIX・時間帯）も一緒に記録しておく（Cの機能）
       // → 「上げ相場ではこのシグナルが効く」等の分析に後日使うための記録のみ。現時点では集計には使わない
-      var ctx={topix:topixChange!=null?topixChange:null,vix:vixVal!=null?parseFloat(vixVal):null,session:currentSessionLabel(),market:stock.market};
+      // relは対TOPIX相対（個別銘柄の前日比 − TOPIXの前日比）。トレンド局面（初動/過熱）の判定に使う
+      var ctx={topix:topixChange!=null?topixChange:null,vix:vixVal!=null?parseFloat(vixVal):null,session:currentSessionLabel(),market:stock.market,rel:relStrength!=null?relStrength:null};
       if(hist.length&&hist[hist.length-1].d===today){
         hist[hist.length-1]={d:today,s:sc,atr:atr,p:price,sig:sigKeys,ctx:ctx,v:verdictKey};
       }else{
@@ -5259,6 +5301,21 @@ function SignalAccuracyContent(p){
   var intradayAcc=calcIntradayAccuracy();
   var verdictAcc=calcVerdictAccuracy();
   var regime=getRegimeSignalStats();
+  var phase=getTrendPhaseSignalStats();
+  // トレンド局面別：初動・過熱の両方で5件以上あるシグナルを、差が大きい順に最大12件
+  var phaseRows=(function(){
+    var keys={};
+    Object.keys(phase.early).forEach(function(k){keys[k]=1;});
+    Object.keys(phase.hot).forEach(function(k){keys[k]=1;});
+    return Object.keys(keys).map(function(k){
+      var e=phase.early[k],h=phase.hot[k];
+      return{signal:k,
+        early:e&&e.t>=5?Math.round(signalQuality(e,k)*100):null,earlyT:e?e.t:0,
+        hot:h&&h.t>=5?Math.round(signalQuality(h,k)*100):null,hotT:h?h.t:0};
+    }).filter(function(r){return r.early!=null&&r.hot!=null;})
+      .sort(function(a,b){return Math.abs(b.early-b.hot)-Math.abs(a.early-a.hot);})
+      .slice(0,12);
+  })();
   var tradeSig=calcTradeSignalStats();
   var thrCheck=calcThresholdCheck();
   // 地合い別：両方の地合いで5件以上あるシグナルを、差が大きい順に最大12件
@@ -5449,6 +5506,30 @@ function SignalAccuracyContent(p){
                   <div style={{flex:1,minWidth:0,color:"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{formatSigKeyLabel(r.signal)}</div>
                   <div title={r.upT+"件"} style={{width:64,flexShrink:0,textAlign:"right",color:cellColor(r.up),fontWeight:700}}>{r.up+"%"}</div>
                   <div title={r.downT+"件"} style={{width:64,flexShrink:0,textAlign:"right",color:cellColor(r.down),fontWeight:700}}>{r.down+"%"}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🚀 トレンド局面別 シグナル的中率</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>直近3回分の対TOPIX相対の合計で、まだ上げ始め（初動）か、すでに市場を大きく上回った後（過熱）かに分けて比較します（差が大きい順）</div>
+        {phaseRows.length===0?(
+          <div style={{fontSize:12,color:"#4a7090",textAlign:"center",padding:"10px 0"}}>📥 データ蓄積中。対TOPIX相対の記録は最近始まったばかりのため、スキャンを重ねると自動で表示が始まります</div>
+        ):(
+          <div>
+            <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
+              <div style={{flex:1,minWidth:0}}>シグナル</div>
+              <div style={{width:64,flexShrink:0,textAlign:"right"}}>初動</div>
+              <div style={{width:64,flexShrink:0,textAlign:"right"}}>過熱</div>
+            </div>
+            {phaseRows.map(function(r,i){
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
+                  <div style={{flex:1,minWidth:0,color:"#b8cce0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{formatSigKeyLabel(r.signal)}</div>
+                  <div title={r.earlyT+"件"} style={{width:64,flexShrink:0,textAlign:"right",color:cellColor(r.early),fontWeight:700}}>{r.early+"%"}</div>
+                  <div title={r.hotT+"件"} style={{width:64,flexShrink:0,textAlign:"right",color:cellColor(r.hot),fontWeight:700}}>{r.hot+"%"}</div>
                 </div>
               );
             })}
