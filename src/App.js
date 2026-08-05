@@ -1558,40 +1558,41 @@ function calcStatForecast(signals,stats){
 function clampPt(v,lim){return Math.max(-lim,Math.min(lim,v));}
 function judgeOverall(a){
   var P=0,R=[];
-  function add(pt,label){pt=Math.round(pt);if(pt===0)return;P+=pt;R.push({pt:pt,label:label});}
+  // ord＝表示の並び順。スコアは常に先頭(0)、それ以外(1)は点数の大きい順に並べる
+  function add(pt,label,ord){pt=Math.round(pt);if(pt===0)return;P+=pt;R.push({pt:pt,label:label,ord:ord||0});}
 
   // 1. 総合スコア（判定の主軸。50点を境に±）
-  add(a.score-50,"スコア"+a.score);
+  add(a.score-50,"スコア"+Math.round(a.score),0);
 
   // 2. 統計ベース予想（デイトレなので「今日の引けまで」を優先。無ければ翌営業日）
   var todayReady=a.todayF&&a.todayF.ready;
   var f=todayReady?a.todayF:(a.nextF&&a.nextF.ready?a.nextF:null);
   if(f) add(clampPt((f.upRate-50)*0.6+f.expPct*4,20),
-    "統計"+(todayReady?"当日":"翌日")+" 上昇"+f.upRate+"%・"+(f.expPct>=0?"+":"")+f.expPct.toFixed(1)+"%");
+    "統計"+(todayReady?"当日":"翌日")+" 上昇"+f.upRate+"%・"+(f.expPct>=0?"+":"")+f.expPct.toFixed(1)+"%",1);
 
   // 3. 同じスコア帯の実測勝率（件数が少ないうちは効きを半分に）
   if(a.band&&a.band.winRate!=null&&a.band.total>=10)
     add(clampPt((a.band.winRate-50)*(a.band.total>=20?0.4:0.2),12),
-      "同スコア帯の実績 "+a.band.winRate+"%("+a.band.total+"件)");
+      "同スコア帯の実績 "+a.band.winRate+"%("+a.band.total+"件)",1);
 
   // 4. シグナルの一致度（強気の数－弱気の数）
   var up=0,dn=0;
   (a.signals||[]).forEach(function(x){if(x.state===1)up++;else if(x.state===-1)dn++;});
-  add(clampPt((up-dn)*3,12),"シグナル 強気"+up+"／弱気"+dn);
+  add(clampPt((up-dn)*3,12),"シグナル 強気"+up+"／弱気"+dn,1);
 
   // 5. 日中型／夜間型（持ち越さないデイトレでは日中の値動きが直接効く）
-  if(a.dayNight) add(a.dayNight.day>0?8:-8,(a.dayNight.day>0?"☀️日中型 +":"🌙夜間型 ")+a.dayNight.day+"%");
+  if(a.dayNight) add(a.dayNight.day>0?8:-8,(a.dayNight.day>0?"☀️日中型 +":"🌙夜間型 ")+a.dayNight.day+"%",1);
 
   // 6. 対TOPIX相対（地合いより強いか弱いか）
-  if(a.relInfo) add(a.relInfo.strong?5:-5,"対TOPIX "+a.relInfo.label);
+  if(a.relInfo) add(a.relInfo.strong?5:-5,"対TOPIX "+a.relInfo.label,1);
 
   // 7. リスクリワード（利確幅 ÷ 損切り幅）
-  if(a.rr!=null) add(a.rr>=2?8:a.rr>=1.5?4:a.rr>=1?0:-6,"リスクリワード 1:"+a.rr);
+  if(a.rr!=null) add(a.rr>=2?8:a.rr>=1.5?4:a.rr>=1?0:-6,"リスクリワード 1:"+a.rr,1);
 
   // 8. 流動性・値幅（不利な材料だが必ず負けるわけではないので軽い減点のみ）
-  if(a.scalpFit) add(-4,"⚠️"+a.scalpFit.label);
+  if(a.scalpFit) add(-4,"⚠️"+a.scalpFit.label,1);
 
-  R.sort(function(x,y){return Math.abs(y.pt)-Math.abs(x.pt);});
+  R.sort(function(x,y){return x.ord!==y.ord?x.ord-y.ord:Math.abs(y.pt)-Math.abs(x.pt);});
   return{key:P>=25?"BUY":P>=10?"TRY":P>=-10?"WATCH":"SKIP",points:Math.round(P),reasons:R,statReady:!!f};
 }
 // スキャン結果1件分から総合判定を作るラッパー（analyze内・再スキャン後の両方から呼ぶ）
