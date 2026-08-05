@@ -3160,7 +3160,7 @@ function FavPickerModal(p){
       <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:8,color:"#b8cce0"}}>
         <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:4}}>⭐ {ticker.replace(".T","")} の保存先</div>
         {optBtn(0,"全体（未分類）")}
-        {[1,2,3,4,5].map(function(n){return optBtn(n,groupNames[n]);})}
+        {[1,2,3,4].map(function(n){return optBtn(n,groupNames[n]);})}
         {isMember&&<button onClick={onRemove} style={{padding:"12px 10px",background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:8,color:"#f43f5e",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace",marginTop:4}}>🗑 お気に入り削除</button>}
         <button onClick={onClose} style={{padding:"8px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
       </div>
@@ -4251,7 +4251,6 @@ function FavPanel(p){
   var sortModeS=useState("reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "reg"=登録順(新しい順) / "dayType"=日中型順(日中分の累積が高い順)
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
-  var filterS=useState("ALL");var filterMkt=filterS[0],setFilterMkt=filterS[1];
   var groupFilterS=useState(0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1]; // 0=全体
   var addGroupS=useState(0);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
   var showAccS=useState(false);var showAcc=showAccS[0],setShowAcc=showAccS[1];
@@ -4273,7 +4272,7 @@ function FavPanel(p){
   }
   var statusMsg=searchStatus==="loading"?"取得中...":searchStatus==="ok"?"追加しました":searchStatus==="error"?"見つかりません":searchStatus==="already"?"登録済みです":null;
   var groupedStocks=groupFilter===0?favStocks:favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
-  var mktFiltered=filterMkt==="ALL"?groupedStocks:groupedStocks.filter(function(s){return s.market===filterMkt;});
+  var mktFiltered=groupedStocks;
   var dnProgS=useState(null);var dnProg=dnProgS[0],setDnProg=dnProgS[1]; // 日中型順のための日足取得の進捗
   var displayStocks=sortMode==="dayType"
     ?mktFiltered.slice().sort(function(a,b){
@@ -4281,10 +4280,20 @@ function FavPanel(p){
         var av=ad?ad.day:-Infinity,bv=bd?bd.day:-Infinity;
         return bv-av;
       })
+    :sortMode==="score"
+    ?mktFiltered.slice().sort(function(a,b){return (b.score||0)-(a.score||0);})
     :mktFiltered;
-  function fBtn(val,label,activeColor){
-    var active=filterMkt===val;
-    return(<button onClick={function(){setFilterMkt(val);}} style={{background:active?activeColor+"20":"transparent",border:"1px solid "+(active?activeColor:"#1e3050"),borderRadius:6,color:active?activeColor:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{label}</button>);
+  var TIP_DAY="過去1年で日中（始値→終値）に上がる癖が強い順に並べます。日足が未取得の銘柄は自動で取得し、取得できないものは下に並びます";
+  var TIP_SCORE="アプリのスコア（0〜100点）が高い順に並べます";
+  // 並び替えボタンの共通部品（同じボタンをもう一度押すと登録順に戻る）
+  function sBtn(mode,label,title){
+    var active=sortMode===mode;
+    function onClick(){
+      var next=active?"reg":mode;
+      setSortMode(next);
+      if(next==="dayType"){fillDayNightFor(mktFiltered,function(d,t){setDnProg(d<t?{d:d,t:t}:null);}).then(function(){setDnProg(null);});}
+    }
+    return(<button onClick={onClick} title={title} style={{background:active?"#fbbf2420":"transparent",border:"1px solid "+(active?"#fbbf24":"#1e3050"),borderRadius:6,color:active?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400,whiteSpace:"nowrap"}}>{label}{active?"✓":""}</button>);
   }
   function gBtn(val,label){
     var active=groupFilter===val;
@@ -4319,7 +4328,7 @@ function FavPanel(p){
             <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"6px 8px",fontSize:16,fontFamily:"monospace",flex:"1 1 auto",minWidth:0}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
             <select value={addGroup} onChange={function(e){setAddGroup(Number(e.target.value));}} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#fbbf24",padding:"0 2px",fontSize:12,fontFamily:"monospace",flex:"0 0 auto",width:78}}>
               <option value={0}>全体</option>
-              {[1,2,3,4,5].map(function(n){return <option key={n} value={n}>{groupNames[n]}</option>;})}
+              {[1,2,3,4].map(function(n){return <option key={n} value={n}>{groupNames[n]}</option>;})}
             </select>
             <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",flex:"0 0 auto"}}>追加</button>
           </div>
@@ -4334,17 +4343,15 @@ function FavPanel(p){
         <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:4,display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
           <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>グループ:</span>
           {gBtn(0,"全体")}
-          {[1,2,3,4,5].map(function(n){return <span key={n} style={{display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
+          {[1,2,3,4].map(function(n){return <span key={n} style={{display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
         </div>
         {showAcc&&createPortal(<SignalAccuracyModal onClose={function(){setShowAcc(false);}}/>,document.body)}
         {favStocks.length>0&&(
           <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"8px 12px",marginBottom:4,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-            <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>市場:</span>
-            {fBtn("ALL","全て","#60a5fa")}
-            {fBtn("US","US","#3b82f6")}
-            {fBtn("JP","JP","#f87171")}
-            <button onClick={function(){var next=sortMode==="dayType"?"reg":"dayType";setSortMode(next);if(next==="dayType"){fillDayNightFor(mktFiltered,function(d,t){setDnProg(d<t?{d:d,t:t}:null);}).then(function(){setDnProg(null);});}}} title="過去1年で日中（始値→終値）に上がる癖が強い順に並べます。持ち越さないデイトレは日中分しか取れないため、日中型の銘柄ほど相性が良い。日足が未取得の銘柄は自動で取得し、取得できないものは下に並びます" style={{marginLeft:"auto",background:sortMode==="dayType"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="dayType"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="dayType"?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="dayType"?700:400}}>☀️日中型順{sortMode==="dayType"?"✓":""}</button>
-            <button onClick={function(){setShowAcc(true);}} style={{background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
+            <span style={{fontSize:11,color:"#2a6090",marginRight:2}}>並び替え:</span>
+            {sBtn("dayType","☀️日中順",TIP_DAY)}
+            {sBtn("score","🏆スコア順",TIP_SCORE)}
+            <button onClick={function(){setShowAcc(true);}} style={{marginLeft:"auto",background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
           </div>
         )}
         </div>
@@ -4354,13 +4361,14 @@ function FavPanel(p){
         <>
         <div style={{background:"#050e1c",border:"1px solid #1e3050",borderRadius:10,padding:"6px 14px",marginBottom:8}}>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"6px 8px",fontSize:16,fontFamily:"monospace",flex:"1 1 auto",minWidth:120}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
+            <input style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"6px 8px",fontSize:16,fontFamily:"monospace",flex:"0 0 auto",width:100}} value={searchTicker} placeholder="AAPL / 7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
             <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",flex:"0 0 auto"}}>追加</button>
             <span style={{width:1,alignSelf:"stretch",background:"#1e3050",flexShrink:0}}/>
             <span style={{fontSize:11,color:"#2a6090"}}>グループ:</span>
             {gBtn(0,"全体")}
-            {[1,2,3,4,5].map(function(n){return <span key={n} style={{display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
-            <button onClick={function(){var next=sortMode==="dayType"?"reg":"dayType";setSortMode(next);if(next==="dayType"){fillDayNightFor(mktFiltered,function(d,t){setDnProg(d<t?{d:d,t:t}:null);}).then(function(){setDnProg(null);});}}} title="過去1年で日中（始値→終値）に上がる癖が強い順に並べます。持ち越さないデイトレは日中分しか取れないため、日中型の銘柄ほど相性が良い。日足が未取得の銘柄は自動で取得し、取得できないものは下に並びます" style={{background:sortMode==="dayType"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="dayType"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="dayType"?"#fbbf24":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="dayType"?700:400}}>☀️日中型順{sortMode==="dayType"?"✓":""}</button>
+            {[1,2,3,4].map(function(n){return <span key={n} style={{display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
+            {sBtn("dayType","☀️日中順",TIP_DAY)}
+            {sBtn("score","🏆スコア順",TIP_SCORE)}
             <button onClick={function(){setShowAcc(true);}} style={{background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
           </div>
           {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
@@ -5738,6 +5746,37 @@ export default function App(){
       setLoading(false);
     }
   },[]);
+  // ⭐お気に入り＋トレード登録中の銘柄だけを分析（AI業種選定・ランキング取得なしで高速）
+  var scanFavsOnly=useCallback(async function(){
+    setLoading(true);
+    CACHE={};
+    setProgress({done:0,total:0,msg:"⭐お気に入り銘柄を取得中..."});
+    try{
+      var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
+      var universe=[];
+      function push(ticker,name){
+        if(!ticker||universe.some(function(u){return u.ticker===ticker;}))return;
+        var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");
+        universe.push({ticker:ticker,name:name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
+      }
+      favList.forEach(function(t){push(t);});
+      loadTrades("app").concat(loadTrades("personal")).forEach(function(t){if(t.status!=="done")push(t.ticker,t.name);});
+      if(universe.length===0){setProgress({done:0,total:0,msg:"⚠️ お気に入り銘柄が登録されていません"});return;}
+      setProgress({done:0,total:universe.length,msg:null});
+      var results=[];
+      await Promise.all(universe.map(async function(stock){
+        var pd=await fetchYahooSafe(stock.ticker);
+        try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+        setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+      }));
+      results.sort(function(x,y){return y.score-x.score;});
+      setStocks(results);
+      setTs(new Date().toLocaleTimeString("ja-JP"));
+    }catch(err){
+      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
+    }finally{setLoading(false);}
+  },[vix]);
+  function startFavsOnly(){setStartMode("favs");scanFavsOnly();}
   var rescanLoadingS=useState({});var rescanLoading=rescanLoadingS[0],setRescanLoading=rescanLoadingS[1];
   var rescanOne=useCallback(async function(ticker){
     setRescanLoading(function(prev){var n=Object.assign({},prev);n[ticker]=true;return n;});
@@ -5860,6 +5899,7 @@ export default function App(){
         <button onClick={function(){setRescanMenuOpen(false);startOmakase();}} style={{padding:"12px 10px",background:"#0ea5e9",border:"none",borderRadius:8,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>🤖 おまかせ（AIがトレンド業種を選定）</button>
         <button onClick={function(){setRescanMenuOpen(false);setPickedSectors([]);setSectorPickerOpen(true);}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>📋 業種コード一覧から選ぶ</button>
         <button onClick={function(){setRescanMenuOpen(false);reloadCurrentUniverse();}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>🔁 今の銘柄でリロード</button>
+        <button onClick={function(){setRescanMenuOpen(false);scanFavsOnly();}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#fbbf24",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>⭐ お気に入りのみスキャン</button>
         <button onClick={function(){setRescanMenuOpen(false);}} style={{padding:"8px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
       </div>
     </div>,
@@ -5886,6 +5926,9 @@ export default function App(){
         </button>
         <button onClick={startLastSectors} style={{width:260,padding:"14px 12px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
           🔁 前回の業種を表示
+        </button>
+        <button onClick={startFavsOnly} style={{width:260,padding:"14px 12px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#fbbf24",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
+          ⭐ お気に入りのみスキャン（高速）
         </button>
         {sectorPickerModal}
       </div>
