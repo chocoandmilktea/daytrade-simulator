@@ -128,6 +128,49 @@ function resolveEventDate(ticker,field,freshDate){
 var CACHE={}, CACHE_TTL=15*60*1000; // 15分足に合わせてTTLを15分に短縮
 var VERCEL_API="https://daytrade-simulator.vercel.app/api/stock";
 var RANKING_API="https://daytrade-simulator.vercel.app/api/ranking";
+var NAMES_API="https://daytrade-simulator.vercel.app/api/ipo";
+
+// ── 銘柄コード→会社名の対応表 ──────────────────────────────────────────
+// /api/ipo（立花証券の銘柄マスタ）から一括で取得し、端末内に24時間キャッシュする。
+// これが無いと「8308」のようにコードのままAIに渡ってしまい、AIがWeb検索で
+// 別銘柄と取り違える原因になる。取得に失敗した場合はコード表示のまま動く。
+var JP_NAME_MAP=null;                    // メモリ上のキャッシュ
+var JP_NAME_TTL=24*60*60*1000;           // 24時間
+function loadCachedNameMap(){
+  try{
+    var v=JSON.parse(localStorage.getItem("jp_name_map")||"null");
+    if(v&&v.names&&Date.now()-(v.ts||0)<JP_NAME_TTL) return v.names;
+  }catch(e){}
+  return null;
+}
+async function fetchJPNameMap(){
+  if(JP_NAME_MAP) return JP_NAME_MAP;
+  var cached=loadCachedNameMap();
+  if(cached){JP_NAME_MAP=cached;return cached;}
+  try{
+    var res=await fetch(NAMES_API,{signal:AbortSignal.timeout(15000)});
+    var json=await res.json();
+    JP_NAME_MAP=json.names||{};
+    try{localStorage.setItem("jp_name_map",JSON.stringify({ts:Date.now(),names:JP_NAME_MAP}));}catch(e){}
+    return JP_NAME_MAP;
+  }catch(e){ return {}; } // 失敗はキャッシュせず、次の機会に再取得する
+}
+// universe内の「会社名がコードのままの日本株」に正式名称を当てはめる（AIの銘柄取り違え防止）
+async function fillJPNames(universe){
+  await fetchJPNameMap();
+  (universe||[]).forEach(function(u){
+    if(!u||u.market!=="JP") return;
+    var c=u.ticker.replace(".T","");
+    if(!u.name||u.name===c||u.name===u.ticker) u.name=jpNameOf(u.ticker,c);
+  });
+  return universe;
+}
+// ticker("8308.T")から会社名を引く。見つからなければfallback（通常はコード）を返す
+function jpNameOf(ticker,fallback){
+  var code=String(ticker||"").replace(".T","");
+  var m=JP_NAME_MAP||loadCachedNameMap();
+  return (m&&m[code])||fallback||code;
+}
 var SECTOR_API="https://daytrade-simulator.vercel.app/api/sector";
 var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
 var DAILY_API="https://daytrade-simulator.vercel.app/api/daily";
@@ -719,8 +762,17 @@ function buildAiPrompt(s){
       "ATRトレンド: "+(atrTrend>0?"↑拡大中(ボラ増)":"↓縮小中(ボラ減)")+"\n";
   }
   var accPart=buildAccuracyPart(s.signals,s.score);
+  // 銘柄の書き方：AIがWeb検索で別銘柄と取り違えないよう、会社名を主・証券コードを従にする。
+  // 会社名が取得できていない場合は「コードのままでは検索しない」ことを明示する。
+  var codeOnly=s.ticker.replace(".T","");
+  var hasName=!!(s.name&&s.name!==codeOnly&&s.name!==s.ticker);
+  var idLine=isJP
+    ?("銘柄: "+(hasName
+        ?(s.name+"（東京証券取引所・証券コード "+codeOnly+"）")
+        :("東京証券取引所 証券コード "+codeOnly+"（会社名が不明なため、まず「"+codeOnly+" 株価」等のWeb検索で日本の上場企業名を特定してから分析してください）")))
+    :("銘柄: "+s.ticker+(hasName?" ("+s.name+")":""));
   return "あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
-    "銘柄: "+s.ticker+" ("+s.name+")\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
+    idLine+"\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
     "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
     "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: "+(s.fromLow>=0?"+":"")+s.fromLow.toFixed(1)+"%\n"+
     "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
@@ -731,7 +783,8 @@ function buildAiPrompt(s){
     "シグナル:\n"+s.signals.map(function(sig){return"  "+sig.label+": "+sig.val;}).join("\n")+"\n\n"+
     "まず最初の1行に、次の形式のタグで数値データだけを出力してください（前後に説明や```を付けないこと。これが最優先です）:\n"+
     "<AI_DATA>{\"entry\":"+(isJP?"整数":"小数")+",\"target\":"+(isJP?"整数":"小数")+",\"stop\":"+(isJP?"整数":"小数")+",\"forecast\":{\"direction\":\"上昇 or 下落 or 中立\",\"confidence\":整数0〜100,\"timeframe\":\"文字列\",\"reason\":\"文字列\"}}</AI_DATA>\n\n"+
-    "その後で、以下のトレード判断を日本語で分かりやすく解説してください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n5. 🔮 今後の見通し: 必ずWeb検索でこの銘柄の最新ニュース・決算・材料を調べた上で、今後数日〜1週間程度で上昇/下落/中立のどれに向かいやすいかを予想し、確信度と根拠を1〜2文で述べてください";
+    "その後で、以下のトレード判断を日本語で分かりやすく解説してください:\n1. 📌 今日中に買うべきか / 見送るべきか（理由を2文で）\n2. 💰 entry: 具体的な買いレンジ（買いを検討すべき価格帯）\n3. 🎯 target: 利確ライン（ATR比での根拠も添えて）\n4. 🛑 stop: 損切りライン（サポートやBB下限など根拠も添えて）\n5. 🔮 今後の見通し: 必ずWeb検索でこの銘柄の最新ニュース・決算・材料を調べた上で、今後数日〜1週間程度で上昇/下落/中立のどれに向かいやすいかを予想し、確信度と根拠を1〜2文で述べてください"+
+    (isJP?"\n\n※Web検索は上記の会社名で行ってください。「"+codeOnly+".T」のようなコード単体での検索は、別の銘柄の情報を拾ってしまう原因になります。銘柄が特定しきれない場合も、ユーザーに質問や確認を求めず、手元のデータだけで分析を完了してください。":"");
 }
 // 上位N件 → claude.ai貼り付け用プロンプトを生成
 // jpLimited(既定true): 日本株限定で「出来高急増率」×「ボラティリティ」の合成ランキングで上位N件を選出
@@ -824,7 +877,7 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
     var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         prompt:buildAiPrompt(s),
-        system:"必ず自分でWeb検索ツールを使って、この銘柄の最新ニュース・材料を確認してから回答してください。ユーザーに質問や確認を求めず、自律的に分析を完了してください。\n\n回答の一番最初に、解説文より前に必ず次の形式でJSONデータを出力してください:\n<AI_DATA>{\"entry\":推奨エントリー価格の数値,\"target\":利確目標価格の数値,\"stop\":損切りラインの数値,\"forecast\":{\"direction\":\"上昇\"または\"下落\"または\"中立\",\"confidence\":0〜100の確信度数値,\"timeframe\":\"期間目安(例:1〜3営業日)\",\"reason\":\"見通しの理由を1文で\"}}</AI_DATA>\nこのタグの後に、通常の分析コメント（買い/売り推奨、Entry/Target/Stopの詳細、今後の見通しなど）を日本語で記載してください。",
+        system:"必ず自分でWeb検索ツールを使って、この銘柄の最新ニュース・材料を確認してから回答してください。日本株の検索はプロンプトに書かれた会社名で行い、「8308.T」のような証券コード単体では検索しないでください（別銘柄の情報を拾う原因になります）。銘柄が特定できない場合でも、ユーザーに質問や確認を求めず、自律的に分析を完了してください。\n\n回答の一番最初に、解説文より前に必ず次の形式でJSONデータを出力してください:\n<AI_DATA>{\"entry\":推奨エントリー価格の数値,\"target\":利確目標価格の数値,\"stop\":損切りラインの数値,\"forecast\":{\"direction\":\"上昇\"または\"下落\"または\"中立\",\"confidence\":0〜100の確信度数値,\"timeframe\":\"期間目安(例:1〜3営業日)\",\"reason\":\"見通しの理由を1文で\"}}</AI_DATA>\nこのタグの後に、通常の分析コメント（買い/売り推奨、Entry/Target/Stopの詳細、今後の見通しなど）を日本語で記載してください。",
         useWebSearch:true,
         stream:true
       }),signal:AbortSignal.timeout(45000)});
@@ -4436,12 +4489,14 @@ function FavPanel(p){
   var filtersOpenS=useState(false);var filtersOpen=filtersOpenS[0],setFiltersOpen=filtersOpenS[1];
   async function addByTicker(){
     var raw=searchTicker.trim().toUpperCase();if(!raw)return;
-    var ticker=(raw.match(/^\d{4}$/)?raw+".T":raw);
+    // 日本株判定：数字4桁(7203)に加え、数字3桁＋英数字1桁の新形式コード(285A等)にも対応
+    var ticker=(/^\d{3}[0-9A-Z]$/.test(raw)?raw+".T":raw);
     if(favs.indexOf(ticker)>=0){setSearchStatus("already");return;}
     setSearchStatus("loading");
     try{
       var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");
-      var base={ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code};
+      if(isJP) await fetchJPNameMap(); // 会社名の対応表を用意（キャッシュ済みなら即返る）
+      var base={ticker:ticker,name:isJP?jpNameOf(ticker,code):code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code};
       var pd=await fetchYahoo(ticker);
       var newStock=analyzeStock(base,pd,vix);
       setStocks(function(prev){return prev.some(function(s){return s.ticker===ticker;})?prev:prev.concat([newStock]);});
@@ -5977,6 +6032,7 @@ export default function App(){
           universe.push({ticker:t.ticker,name:t.name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
         }
       });
+      await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
       setProgress({done:0,total:universe.length,msg:null});
       // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
       // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
@@ -6011,6 +6067,7 @@ export default function App(){
       favList.forEach(function(t){push(t);});
       loadTrades("app").concat(loadTrades("personal")).forEach(function(t){if(t.status!=="done")push(t.ticker,t.name);});
       if(universe.length===0){setProgress({done:0,total:0,msg:"⚠️ お気に入り銘柄が登録されていません"});return;}
+      await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
       setProgress({done:0,total:universe.length,msg:null});
       var results=[];
       await Promise.all(universe.map(async function(stock){
