@@ -3778,7 +3778,7 @@ function VerdictPanel(p){
     <div style={{background:b.bg,border:"2px solid "+b.border,borderRadius:8,padding:"6px 10px"}}>
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontSize:10,fontWeight:700,color:"#8aa8c8"}}>🚦総合判定</span>
-        <span style={{fontSize:20,fontWeight:800,color:b.text,lineHeight:1}}>{b.label}</span>
+        <span style={{fontSize:12,fontWeight:800,color:b.text,lineHeight:1}}>{b.label}</span>
         <span style={{fontSize:10,color:"#8aa8c8"}}>{NOTE[v.key]}</span>
         <span style={{fontSize:10,color:"#4a7090",marginLeft:"auto"}}>合計 {(v.points>=0?"+":"")+v.points}点</span>
       </div>
@@ -4595,8 +4595,8 @@ function TradePanel(p){
       <div style={{display:"flex",gap:12,alignItems:"flex-start",flexDirection:isMobile?"column":"row"}}>
         <div style={{width:(!showAccuracy||isMobile)?"100%":"60%",flexShrink:0,display:"flex",flexDirection:"column",gap:10,minWidth:0}}>
           <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
-            <div>
-              <div style={{fontSize:10,color:"#4a7090",whiteSpace:"nowrap"}}>合計損益（完了{doneList.length}件）{rStats.n>0&&<span style={{marginLeft:6,color:rStats.avgR>=0?"#22d3a0":"#f43f5e",fontWeight:700}}>平均{(rStats.avgR>=0?"+":"")+rStats.avgR.toFixed(2)}R ／ 累計{(rStats.totalR>=0?"+":"")+rStats.totalR.toFixed(1)}R ／ PF{rStats.pf!=null?rStats.pf.toFixed(2):"—"} ／ 損益分岐勝率{rStats.beRate!=null?rStats.beRate+"%":"—"}<span style={{color:"#2a6090"}}>（R集計{rStats.n}件）</span></span>}</div>
+            <div style={{minWidth:0,flex:1}}>
+              <div style={{fontSize:10,color:"#4a7090",whiteSpace:isMobile?"normal":"nowrap",lineHeight:1.6,wordBreak:"break-word"}}>合計損益（完了{doneList.length}件）{rStats.n>0&&<span style={{marginLeft:6,color:rStats.avgR>=0?"#22d3a0":"#f43f5e",fontWeight:700}}>平均{(rStats.avgR>=0?"+":"")+rStats.avgR.toFixed(2)}R ／ 累計{(rStats.totalR>=0?"+":"")+rStats.totalR.toFixed(1)}R ／ PF{rStats.pf!=null?rStats.pf.toFixed(2):"—"} ／ 損益分岐勝率{rStats.beRate!=null?rStats.beRate+"%":"—"}<span style={{color:"#2a6090"}}>（R集計{rStats.n}件）</span></span>}</div>
               <div style={{fontSize:20,fontWeight:800,color:totalPnl>=0?"#22d3a0":"#f43f5e"}}>{doneList.length?fmtPnl(totalPnl,true):"—"}</div>
             </div>
             <div style={{display:"flex",gap:10,alignItems:"center"}}>
