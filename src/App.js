@@ -45,6 +45,7 @@ var MOBILE_HEADER_H=50,MOBILE_TABBAR_H=44; // ヘッダー高さ・スマホ用�
 
 var BADGE = {
   BUY:   { bg:"#052e16", border:"#22d3a0", text:"#22d3a0", label:"買い"   },
+  TRY:   { bg:"#0d2438", border:"#0ea5e9", text:"#38bdf8", label:"打診買い" },
   WATCH: { bg:"#1c1400", border:"#fbbf24", text:"#fbbf24", label:"様子見" },
   SKIP:  { bg:"#1f0010", border:"#f43f5e", text:"#f43f5e", label:"見送り" },
   FAILED:{ bg:"#1a1a1a", border:"#4a5568", text:"#94a3b8", label:"取得失敗" },
@@ -1549,6 +1550,110 @@ function calcStatForecast(signals,stats){
   if(used<FORECAST_MIN_SIGNALS||sumW===0) return{ready:false,used:used,totalN:totalN};
   return{ready:true,used:used,totalN:totalN,expPct:sumMove/sumW,upRate:Math.round(sumUp/sumW*100)};
 }
+
+// ── 🚦 総合判定（デイトレ前提・標準しきい値）──────────────────────────────
+// スコア／統計ベース予想／スコア帯実績／シグナル一致度／日中型／対TOPIX／
+// リスクリワード／流動性 の8項目をすべて点数化し、合計点で1つの結論に集約する。
+// 否決条件（これが出たら無条件で見送り）は設けず、すべて加点・減点として扱う
+function clampPt(v,lim){return Math.max(-lim,Math.min(lim,v));}
+function judgeOverall(a){
+  var P=0,R=[];
+  function add(pt,label){pt=Math.round(pt);if(pt===0)return;P+=pt;R.push({pt:pt,label:label});}
+
+  // 1. 総合スコア（判定の主軸。50点を境に±）
+  add(a.score-50,"スコア"+a.score);
+
+  // 2. 統計ベース予想（デイトレなので「今日の引けまで」を優先。無ければ翌営業日）
+  var todayReady=a.todayF&&a.todayF.ready;
+  var f=todayReady?a.todayF:(a.nextF&&a.nextF.ready?a.nextF:null);
+  if(f) add(clampPt((f.upRate-50)*0.6+f.expPct*4,20),
+    "統計"+(todayReady?"当日":"翌日")+" 上昇"+f.upRate+"%・"+(f.expPct>=0?"+":"")+f.expPct.toFixed(1)+"%");
+
+  // 3. 同じスコア帯の実測勝率（件数が少ないうちは効きを半分に）
+  if(a.band&&a.band.winRate!=null&&a.band.total>=10)
+    add(clampPt((a.band.winRate-50)*(a.band.total>=20?0.4:0.2),12),
+      "同スコア帯の実績 "+a.band.winRate+"%("+a.band.total+"件)");
+
+  // 4. シグナルの一致度（強気の数－弱気の数）
+  var up=0,dn=0;
+  (a.signals||[]).forEach(function(x){if(x.state===1)up++;else if(x.state===-1)dn++;});
+  add(clampPt((up-dn)*3,12),"シグナル 強気"+up+"／弱気"+dn);
+
+  // 5. 日中型／夜間型（持ち越さないデイトレでは日中の値動きが直接効く）
+  if(a.dayNight) add(a.dayNight.day>0?8:-8,(a.dayNight.day>0?"☀️日中型 +":"🌙夜間型 ")+a.dayNight.day+"%");
+
+  // 6. 対TOPIX相対（地合いより強いか弱いか）
+  if(a.relInfo) add(a.relInfo.strong?5:-5,"対TOPIX "+a.relInfo.label);
+
+  // 7. リスクリワード（利確幅 ÷ 損切り幅）
+  if(a.rr!=null) add(a.rr>=2?8:a.rr>=1.5?4:a.rr>=1?0:-6,"リスクリワード 1:"+a.rr);
+
+  // 8. 流動性・値幅（不利な材料だが必ず負けるわけではないので軽い減点のみ）
+  if(a.scalpFit) add(-4,"⚠️"+a.scalpFit.label);
+
+  R.sort(function(x,y){return Math.abs(y.pt)-Math.abs(x.pt);});
+  return{key:P>=25?"BUY":P>=10?"TRY":P>=-10?"WATCH":"SKIP",points:Math.round(P),reasons:R,statReady:!!f};
+}
+// スキャン結果1件分から総合判定を作るラッパー（analyze内・再スキャン後の両方から呼ぶ）
+function buildVerdict(o){
+  try{
+    var bands=getUniverseBandStats(),bl=bandLabelFor(o.score),bandRow=null;
+    for(var i=0;i<bands.length;i++){if(bands[i].band===bl)bandRow=bands[i];}
+    return judgeOverall({
+      score:o.score,signals:o.signals,
+      nextF:calcStatForecast(o.signals,getUniverseSignalStats()),
+      todayF:currentSessionLabel()!=="時間外"?calcStatForecast(o.signals,getIntradaySignalStats()):null,
+      band:bandRow,dayNight:DAYNIGHT[o.ticker]||null,
+      relInfo:relStrengthInfo(o.relStrength),
+      rr:o.buyPlan?o.buyPlan.rr:null,
+      scalpFit:scalpFitInfo({price:o.price,volume:o.volume,market:o.market,atr:o.atr})
+    });
+  }catch(e){return null;}
+}
+
+// ── 🚦 総合判定そのものの的中率（後からの答え合わせ用）──────────────────────
+// scoreHist(sh_*)とイントラデイ履歴(sh_intraday_*)に残した判定キー(v)を使い、
+// 「買い」と出た時に実際に上がったかを集計する。翌営業日版と当日引け版の2本立て
+var VERDICT_ACC_CACHE=null,VERDICT_ACC_TS=0;
+var VERDICT_ORDER=["BUY","TRY","WATCH","SKIP"];
+function calcVerdictAccuracy(){
+  var now=Date.now();
+  if(VERDICT_ACC_CACHE&&now-VERDICT_ACC_TS<UNIVERSE_STATS_TTL) return VERDICT_ACC_CACHE;
+  var nx={},td={};
+  function tally(box,key,win,pct){if(!box[key])box[key]={w:0,t:0,sum:0};box[key].t++;if(win)box[key].w++;box[key].sum+=pct;}
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_")!==0) return;
+      var hist=JSON.parse(localStorage.getItem(k)||"[]");
+      if(k.indexOf("sh_intraday_")===0){
+        // 当日版：同じ日の最後の記録（＝引けに近い時点）と比べる
+        for(var i=0;i<hist.length;i++){
+          var c=hist[i];if(!c.v||c.p==null) continue;
+          var last=null;
+          for(var j=hist.length-1;j>i;j--){if(hist[j].d===c.d&&hist[j].p!=null){last=hist[j];break;}}
+          if(!last) continue;
+          tally(td,c.v,last.p>c.p,(last.p-c.p)/c.p*100);
+        }
+      }else{
+        // 翌営業日版：次の記録の価格と比べる
+        for(var m=0;m<hist.length-1;m++){
+          var cur=hist[m],nt=hist[m+1];
+          if(!cur.v||cur.p==null||nt.p==null) continue;
+          tally(nx,cur.v,nt.p>cur.p,(nt.p-cur.p)/cur.p*100);
+        }
+      }
+    });
+  }catch(e){}
+  function rows(box){
+    return VERDICT_ORDER.map(function(k){
+      var st=box[k]||{w:0,t:0,sum:0};
+      return{key:k,label:BADGE[k].label,winRate:st.t?Math.round(st.w/st.t*100):null,
+        avgPct:st.t?st.sum/st.t:null,total:st.t};
+    });
+  }
+  VERDICT_ACC_CACHE={next:rows(nx),today:rows(td)};VERDICT_ACC_TS=now;
+  return VERDICT_ACC_CACHE;
+}
 // 今日版（引けまで）用：sh_intraday_全体から「各時間帯のスナップショット→同日最後の記録」への
 // 変化率をシグナル別に積算する（getUniverseSignalStatsのイントラデイ版・キャッシュ付き）
 var INTRADAY_SIG_CACHE=null,INTRADAY_SIG_TS=0;
@@ -2154,6 +2259,11 @@ function analyzeStock(stock,pd,vixVal){
   }
   // ────────────────────────────────────────────────────────────────────────
 
+  // ── 🚦 総合判定（各機能の結果を1つに集約）──────────────────────────────
+  var verdict=pd.real?buildVerdict({score:sc,signals:signals,ticker:stock.ticker,relStrength:relStrength,
+    buyPlan:buyPlan,price:price,volume:stock.volume||0,market:stock.market,atr:atr}):null;
+  var verdictKey=verdict?verdict.key:null;
+
   // ── スコア履歴をlocalStorageに蓄積（自動・最大40日分）────────────────────
   var scoreHist=(function(){
     try{
@@ -2165,9 +2275,9 @@ function analyzeStock(stock,pd,vixVal){
       // → 「上げ相場ではこのシグナルが効く」等の分析に後日使うための記録のみ。現時点では集計には使わない
       var ctx={topix:topixChange!=null?topixChange:null,vix:vixVal!=null?parseFloat(vixVal):null,session:currentSessionLabel(),market:stock.market};
       if(hist.length&&hist[hist.length-1].d===today){
-        hist[hist.length-1]={d:today,s:sc,atr:atr,p:price,sig:sigKeys,ctx:ctx};
+        hist[hist.length-1]={d:today,s:sc,atr:atr,p:price,sig:sigKeys,ctx:ctx,v:verdictKey};
       }else{
-        hist.push({d:today,s:sc,atr:atr,p:price,sig:sigKeys,ctx:ctx});
+        hist.push({d:today,s:sc,atr:atr,p:price,sig:sigKeys,ctx:ctx,v:verdictKey});
         if(hist.length>40)hist.shift();
       }
       localStorage.setItem(key,JSON.stringify(hist));
@@ -2189,7 +2299,7 @@ function analyzeStock(stock,pd,vixVal){
       var isession=currentSessionLabel();
       var isigKeys=signals.filter(function(x){return x.state!==0;}).map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
       var ilast=ihist[ihist.length-1];
-      var ientry={d:itoday,session:isession,s:sc,p:price,sig:isigKeys};
+      var ientry={d:itoday,session:isession,s:sc,p:price,sig:isigKeys,v:verdictKey};
       if(ilast&&ilast.d===itoday&&ilast.session===isession){
         ihist[ihist.length-1]=ientry;
       }else{
@@ -2203,7 +2313,7 @@ function analyzeStock(stock,pd,vixVal){
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     volume:stock.volume||0,volSurge:(typeof surge!=="undefined"?surge:1),
     price:dispPrice,rawPrice:pd.real?price:null,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
-    timing:timing,signals:signals,breakdown:breakdown,change:change,spark:closes.slice(-30),
+    timing:timing,verdict:verdictKey,verdictInfo:verdict,signals:signals,breakdown:breakdown,change:change,spark:closes.slice(-30),
     real:pd.real,failReason:pd.error||null,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
     analystTarget:pd.analystTarget||null,earningsDate:resolveEventDate(stock.ticker,"earningsDate",pd.earningsDate||null),exRightsDate:resolveEventDate(stock.ticker,"exRightsDate",pd.exRightsDate||null),weekHigh:weekHigh,weekLow:weekLow,
     topixChange:topixChange,relStrength:relStrength,
@@ -3171,7 +3281,7 @@ function FavPickerModal(p){
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   var star=starStyle(s.ticker,isFav,p.appTrades,p.personalTrades);
-  var bc=BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
+  var bc=BADGE[s.verdict||s.timing]||BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var isMobile=useIsMobile(); // スマホはカード内チャートを非表示（詳細モーダル側で確認する運用）
   // ── チャート（カードが選択された時だけ取得＝体感速度・API負荷を改善）───
   // cardIntraday: カードのミニチャート用（5分足）。false=未取得, undefined=読込中, null=データなし
@@ -3657,6 +3767,30 @@ function StatForecastPanel(p){
     </div>
   );
 }
+// ── 🚦 総合判定パネル（各機能をまとめた最終結論＋根拠）─────────────────
+function VerdictPanel(p){
+  var v=p.v;
+  if(!v) return null;
+  var b=BADGE[v.key]||BADGE.WATCH;
+  var NOTE={BUY:"材料が揃っています",TRY:"やや優勢。小さめの枚数で",WATCH:"決め手不足。無理に入らない",SKIP:"不利な材料が優勢"};
+  return(
+    <div style={{background:b.bg,border:"2px solid "+b.border,borderRadius:8,padding:"6px 10px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <span style={{fontSize:10,fontWeight:700,color:"#8aa8c8"}}>🚦総合判定</span>
+        <span style={{fontSize:20,fontWeight:800,color:b.text,lineHeight:1}}>{b.label}</span>
+        <span style={{fontSize:10,color:"#8aa8c8"}}>{NOTE[v.key]}</span>
+        <span style={{fontSize:10,color:"#4a7090",marginLeft:"auto"}}>合計 {(v.points>=0?"+":"")+v.points}点</span>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>
+        {v.reasons.slice(0,5).map(function(r,i){
+          var pos=r.pt>0;
+          return(<span key={i} style={{fontSize:9,fontWeight:700,color:pos?"#22d3a0":"#f43f5e",background:pos?"#052e16":"#1f0010",borderRadius:4,padding:"2px 5px"}}>{(pos?"+":"")+r.pt+" "+r.label}</span>);
+        })}
+      </div>
+      {!v.statReady&&<div style={{fontSize:9,color:"#4a7090",marginTop:3}}>※統計ベース予想はデータ蓄積中。今はスコアとシグナル中心の判定です</div>}
+    </div>
+  );
+}
 // ── 買値パネル（デイトレ用・エントリー1本／横1行コンパクト表示）──────
 function BuyPlanPanel(p){
   var isMobile=useIsMobile();
@@ -3739,7 +3873,7 @@ function StockDetailPanel(p){
   var isUp=parseFloat(s.change)>=0;
   var isMobile=useIsMobile();
   var mc=MKT[s.market]||MKT["US"];
-  var bc=BADGE[s.timing];
+  var bc=BADGE[s.verdict||s.timing]||BADGE[s.timing];
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
   var fromHighColor=s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0";
   var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
@@ -3848,6 +3982,8 @@ function StockDetailPanel(p){
         </div>
       </div>
 
+
+      <VerdictPanel v={s.verdictInfo}/>
 
       <BuyPlanPanel plan={s.buyPlan} isJP={s.market==="JP"} intraday={intraday}/>
 
@@ -5120,6 +5256,7 @@ function SignalAccuracyContent(p){
   var horizons=[{k:"d1",h:"1日後"},{k:"d3",h:"3日後"},{k:"d5",h:"5日後"}];
   var aiAcc=calcAiForecastAccuracy();
   var intradayAcc=calcIntradayAccuracy();
+  var verdictAcc=calcVerdictAccuracy();
   var regime=getRegimeSignalStats();
   var tradeSig=calcTradeSignalStats();
   var thrCheck=calcThresholdCheck();
@@ -5184,6 +5321,36 @@ function SignalAccuracyContent(p){
           <div style={{fontSize:11,color:"#a78bfa",marginTop:4}}>※<b>🔄</b>＝50件以上あるのに1日後の的中率が40%未満のシグナル。外れ方が安定しているため「逆に読むと◯%」の目安を表示しています。まだ観測段階で、スコア計算は変えていません</div>
         </div>
       )}
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🚦 総合判定 的中率</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>総合判定が出た後、実際に価格が上がったかを集計。左＝当日の引けまで（デイトレ向け）／右＝翌営業日。この機能を入れた後のスキャンから溜まります</div>
+        {verdictAcc.today.every(function(r){return r.total===0;})&&verdictAcc.next.every(function(r){return r.total===0;})?(
+          <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。スキャンを重ねると溜まっていきます。</div>
+        ):(
+          <div>
+            <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
+              <div style={{flex:1}}>判定</div>
+              <div style={{width:52,textAlign:"right"}}>当日</div>
+              <div style={{width:40,textAlign:"right"}}>件数</div>
+              <div style={{width:52,textAlign:"right"}}>翌営業日</div>
+              <div style={{width:40,textAlign:"right"}}>件数</div>
+            </div>
+            {verdictAcc.today.map(function(r,i){
+              var nxr=verdictAcc.next[i];
+              return(
+                <div key={r.key} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
+                  <div style={{flex:1,color:(BADGE[r.key]||{}).text,fontWeight:700}}>{r.label}</div>
+                  <div style={{width:52,textAlign:"right",color:cellColor(r.winRate),fontWeight:700}}>{r.winRate!=null?r.winRate+"%":"-"}</div>
+                  <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{r.total}</div>
+                  <div style={{width:52,textAlign:"right",color:cellColor(nxr.winRate),fontWeight:700}}>{nxr.winRate!=null?nxr.winRate+"%":"-"}</div>
+                  <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{nxr.total}</div>
+                </div>
+              );
+            })}
+            <div style={{fontSize:11,color:"#2a6090",marginTop:8}}>※「買い」の的中率が「様子見」「見送り」を上回っていれば、判定が機能している目安です</div>
+          </div>
+        )}
+      </div>
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>📈 スコア帯別 的中率（全スキャン銘柄）</div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>タブに関わらず、これまでスキャンした全銘柄のスコアと翌営業日の値動きを集計。スコアが高いほど的中率が高いかの目安になります</div>
