@@ -89,25 +89,6 @@ function relStrengthInfo(rel){
   return{diff:rel,label:(strong?"+":"")+rel.toFixed(1)+"%",strong:strong};
 }
 
-// ── スキャル・デイトレ向き簡易フィルタ（E簡易版）─────────────────────────
-// 板情報（気配・スプレッド）は使わず、出来高（売買代金）とATR%（値動きの大きさ）だけで
-// 「そもそもスキャルに向かなそうな銘柄」を簡易的に見分けるための目安。数値は一般的な
-// 目安であり、必要に応じて調整してください
-var SCALP_MIN_TURNOVER_JP=300000000; // 売買代金の目安：日本株 3億円/日 未満は薄いとみなす
-var SCALP_MIN_TURNOVER_US=5000000;   // 米国株 500万ドル/日
-var SCALP_MIN_ATR_PCT=1.2;           // ATRが株価の1.2%未満だと値幅が小さすぎる目安
-function scalpFitInfo(s){
-  if(s.price==null||!s.volume) return null;
-  var turnover=s.price*s.volume;
-  var minTurnover=s.market==="JP"?SCALP_MIN_TURNOVER_JP:SCALP_MIN_TURNOVER_US;
-  var atrPct=(s.atr!=null&&s.price)?(s.atr/s.price*100):null;
-  var reasons=[];
-  if(turnover<minTurnover) reasons.push("薄商い");
-  if(atrPct!=null&&atrPct<SCALP_MIN_ATR_PCT) reasons.push("値幅小");
-  if(reasons.length===0) return null;
-  return{label:reasons.join("・")};
-}
-
 // ── 決算日・権利落ち日のローカル記憶 ─────────────────────────────────────
 // 外部APIが当日中に日付を返さなくなっても、実際の予定日を過ぎるまで表示を継続するための保険
 var EVENT_DATE_CACHE_KEY="event_date_cache_v1";
@@ -843,7 +824,7 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
       :"";
     return(i+1)+". "+s.ticker+" ("+s.name+") ["+s.market+"]\n"+
       "  現在値: "+unit+s.price+"  前日比: "+s.change+"%\n"+
-      "  出来高: "+(s.volume||0).toLocaleString()+"（急増率: "+(s.volSurge?s.volSurge.toFixed(1)+"倍":"─")+"）\n"+
+      "  当日出来高: "+(s.volume||0).toLocaleString()+"（急増率: "+(s.volSurge?s.volSurge.toFixed(1)+"倍":"─")+"）\n"+
       "  総合スコア: "+s.score+"/100  トレードタイプ: "+s.tradeLabel+"\n"+
       trendLine+
       "  ATR: "+unit+s.atr+"  想定値幅: "+unit+s.atrLower+"〜"+unit+s.atrUpper+"\n"+
@@ -1697,9 +1678,6 @@ function judgeOverall(a){
   // 7. リスクリワード（利確幅 ÷ 損切り幅）
   if(a.rr!=null) add(a.rr>=2?8:a.rr>=1.5?4:a.rr>=1?0:-6,"リスクリワード 1:"+a.rr,1);
 
-  // 8. 流動性・値幅（不利な材料だが必ず負けるわけではないので軽い減点のみ）
-  if(a.scalpFit) add(-4,"⚠️"+a.scalpFit.label,1);
-
   R.sort(function(x,y){return x.ord!==y.ord?x.ord-y.ord:Math.abs(y.pt)-Math.abs(x.pt);});
   return{key:P>=25?"BUY":P>=10?"TRY":P>=-10?"WATCH":"SKIP",points:Math.round(P),reasons:R,statReady:!!f};
 }
@@ -1714,8 +1692,7 @@ function buildVerdict(o){
       todayF:currentSessionLabel()!=="時間外"?calcStatForecast(o.signals,getIntradaySignalStats()):null,
       band:bandRow,dayNight:DAYNIGHT[o.ticker]||null,
       relInfo:relStrengthInfo(o.relStrength),
-      rr:o.buyPlan?o.buyPlan.rr:null,
-      scalpFit:scalpFitInfo({price:o.price,volume:o.volume,market:o.market,atr:o.atr})
+      rr:o.buyPlan?o.buyPlan.rr:null
     });
   }catch(e){return null;}
 }
@@ -2376,7 +2353,7 @@ function analyzeStock(stock,pd,vixVal){
 
   // ── 🚦 総合判定（各機能の結果を1つに集約）──────────────────────────────
   var verdict=pd.real?buildVerdict({score:sc,signals:signals,ticker:stock.ticker,relStrength:relStrength,
-    buyPlan:buyPlan,price:price,volume:stock.volume||0,market:stock.market,atr:atr}):null;
+    buyPlan:buyPlan}):null;
   var verdictKey=verdict?verdict.key:null;
 
   // ── スコア履歴をlocalStorageに蓄積（自動・最大40日分）────────────────────
@@ -2426,8 +2403,17 @@ function analyzeStock(stock,pd,vixVal){
     }catch(e){}
   })();
 
+  // ── 当日の出来高（15分足から自前で集計）──────────────────────────────────
+  // ランキングAPIのstock.volumeは0が返るため、取得済みの15分足を合計して使う。
+  // 「データ内の最終日」ぶんを合計するので、寄り付き前・休場中は前営業日の合計になる
+  var dayVolume=0;
+  if(pd.dates&&pd.dates.length===volumes.length&&volumes.length>0){
+    var lastVolDate=pd.dates[pd.dates.length-1];
+    for(var vi=volumes.length-1;vi>=0&&pd.dates[vi]===lastVolDate;vi--) dayVolume+=volumes[vi]||0;
+  }
+
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
-    volume:stock.volume||0,volSurge:(typeof surge!=="undefined"?surge:1),
+    volume:dayVolume||stock.volume||0,volSurge:(typeof surge!=="undefined"?surge:1),
     price:dispPrice,rawPrice:pd.real?price:null,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
     timing:timing,verdict:verdictKey,verdictInfo:verdict,signals:signals,breakdown:breakdown,change:change,spark:closes.slice(-30),
     real:pd.real,failReason:pd.error||null,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
@@ -3439,7 +3425,6 @@ function StockCard(p){
             {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
             {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}{(function(){var dn=DAYNIGHT[s.ticker];if(!dn)return null;var pos=dn.day>0;return <span style={bStyle(pos?"#052e16":"#101826","1px solid "+(pos?"#22d3a0":"#2a4060"),pos?"#22d3a0":"#4a7090")} title={"過去1年の値動きの分解（"+dn.days+"日分）: 日中(始値→終値)の累積"+(dn.day>=0?"+":"")+dn.day+"% / 夜間(前日終値→始値)の累積"+(dn.night>=0?"+":"")+dn.night+"%。日中分がプラスなら、持ち越さないデイトレと相性が良い日中型"}>{(pos?"☀️日中+":"🌙日中")+dn.day+"%"}</span>;})()}
             {(function(){var si=relStrengthInfo(s.sectorRelStrength);return si&&<span style={bStyle(si.strong?"#052e16":"#1f0010","1px solid "+(si.strong?"#22d3a0":"#f43f5e"),si.strong?"#22d3a0":"#f43f5e")} title={"対"+(s.sectorName||"業種")+"相対(前日比差): "+si.label}>{si.strong?"🔥対業種":"🧊対業種"}{si.label}</span>;})()}
-            {(function(){var sf=scalpFitInfo(s);return sf&&<span style={bStyle("#2a1400","1px solid #fb923c","#fb923c")} title={"スキャル・デイトレに不向きな可能性："+sf.label+"（出来高とATR%のみの簡易判定。板情報・スプレッドは考慮していません）"}>⚠️{sf.label}</span>;})()}
           </div>
           {(function(){
             var aw=s.actualWinRate;
@@ -4071,7 +4056,6 @@ function StockDetailPanel(p){
               {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
           {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}{(function(){var dn=DAYNIGHT[s.ticker];if(!dn)return null;var pos=dn.day>0;return <span style={bStyle(pos?"#052e16":"#101826","1px solid "+(pos?"#22d3a0":"#2a4060"),pos?"#22d3a0":"#4a7090")} title={"過去1年の値動きの分解（"+dn.days+"日分）: 日中(始値→終値)の累積"+(dn.day>=0?"+":"")+dn.day+"% / 夜間(前日終値→始値)の累積"+(dn.night>=0?"+":"")+dn.night+"%。日中分がプラスなら、持ち越さないデイトレと相性が良い日中型"}>{(pos?"☀️日中+":"🌙日中")+dn.day+"%"}</span>;})()}
           {(function(){var si=relStrengthInfo(s.sectorRelStrength);return si&&<span style={bStyle(si.strong?"#052e16":"#1f0010","1px solid "+(si.strong?"#22d3a0":"#f43f5e"),si.strong?"#22d3a0":"#f43f5e")} title={"対"+(s.sectorName||"業種")+"相対(前日比差): "+si.label}>{si.strong?"🔥対業種":"🧊対業種"}{si.label}</span>;})()}
-          {(function(){var sf=scalpFitInfo(s);return sf&&<span style={bStyle("#2a1400","1px solid #fb923c","#fb923c")} title={"スキャル・デイトレに不向きな可能性："+sf.label+"（出来高とATR%のみの簡易判定。板情報・スプレッドは考慮していません）"}>⚠️{sf.label}</span>;})()}
             </div>
             <div style={{fontSize:13,color:"#4a7090",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</div>
           </div>
