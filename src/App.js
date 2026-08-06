@@ -409,14 +409,28 @@ async function buildStockUniverse(manualSectors,skipAI){
 // 15分足の本数は市場ごとに違う（東証 9:00-11:30+12:30-15:30＝22本／米国 26本）。
 // 固定値26を使うと東証では毎日4本ぶんズレて窓が滑るため、直近の「完成した1日」の
 // 本数を数えて使う。最終日は場中で未完成の可能性があるので必ず除外する。
+// 1営業日あたりのバー本数を実測する（東証・米国で取引時間が違い、制度変更でも変わるため）
+// 最終日は取引途中の可能性があるので除外し、その手前の「完結した日」を最大5日分数えて
+// 中央値を返す。1日だけを見ていると、その日にYahoo側の欠測があったとき本数が大きく
+// 狂い、これを20倍して使う箇所（S1/R1の集計期間）まで巻き添えになるため。
 function barsPerDay(dates){
   if(!dates||dates.length<2) return null;
-  var lastDate=dates[dates.length-1],end=-1;
-  for(var i=dates.length-1;i>=0;i--){if(dates[i]!==lastDate){end=i;break;}}
-  if(end<0) return null;
-  var d=dates[end],c=0;
-  for(var j=end;j>=0&&dates[j]===d;j--) c++;
-  return c>0?c:null;
+  var lastDate=dates[dates.length-1];
+  var counts=[],curDate=null,c=0;
+  for(var i=dates.length-1;i>=0;i--){
+    if(dates[i]===lastDate) continue;        // 最終日（取引途中かもしれない日）は数えない
+    if(curDate===null){curDate=dates[i];c=0;}
+    if(dates[i]!==curDate){                  // 日付が変わった＝1日分を数え終えた
+      counts.push(c);
+      if(counts.length>=5) break;            // 直近5日分そろえば十分
+      curDate=dates[i];c=0;
+    }
+    c++;
+  }
+  if(counts.length===0&&c>0) counts.push(c); // 完結した日が1日しか無い時の保険
+  if(counts.length===0) return null;
+  counts.sort(function(a,b){return a-b;});
+  return counts[Math.floor(counts.length/2)]||null;
 }
 
 // 前日終値の特定（前日比・ギャップ判定で共通利用）
@@ -436,7 +450,7 @@ function findPrevClose(closes,dates){
 // 15分足データ取得（メイン分析用・約20営業日分。実際の取得期間はapi/stock.js側で固定）
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],opens:cached.opens?cached.opens.slice():[],dates:cached.dates?cached.dates.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,officialPrevClose:cached.officialPrevClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,sectorChange:cached.sectorChange,sectorName:cached.sectorName};}
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],opens:cached.opens?cached.opens.slice():[],dates:cached.dates?cached.dates.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,officialPrevClose:cached.officialPrevClose,officialVolume:cached.officialVolume,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,sectorChange:cached.sectorChange,sectorName:cached.sectorName};}
   var json=await enqueueStock(async function(){
     var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(25000),cache:"no-store"});
     var body=await res.json().catch(function(){return null;});
@@ -464,9 +478,9 @@ async function fetchYahoo(ticker){
   var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null,topixChange=result.topixChange!=null?result.topixChange:null;
   var sectorChange=result.sectorChange!=null?result.sectorChange:null,sectorName=result.sectorName||null;
   var filledClose=fill(q.close);
-  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fillVol(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,officialPrevClose:(meta.regularMarketPreviousClose!=null?meta.regularMarketPreviousClose:null),real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,sectorChange:sectorChange,sectorName:sectorName};
+  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fillVol(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,officialPrevClose:(meta.regularMarketPreviousClose!=null?meta.regularMarketPreviousClose:null),officialVolume:(meta.regularMarketVolume!=null?meta.regularMarketVolume:null),real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,sectorChange:sectorChange,sectorName:sectorName};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),opens:data.opens.slice(),dates:data.dates.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,officialPrevClose:data.officialPrevClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,sectorChange:data.sectorChange,sectorName:data.sectorName};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),opens:data.opens.slice(),dates:data.dates.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,officialPrevClose:data.officialPrevClose,officialVolume:data.officialVolume,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,sectorChange:data.sectorChange,sectorName:data.sectorName};
 }
 
 
@@ -874,7 +888,7 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
       ?"  シグナル全項目:\n"+s.signals.map(function(sig){return"    "+sig.label+": "+sig.val;}).join("\n")+"\n"
       :"";
     return(i+1)+". "+s.ticker+" ("+s.name+") ["+s.market+"]\n"+
-      "  現在値: "+unit+s.price+"  前日比: "+s.change+"%\n"+
+      "  現在値: "+s.price+"  前日比: "+s.change+"%\n"+
       "  当日出来高: "+(s.volume||0).toLocaleString()+"（急増率: "+(s.volSurge?s.volSurge.toFixed(1)+"倍":"─")+"）\n"+
       "  総合スコア: "+s.score+"/100  トレードタイプ: "+s.tradeLabel+"\n"+
       trendLine+
@@ -997,7 +1011,7 @@ function calcAiForecastAccuracy(){
         horizons.forEach(function(h){
           var base=hist[idx],nxt=hist[idx+h];
           if(!nxt||nxt.p==null||base.p==null) return;
-          if(bizDayDiff(base.d,nxt.d)!==h) return; // 記録が飛んだペアは「h日後」として不正確なので除外
+          if(bizDayDiff(base.d,nxt.d,/\.T$/.test(ticker))!==h) return; // 記録が飛んだペアは「h日後」として不正確なので除外
           var move=priceMoveState(base.p,nxt.p);
           if(move===0) return; // 誤差レベルの値動きは集計対象外
           var won=pr.dir.indexOf("上昇")!==-1?(move>0):(move<0);
@@ -1272,17 +1286,26 @@ function priceMoveState(basePrice,nextPrice){
 // スキャンしない日があると「隣り合う記録」が数日離れることがあり、それを
 // 「1日後の実績」として集計すると統計が汚れる。土日を除いた日数差を返し、
 // 集計側で「想定の営業日差と一致するペアだけ」を採用するために使う
-function bizDayDiff(dStr1,dStr2){
+// isJP=true なら東証の祝日(JP_HOLIDAYS)も休みとして除外する。米国株の履歴に
+// 日本の祝日を当てると逆に営業日を数え損なうため、呼び出し側で明示的に渡す
+function bizDayDiff(dStr1,dStr2,isJP){
   var a=new Date(dStr1+"T00:00:00"),b=new Date(dStr2+"T00:00:00");
   if(isNaN(a.getTime())||isNaN(b.getTime())||b<=a) return null;
   var n=0,cur=new Date(a);
   while(cur<b){
     cur.setDate(cur.getDate()+1);
     var dw=cur.getDay();
-    if(dw!==0&&dw!==6)n++;
+    if(dw===0||dw===6) continue;                          // 土日
+    if(isJP&&JP_HOLIDAYS[localYmdKey(cur)]) continue;      // 東証の祝日
+    n++;
     if(n>30)return n; // 異常に離れたペアの無限ループ防止
   }
   return n;
+}
+// Dateオブジェクトを"YYYY-MM-DD"（ローカル時刻基準）に変換。JP_HOLIDAYSの照合用
+function localYmdKey(d){
+  var m=d.getMonth()+1,dd=d.getDate();
+  return d.getFullYear()+"-"+(m<10?"0":"")+m+"-"+(dd<10?"0":"")+dd;
 }
 // シグナル統計が「何営業日分（何日分の記録）から作られたか」を返す
 // 同じ日に多数の銘柄をスキャンすると件数だけが水増しされるため、日数でも信頼性を測る
@@ -1294,14 +1317,14 @@ function sigStatDays(st){
 // scoreHist: [{d,s,p},...] pは記録日の終値
 // threshold: 対象スコア下限（デフォルト60）
 // 戻り値: {winRate, total, byBand}
-function calcActualWinRate(scoreHist,threshold){
+function calcActualWinRate(scoreHist,threshold,isJP){
   threshold=threshold||60;
   var wins=0,total=0;
   var byBand={"60":{w:0,t:0},"80":{w:0,t:0},"100":{w:0,t:0}};
   for(var i=0;i<scoreHist.length-1;i++){
     var cur=scoreHist[i],nxt=scoreHist[i+1];
     if(cur.s<threshold||cur.p==null||nxt.p==null) continue;
-    if(bizDayDiff(cur.d,nxt.d)!==1) continue; // 記録が飛んだペア（数日分の値動き）は翌日実績に含めない
+    if(bizDayDiff(cur.d,nxt.d,isJP)!==1) continue; // 記録が飛んだペア（数日分の値動き）は翌日実績に含めない
     var move=priceMoveState(cur.p,nxt.p);
     if(move===0) continue; // 誤差レベルの値動きは集計対象外
     var won=move>0;
@@ -1334,11 +1357,11 @@ function currentSessionLabel(){
 
 // 1銘柄分のscoreHistから、シグナルごとの勝敗数をstatsに積算する
 // daysAfter: 何営業日後の価格と比較するか(scoreHistの記録間隔=1エントリ想定)
-function accumulateSignalStats(hist,daysAfter,stats){
+function accumulateSignalStats(hist,daysAfter,stats,isJP){
   for(var i=0;i<hist.length-daysAfter;i++){
     var cur=hist[i],nxt=hist[i+daysAfter];
     if(cur.p==null||nxt.p==null||!cur.sig) continue;
-    if(bizDayDiff(cur.d,nxt.d)!==daysAfter) continue; // 記録が飛んだペアは「◯日後」の実績として不正確なので除外
+    if(bizDayDiff(cur.d,nxt.d,isJP)!==daysAfter) continue; // 記録が飛んだペアは「◯日後」の実績として不正確なので除外
     var move=priceMoveState(cur.p,nxt.p);
     if(move===0) continue; // 誤差レベルの値動きは集計対象外
     var won=move>0;
@@ -1360,7 +1383,7 @@ function calcSignalAccuracy(tickers){
   var stats={};
   (tickers||[]).forEach(function(ticker){
     var hist=(function(){try{return JSON.parse(localStorage.getItem("sh_"+ticker)||"[]");}catch(e){return[];}})();
-    accumulateSignalStats(hist,1,stats);
+    accumulateSignalStats(hist,1,stats,/\.T$/.test(ticker));
   });
   return Object.keys(stats).map(function(k){
     var s=stats[k];
@@ -1380,7 +1403,7 @@ function calcSignalAccuracyMulti(tickers){
   ACCURACY_HORIZONS.forEach(function(h){statsByH[h]={};});
   (tickers||[]).forEach(function(ticker){
     var hist=(function(){try{return JSON.parse(localStorage.getItem("sh_"+ticker)||"[]");}catch(e){return[];}})();
-    ACCURACY_HORIZONS.forEach(function(h){accumulateSignalStats(hist,h,statsByH[h]);});
+    ACCURACY_HORIZONS.forEach(function(h){accumulateSignalStats(hist,h,statsByH[h],/\.T$/.test(ticker));});
   });
   var keys={};
   ACCURACY_HORIZONS.forEach(function(h){Object.keys(statsByH[h]).forEach(function(k){keys[k]=1;});});
@@ -1416,7 +1439,7 @@ function getUniverseSignalStats(){
       if(k.indexOf("sh_")!==0||k.indexOf("sh_intraday_")===0) return; // イントラデイ履歴の混入を防止
       if(!/\.T$/.test(k.slice(3))) return; // JP銘柄のみ（US銘柄は取引時間帯が異なり翌日統計を汚すため除外）
       var hist=JSON.parse(localStorage.getItem(k)||"[]");
-      accumulateSignalStats(hist,1,stats);
+      accumulateSignalStats(hist,1,stats,true); // 上でJP銘柄のみに絞り込み済み
     });
   }catch(e){}
   UNIVERSE_STATS_CACHE=stats;UNIVERSE_STATS_TS=now;
@@ -1442,7 +1465,7 @@ function getUniverseBandStats(){
       for(var i=0;i<hist.length-1;i++){
         var cur=hist[i],nxt=hist[i+1];
         if(cur.p==null||nxt.p==null) continue;
-        if(bizDayDiff(cur.d,nxt.d)!==1) continue; // 記録が飛んだペアは翌日実績に含めない
+        if(bizDayDiff(cur.d,nxt.d,true)!==1) continue; // 記録が飛んだペアは翌日実績に含めない（上でJP銘柄のみに絞り込み済み）
         var move=priceMoveState(cur.p,nxt.p);
         if(move===0) continue; // 誤差レベルの値動きは集計対象外
         var band=bandLabelFor(cur.s);
@@ -1513,7 +1536,7 @@ function getRegimeSignalStats(){
       for(var i=0;i<hist.length-1;i++){
         var cur=hist[i],nxt=hist[i+1];
         if(cur.p==null||nxt.p==null||!cur.sig||!cur.ctx||cur.ctx.topix==null) continue;
-        if(bizDayDiff(cur.d,nxt.d)!==1) continue;
+        if(bizDayDiff(cur.d,nxt.d,true)!==1) continue; // 上でJP銘柄のみに絞り込み済み
         var move=priceMoveState(cur.p,nxt.p);
         if(move===0) continue;
         var bucket=cur.ctx.topix>=0?stats.up:stats.down;
@@ -1548,7 +1571,7 @@ function getTrendPhaseSignalStats(){
       for(var i=0;i<hist.length-1;i++){
         var cur=hist[i],nxt=hist[i+1];
         if(cur.p==null||nxt.p==null||!cur.sig||!cur.ctx||cur.ctx.rel==null) continue;
-        if(bizDayDiff(cur.d,nxt.d)!==1) continue;
+        if(bizDayDiff(cur.d,nxt.d,true)!==1) continue; // 上でJP銘柄のみに絞り込み済み
         var sum=0,n=0;
         for(var j=Math.max(0,i-TREND_PHASE_LOOKBACK+1);j<=i;j++){
           var e=hist[j];
@@ -1600,7 +1623,7 @@ function calcThresholdCheck(){
       for(var i=0;i<hist.length-1;i++){
         var cur=hist[i],nxt=hist[i+1];
         if(cur.p==null||nxt.p==null||cur.s==null||cur.s<60) continue;
-        if(bizDayDiff(cur.d,nxt.d)!==1) continue;
+        if(bizDayDiff(cur.d,nxt.d,true)!==1) continue; // 上でJP銘柄のみに絞り込み済み
         var chg=(nxt.p-cur.p)/cur.p*100;
         thrs.forEach(function(thr,idx){
           if(Math.abs(chg)<thr) return;
@@ -1902,7 +1925,7 @@ function analyzeStock(stock,pd,vixVal){
   // JP: J-Quantsの1分足をサーバー側(api/stock.js)で15分足に集計 / US: Yahoo Financeから15分足を直接取得
   var DAY_BARS   =26;   // 1日あたりのバー数（実測できない場合のフォールバック）
   var BPD=barsPerDay(pd.dates)||DAY_BARS; // 実測した1営業日あたりのバー数（東証22・米国26）
-  var BB_P       =520;  // 20日相当(26本×20日)
+  var BB_P       =BPD*20; // 20日相当（実測した1日の本数×20日。市場や取引時間が変わっても追従する）
   var RECENT_BARS=520;  // 20日相当
   var BB_LOOKBACK_S=130;// short: 約5日相当
   var BB_LOOKBACK_M=260;// mid:   約10日相当
@@ -2169,11 +2192,23 @@ function analyzeStock(stock,pd,vixVal){
   // ── 出来高・OBV（メイン・最大15点）───────────────────────────────────
   var obScore=0;
   // OBV: 直近1日分のバーの終値位置平均で判定
+  // 高値=安値の足（その15分間に値動きなし＝昼休みの埋め足や薄商いの足）は、
+  // 「終値位置0＝安値引けで最弱」ではなく単に判断材料が無いだけなので、平均から外す。
+  // 以前は0点として数えていたため、常に売り方向へ引っ張られていた
   var obvBars=Math.min(BPD,n+1);
-  var cpSum=0;
-  for(var oi=n-obvBars+1;oi<=n;oi++){var dr=highs[oi]-lows[oi]||1;cpSum+=(closes[oi]-lows[oi])/dr;}
-  var closePosition=cpSum/obvBars;
-  if(closePosition>=0.8){obScore+=7;signals.push({label:"OBV",val:"買い優勢",state:1});}
+  var cpSum=0,cpCnt=0;
+  for(var oi=n-obvBars+1;oi<=n;oi++){
+    var dr=highs[oi]-lows[oi];
+    if(!(dr>0)) continue;                  // 値動きゼロの足は数えない
+    cpSum+=(closes[oi]-lows[oi])/dr; cpCnt++;
+  }
+  // 有効な足が少なすぎる時は判定しない（残った数本のブレで方向が決まってしまうため）
+  var cpMin=Math.max(3,Math.floor(obvBars/3));
+  var closePosition=cpCnt>=cpMin?cpSum/cpCnt:null;
+  var cpUp=closePosition!==null&&closePosition>=0.6;   // 買い優勢と言える終値位置
+  var cpDown=closePosition!==null&&closePosition<=0.4; // 売り優勢と言える終値位置
+  if(closePosition===null){signals.push({label:"OBV",val:"判定不可(値動き少)",state:0});}
+  else if(closePosition>=0.8){obScore+=7;signals.push({label:"OBV",val:"買い優勢",state:1});}
   else if(closePosition>=0.6){obScore+=4;signals.push({label:"OBV",val:"やや買い優勢",state:1});}
   else if(closePosition<=0.2){obScore-=6;signals.push({label:"OBV",val:"売り優勢",state:-1});}
   else if(closePosition<=0.4){obScore-=3;signals.push({label:"OBV",val:"やや売り優勢",state:-1});}
@@ -2187,8 +2222,8 @@ function analyzeStock(stock,pd,vixVal){
     var avgSum=longVols.length>0?longVols.reduce(function(a,b){return a+b;},0)/longVols.length*volDay5:0;
     var surge=avgSum>0?recentSum/avgSum:1;
     if(surge>=2.0){
-      obScore+=(closePosition>=0.6?8:closePosition<=0.4?-8:2);
-      signals.push({label:"出来高",val:surge.toFixed(1)+"倍"+(closePosition>=0.6?"(買い)":closePosition<=0.4?"(売り)":"(中立)"),state:closePosition>=0.6?1:closePosition<=0.4?-1:0});
+      obScore+=(cpUp?8:cpDown?-8:2);
+      signals.push({label:"出来高",val:surge.toFixed(1)+"倍"+(cpUp?"(買い)":cpDown?"(売り)":"(中立)"),state:cpUp?1:cpDown?-1:0});
     }else if(surge>=1.5){obScore+=3;signals.push({label:"出来高",val:"やや増加("+surge.toFixed(1)+"倍)",state:1});}
     else if(surge>=0.8){signals.push({label:"出来高",val:"平常("+surge.toFixed(1)+"倍)",state:0});}
     else{obScore-=2;signals.push({label:"出来高",val:"低調("+surge.toFixed(1)+"倍)",state:-1});}
@@ -2506,6 +2541,11 @@ function analyzeStock(stock,pd,vixVal){
     var lastVolDate=pd.dates[pd.dates.length-1];
     for(var vi=volumes.length-1;vi>=0&&pd.dates[vi]===lastVolDate;vi--) dayVolume+=volumes[vi]||0;
   }
+  // Yahoo公式の当日出来高(meta.regularMarketVolume)が届いていればそちらを優先する。
+  // 15分足には大引け(15:30のクロージング・オークション)が含まれず、自前集計は実績より
+  // 1割強少なく出るため。公式値は必ず自前集計以上になるはずなので、下回る場合は
+  // 誤配信や寄り付き前(公式値0)とみなして採用しない＝この比較が検算も兼ねている
+  if(pd.officialVolume>0&&pd.officialVolume>=dayVolume) dayVolume=pd.officialVolume;
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     volume:dayVolume||stock.volume||0,volSurge:(typeof surge!=="undefined"?surge:1),
@@ -2521,7 +2561,7 @@ function analyzeStock(stock,pd,vixVal){
     aptScore:aptScore,
     atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,resistance:resistance,profitLoss:profitLoss,buyPlan:buyPlan,
     scoreHist:scoreHist,
-    actualWinRate:calcActualWinRate(scoreHist),
+    actualWinRate:calcActualWinRate(scoreHist,null,stock.market==="JP"),
     vwap:vwap?parseFloat(vwap.toFixed(stock.market==="JP"?0:2)):null,
     pivot:pivot?{pp:parseFloat(pivot.pp.toFixed(stock.market==="JP"?0:2)),r1:parseFloat(pivot.r1.toFixed(stock.market==="JP"?0:2)),s1:parseFloat(pivot.s1.toFixed(stock.market==="JP"?0:2)),r2:parseFloat(pivot.r2.toFixed(stock.market==="JP"?0:2)),s2:parseFloat(pivot.s2.toFixed(stock.market==="JP"?0:2)),prevHigh:parseFloat(pivot.prevHigh.toFixed(stock.market==="JP"?0:2)),prevLow:parseFloat(pivot.prevLow.toFixed(stock.market==="JP"?0:2)),prevClose:parseFloat(pivot.prevClose.toFixed(stock.market==="JP"?0:2))}:null,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker};
