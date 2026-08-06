@@ -450,11 +450,21 @@ async function fetchYahoo(ticker){
   var result=json&&json.chart&&json.chart.result&&json.chart.result[0];
   if(!result) throw new Error("empty response");
   var q=result.indicators.quote[0],meta=result.meta;
-  function fill(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=j>0?out[j-1]:0;return out;}
+  // 価格のnullは直前の値で埋める（先頭がnullの場合は0ではなく最初の有効値で埋める。
+  // 0だとcalcEMAが0起点になり指標が長く歪むため）
+  function fill(arr){
+    var out=(arr||[]).slice(),first=null;
+    for(var k=0;k<out.length;k++){if(out[k]!=null){first=out[k];break;}}
+    for(var j=0;j<out.length;j++){if(out[j]==null)out[j]=(j>0&&out[j-1]!=null)?out[j-1]:first;}
+    return out;
+  }
+  // 出来高のnullは「その時間帯に約定が無かった」という意味なので必ず0で埋める。
+  // 価格と同じく直前の値をコピーすると、閑散時間や昼休みの出来高が水増しされる
+  function fillVol(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=0;return out;}
   var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null,topixChange=result.topixChange!=null?result.topixChange:null;
   var sectorChange=result.sectorChange!=null?result.sectorChange:null,sectorName=result.sectorName||null;
   var filledClose=fill(q.close);
-  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,officialPrevClose:(meta.regularMarketPreviousClose!=null?meta.regularMarketPreviousClose:null),real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,sectorChange:sectorChange,sectorName:sectorName};
+  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fillVol(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,officialPrevClose:(meta.regularMarketPreviousClose!=null?meta.regularMarketPreviousClose:null),real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,sectorChange:sectorChange,sectorName:sectorName};
   CACHE[ticker]={ts:now,data:data};
   return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),opens:data.opens.slice(),dates:data.dates.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,officialPrevClose:data.officialPrevClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,sectorChange:data.sectorChange,sectorName:data.sectorName};
 }
@@ -942,7 +952,7 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading,daily){
 
     var out=parseAiResult(raw);
     if(out.parsed&&typeof out.parsed.entry!=="undefined") setAiEntry(out.parsed);
-    if(out.parsed&&out.parsed.forecast) recordAiForecast(s.ticker,s.price,out.parsed.forecast);
+    if(out.parsed&&out.parsed.forecast) recordAiForecast(s.ticker,s.rawPrice,out.parsed.forecast,s.market); // s.priceは"¥9,300"という表示文字列なので数値のrawPriceを渡す
     setAiText(out.cleanText.trim()||"分析できませんでした。");
   }catch(e){
     // 途中まで届いていれば、それを残したうえで注意書きを添える（全部消えるより親切）
@@ -955,10 +965,11 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading,daily){
 // ── AI予想（forecast）の的中率トラッキング ───────────────────────────────
 // AI分析を実行するたびに「その日時点の予想方向・確信度・株価」を記録し、
 // 後日scoreHist（実際の値動き）と突き合わせてAI予想自体の的中率を検証する
-function recordAiForecast(ticker,price,forecast){
+function recordAiForecast(ticker,price,forecast,market){
   if(!forecast||!forecast.direction||price==null) return;
   var key="aipred_"+ticker;
-  var today=new Date().toISOString().slice(0,10);
+  // scoreHist側と同じ日付基準でないと突き合わせが成立しないため、必ずセッション日を使う
+  var today=currentSessionDate(market||"JP");
   var hist;try{hist=JSON.parse(localStorage.getItem(key)||"[]");}catch(e){hist=[];}
   var idx=hist.findIndex(function(x){return x.d===today;});
   var entry={d:today,p:price,dir:forecast.direction,conf:forecast.confidence};
@@ -2445,7 +2456,7 @@ function analyzeStock(stock,pd,vixVal){
     try{
       var key="sh_"+stock.ticker;
       var hist=JSON.parse(localStorage.getItem(key)||"[]");
-      var today=new Date().toISOString().slice(0,10);
+      var today=currentSessionDate(stock.market); // UTCではなく市場のセッション日（JST基準）
       var sigKeys=signals.map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
       // 地合い情報（対TOPIX前日比・VIX・時間帯）も一緒に記録しておく（Cの機能）
       // → 「上げ相場ではこのシグナルが効く」等の分析に後日使うための記録のみ。現時点では集計には使わない
@@ -2472,7 +2483,7 @@ function analyzeStock(stock,pd,vixVal){
       if(stock.market!=="JP") return;
       var ikey="sh_intraday_"+stock.ticker;
       var ihist=JSON.parse(localStorage.getItem(ikey)||"[]");
-      var itoday=new Date().toISOString().slice(0,10);
+      var itoday=currentSessionDate("JP"); // UTCではなくJSTの営業日（この記録はJP限定）
       var isession=currentSessionLabel();
       var isigKeys=signals.filter(function(x){return x.state!==0;}).map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
       var ilast=ihist[ihist.length-1];
