@@ -405,7 +405,21 @@ async function buildStockUniverse(manualSectors,skipAI){
   return{stocks:out,sectors:sectors};
 }
 
-// ── 前日終値の特定（前日比・ギャップ判定で共通利用）──────────────────────────
+// ── 1営業日あたりのバー数をデータから実測する ────────────────────────────────
+// 15分足の本数は市場ごとに違う（東証 9:00-11:30+12:30-15:30＝22本／米国 26本）。
+// 固定値26を使うと東証では毎日4本ぶんズレて窓が滑るため、直近の「完成した1日」の
+// 本数を数えて使う。最終日は場中で未完成の可能性があるので必ず除外する。
+function barsPerDay(dates){
+  if(!dates||dates.length<2) return null;
+  var lastDate=dates[dates.length-1],end=-1;
+  for(var i=dates.length-1;i>=0;i--){if(dates[i]!==lastDate){end=i;break;}}
+  if(end<0) return null;
+  var d=dates[end],c=0;
+  for(var j=end;j>=0&&dates[j]===d;j--) c++;
+  return c>0?c:null;
+}
+
+// 前日終値の特定（前日比・ギャップ判定で共通利用）
 // meta.chartPreviousClose は「取得したチャート範囲の直前の終値」なので、15分足を
 // 約20営業日分まとめて取得している本アプリでは約1ヶ月前の終値になり、前日比には
 // 使えない。日付配列をさかのぼり「最終日より前の日の、最後の終値」を前日終値とする。
@@ -1875,7 +1889,8 @@ function analyzeStock(stock,pd,vixVal){
   var isJP=stock.market==="JP";
   // デイトレ対応：JP/US共に15分足に統一（取引時間が約6.5時間で揃うため1日≒26本で共通化）
   // JP: J-Quantsの1分足をサーバー側(api/stock.js)で15分足に集計 / US: Yahoo Financeから15分足を直接取得
-  var DAY_BARS   =26;   // 1日あたりのバー数
+  var DAY_BARS   =26;   // 1日あたりのバー数（実測できない場合のフォールバック）
+  var BPD=barsPerDay(pd.dates)||DAY_BARS; // 実測した1営業日あたりのバー数（東証22・米国26）
   var BB_P       =520;  // 20日相当(26本×20日)
   var RECENT_BARS=520;  // 20日相当
   var BB_LOOKBACK_S=130;// short: 約5日相当
@@ -2143,7 +2158,7 @@ function analyzeStock(stock,pd,vixVal){
   // ── 出来高・OBV（メイン・最大15点）───────────────────────────────────
   var obScore=0;
   // OBV: 直近1日分のバーの終値位置平均で判定
-  var obvBars=Math.min(DAY_BARS,n+1);
+  var obvBars=Math.min(BPD,n+1);
   var cpSum=0;
   for(var oi=n-obvBars+1;oi<=n;oi++){var dr=highs[oi]-lows[oi]||1;cpSum+=(closes[oi]-lows[oi])/dr;}
   var closePosition=cpSum/obvBars;
@@ -2155,7 +2170,7 @@ function analyzeStock(stock,pd,vixVal){
 
   // 出来高: 直近5日分合計 vs 長期20日平均（同期間）で比較
   if(volumes.length>0){
-    var volDay5=DAY_BARS*5,volDay20=DAY_BARS*20;
+    var volDay5=BPD*5,volDay20=BPD*20;
     var recentSum=volumes.slice(-volDay5).reduce(function(a,b){return a+b;},0);
     var longVols=volumes.slice(-volDay20,-volDay5);
     var avgSum=longVols.length>0?longVols.reduce(function(a,b){return a+b;},0)/longVols.length*volDay5:0;
