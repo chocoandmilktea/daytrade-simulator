@@ -346,7 +346,7 @@ async function fetchRanking(market){
     if(!res.ok) throw new Error("ranking "+res.status);
     var json=await res.json();
     // ハイブリッド方式：volume・changeも受け取る
-    var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume||0,change:s.change||0};});
+    var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume||0};});
     return stocks.length>0?stocks:null;
   }
   try{return await attempt();}
@@ -367,7 +367,7 @@ async function fetchSectorRanking(manualSectors){
     var res=await fetch(url,{signal:AbortSignal.timeout(25000),cache:"no-store"});
     if(!res.ok) throw new Error("sector "+res.status);
     var json=await res.json();
-    var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume||0,change:s.change||0};});
+    var stocks=(json.stocks||[]).map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol,volume:s.volume||0};});
     return{stocks:stocks.length>0?stocks:null,sectors:json.sectors||[]};
   }
   try{return await attempt();}
@@ -742,7 +742,7 @@ function buildAccuracyPart(signals,score){
   }
   return out;
 }
-function buildAiPrompt(s){
+function buildAiPrompt(s,daily){
   var isJP=s.market==="JP";
   var relPart=(isJP&&s.relStrength!=null)?("対TOPIX相対: "+(s.relStrength>=0?"+":"")+s.relStrength.toFixed(1)+"%（個別銘柄騰落率−TOPIX騰落率。市場全体を除いた銘柄固有の強さの目安）\n"):"";
   var histPart="";
@@ -766,11 +766,17 @@ function buildAiPrompt(s){
         ?(s.name+"（東京証券取引所・証券コード "+codeOnly+"）")
         :("東京証券取引所 証券コード "+codeOnly+"（会社名が不明なため、まず「"+codeOnly+" 株価」等のWeb検索で日本の上場企業名を特定してから分析してください）")))
     :("銘柄: "+s.ticker+(hasName?" ("+s.name+")":""));
+  // 52週レンジ：日足があれば本物の52週、無ければ「直近1ヶ月」と正直に明記する
+  var w52=calc52w(daily,s.rawPrice);
+  var rangePart=w52
+    ?("52週高値比: "+w52.fromHigh.toFixed(1)+"%\n52週安値比: "+(w52.fromLow>=0?"+":"")+w52.fromLow.toFixed(1)+"%\n"+
+      "52週ポジション: "+w52.position.toFixed(0)+"% (0%=安値圏 100%=高値圏。高いほど上値に戻り売りが少ない)\n")
+    :("直近1ヶ月高値比: "+s.fromHigh.toFixed(1)+"%\n直近1ヶ月安値比: "+(s.fromLow>=0?"+":"")+s.fromLow.toFixed(1)+"%\n"+
+      "直近1ヶ月ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏。※52週ではなく直近1ヶ月のレンジ)\n");
   return "あなたは株式トレードのアナリストです。以下の銘柄データを分析して、日本語で簡潔に解説してください。\n\n"+
     idLine+"\n市場: "+s.market+"\n現在値: "+s.price+"\n前日比: "+s.change+"%\n"+
     "総合スコア: "+s.score+"/100\nトレードタイプ: "+s.tradeLabel+"\n"+
-    "52週高値比: "+s.fromHigh.toFixed(1)+"%\n52週安値比: "+(s.fromLow>=0?"+":"")+s.fromLow.toFixed(1)+"%\n"+
-    "52週ポジション: "+s.position52.toFixed(0)+"% (0%=安値圏 100%=高値圏)\n"+
+    rangePart+
     "ATR(14日): "+(isJP?"¥":"$")+s.atr+" / 想定値幅: "+(isJP?"¥":"$")+s.atrLower+"〜"+(isJP?"¥":"$")+s.atrUpper+"\n"+
     relPart+
     histPart+
@@ -785,7 +791,28 @@ function buildAiPrompt(s){
 // jpLimited(既定true): 日本株限定で「出来高急増率」×「ボラティリティ」の合成ランキングで上位N件を選出
 // jpLimited=falseを渡すと市場フィルタ・並べ替えをせず渡された銘柄をそのまま出力する（個別銘柄コピー用）
 var SURGE_WEIGHT=0.5, VOLATILITY_WEIGHT=0.5; // 出来高急増率/ボラティリティの重み（合計1.0）
-function buildVolumeRankingPrompt(stocks,topN,jpLimited){
+// ── 本物の52週高安（詳細画面で取得済みの日足を流用）─────────────────────────
+// スコア計算のhigh52/low52は15分足20営業日ぶん＝実質「直近1ヶ月」でしかない。
+// 銘柄詳細では過去1年の日足(fetchDaily)を既に取得しているので、追加通信ゼロで
+// 本物の52週レンジを出せる。AIに渡す情報だけをこちらに差し替える（スコアは不変）。
+function calc52w(daily,price){
+  if(!daily||!daily.closes||!(price>0)) return null;
+  var c=daily.closes,n=c.length;
+  if(n<60) return null; // 3ヶ月未満しか無い場合は52週とは呼べないので使わない
+  var st=Math.max(0,n-252); // 直近252営業日＝約1年
+  var hs=(daily.highs&&daily.highs.length===n)?daily.highs:c;
+  var ls=(daily.lows&&daily.lows.length===n)?daily.lows:c;
+  var h=-Infinity,l=Infinity;
+  for(var i=st;i<n;i++){
+    if(hs[i]!=null&&hs[i]>h) h=hs[i];
+    if(ls[i]!=null&&ls[i]<l) l=ls[i];
+  }
+  if(!(h>l)) return null;
+  return{high:h,low:l,fromHigh:(price-h)/h*100,fromLow:(price-l)/l*100,
+    position:(price-l)/(h-l)*100,days:n-st};
+}
+
+function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
   var n=topN||10;
   var top;
   if(jpLimited===false){
@@ -828,7 +855,11 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited){
       "  総合スコア: "+s.score+"/100  トレードタイプ: "+s.tradeLabel+"\n"+
       trendLine+
       "  ATR: "+unit+s.atr+"  想定値幅: "+unit+s.atrLower+"〜"+unit+s.atrUpper+"\n"+
-      "  52週ポジション: "+(s.position52!=null?s.position52.toFixed(0)+"%":"─")+"\n"+
+      "  52週ポジション: "+(function(){
+        var w=calc52w(dailyByTicker&&dailyByTicker[s.ticker],s.rawPrice);
+        if(w) return w.position.toFixed(0)+"%（52週高値比 "+w.fromHigh.toFixed(1)+"%・上値のしこりの目安）";
+        return (s.position52!=null?s.position52.toFixed(0)+"%":"─")+"（※直近1ヶ月レンジ内の位置。52週ではない）";
+      })()+"\n"+
       "  PER: "+per+"  PBR: "+pbr+"  アナリスト目標株価: "+target+"\n"+
       "  前日高値/安値: "+prevH+"〜"+prevL+"  週足高値/安値: "+wH+"〜"+wL+"\n"+
       signalsLine;
@@ -866,12 +897,12 @@ function parseAiResult(raw){
   }
   return{parsed:parsed,cleanText:cleanText};
 }
-async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading){
+async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading,daily){
   var raw="";
   try{
     var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
-        prompt:buildAiPrompt(s),
+        prompt:buildAiPrompt(s,daily),
         system:"必ず自分でWeb検索ツールを使って、この銘柄の最新ニュース・材料を確認してから回答してください。日本株の検索はプロンプトに書かれた会社名で行い、「8308.T」のような証券コード単体では検索しないでください（別銘柄の情報を拾う原因になります）。銘柄が特定できない場合でも、ユーザーに質問や確認を求めず、自律的に分析を完了してください。\n\n回答の一番最初に、解説文より前に必ず次の形式でJSONデータを出力してください:\n<AI_DATA>{\"entry\":推奨エントリー価格の数値,\"target\":利確目標価格の数値,\"stop\":損切りラインの数値,\"forecast\":{\"direction\":\"上昇\"または\"下落\"または\"中立\",\"confidence\":0〜100の確信度数値,\"timeframe\":\"期間目安(例:1〜3営業日)\",\"reason\":\"見通しの理由を1文で\"}}</AI_DATA>\nこのタグの後に、通常の分析コメント（買い/売り推奨、Entry/Target/Stopの詳細、今後の見通しなど）を日本語で記載してください。",
         useWebSearch:true,
         stream:true
@@ -989,7 +1020,26 @@ function calcStoch(closes,highs,lows){var p=14;return closes.map(function(_,i){i
 function calcVWAP(closes,highs,lows,volumes){var cumTPV=0,cumVol=0;for(var i=0;i<closes.length;i++){var tp=(highs[i]+lows[i]+closes[i])/3,v=volumes[i]||0;cumTPV+=tp*v;cumVol+=v;}return cumVol>0?cumTPV/cumVol:null;}
 
 // ピボットポイント（前日相当26本から計算）
-function calcPivot(closes,highs,lows){var DAY=26,len=closes.length;if(len<DAY*2)return null;var ph=highs.slice(len-DAY*2,len-DAY),pl=lows.slice(len-DAY*2,len-DAY);var prevH=Math.max.apply(null,ph),prevL=Math.min.apply(null,pl),prevC=closes[len-DAY-1];var pp=(prevH+prevL+prevC)/3;return{pp:pp,r1:pp*2-prevL,s1:pp*2-prevH,r2:pp+(prevH-prevL),s2:pp-(prevH-prevL),prevHigh:prevH,prevLow:prevL,prevClose:prevC};}
+// 前日ピボット。日付配列から「データ内の最終日より1つ前の日」のバーだけを切り出す。
+// 固定本数(1日=26本)での近似だと、東証は1日22本なうえ場中は当日の足がさらに少ないため、
+// 窓が前々日側へ大きく滑って毎回違う値になっていた。日付が無い場合は誤値を出さずnull。
+function calcPivot(closes,highs,lows,dates){
+  if(!dates||dates.length!==closes.length||dates.length<2) return null;
+  var lastDate=dates[dates.length-1],end=-1;
+  for(var i=dates.length-1;i>=0;i--){if(dates[i]!==lastDate){end=i;break;}}
+  if(end<0) return null;
+  var prevDate=dates[end],start=end;
+  while(start>0&&dates[start-1]===prevDate) start--;
+  var prevH=-Infinity,prevL=Infinity;
+  for(var j=start;j<=end;j++){
+    if(highs[j]!=null&&highs[j]>prevH) prevH=highs[j];
+    if(lows[j]!=null&&lows[j]<prevL) prevL=lows[j];
+  }
+  var prevC=closes[end];
+  if(!(prevH>-Infinity)||!(prevL<Infinity)||prevC==null) return null;
+  var pp=(prevH+prevL+prevC)/3;
+  return{pp:pp,r1:pp*2-prevL,s1:pp*2-prevH,r2:pp+(prevH-prevL),s2:pp-(prevH-prevL),prevHigh:prevH,prevLow:prevL,prevClose:prevC};
+}
 // ATR(真の値幅の平均)。period本分のTrue Rangeを単純平均。ボラティリティ判定に使用
 function calcATR(closes,highs,lows,period){var trs=[];for(var i=1;i<closes.length;i++){var h=highs[i]||closes[i],l=lows[i]||closes[i],pc=closes[i-1];trs.push(Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc)));}var slice=trs.slice(-period);return slice.length?slice.reduce(function(a,b){return a+b;},0)/slice.length:null;}
 
@@ -1872,7 +1922,7 @@ function analyzeStock(stock,pd,vixVal){
     }
     if(vwap===null) vwap=calcVWAP(closes,highs,lows,volumes); // 当日データが取れない時のみ従来通り
   }
-  var pivot=calcPivot(closes,highs,lows);
+  var pivot=calcPivot(closes,highs,lows,pd.dates);
 
   // ── VWAP シグナル（メイン・最大15点）────────────────────────────────────
   if(vwap!==null){
@@ -4021,13 +4071,14 @@ function StockDetailPanel(p){
   async function runAiAnalysis(){
     if(aiLoading) return;
     setShowAi(true);setAiLoading(true);setAiText("");setAiEntry(null);
-    await callAiAnalysis(s,setAiText,setAiEntry,setAiLoading);
+    await callAiAnalysis(s,setAiText,setAiEntry,setAiLoading,daily);
   }
 
   var promptCopiedS=useState(false);var promptCopied=promptCopiedS[0],setPromptCopied=promptCopiedS[1];
   function copyTradePrompt(){
     if(!navigator.clipboard) return;
-    navigator.clipboard.writeText(buildVolumeRankingPrompt([s],1,false)).then(function(){
+    var dmap={};dmap[s.ticker]=daily; // 詳細画面では日足取得済み→本物の52週をプロンプトに載せる
+    navigator.clipboard.writeText(buildVolumeRankingPrompt([s],1,false,dmap)).then(function(){
       setPromptCopied(true);
       setTimeout(function(){setPromptCopied(false);},2000);
     }).catch(function(){});
