@@ -76,6 +76,12 @@ async function handleJP(ticker, res) {
 
     const currentPrice = meta.regularMarketPrice || 0;
     const previousClose = meta.chartPreviousClose || meta.regularMarketPreviousClose || 0;
+    // 公式の前営業日終値。個別株の終値は15:30のクロージング・オークション(大引け)で
+    // 決まるため、15分足の最終バーの終値とは1%近くズレることがある。
+    // chartPreviousCloseは「取得範囲(30日)の直前の終値」で全くの別物なので混ぜない。
+    const officialPrevClose =
+      meta.regularMarketPreviousClose != null ? meta.regularMarketPreviousClose
+      : (meta.previousClose != null ? meta.previousClose : null);
 
     // 決算発表予定日（東証公式Excelをキャッシュして照合。対象外ならnull）
     let earningsDate = null;
@@ -109,6 +115,7 @@ async function handleJP(ticker, res) {
           meta: {
             regularMarketPrice: currentPrice,
             chartPreviousClose: previousClose,
+            regularMarketPreviousClose: officialPrevClose,
             dataInterval: "15m",
             dataRange: "30d",
           },
@@ -389,6 +396,10 @@ async function handleUS(ticker, res) {
         || (validCloses.length >= 2 ? validCloses[validCloses.length - 2] : null)
         || 0;
       result.meta.chartPreviousClose = previousClose;
+      // 公式の前営業日終値はアプリ側が最優先で使うため、上書きせず明示的に残す
+      result.meta.regularMarketPreviousClose =
+        meta.regularMarketPreviousClose != null ? meta.regularMarketPreviousClose
+        : (meta.previousClose != null ? meta.previousClose : null);
       result.meta.dataInterval = "15m";
       result.meta.dataRange = "30d";
       // 指数もアプリ側(MarketBar)が日付ベースで前日終値を実測するため、日付配列を付与する
