@@ -422,7 +422,7 @@ function findPrevClose(closes,dates){
 // 15分足データ取得（メイン分析用・約20営業日分。実際の取得期間はapi/stock.js側で固定）
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],opens:cached.opens?cached.opens.slice():[],dates:cached.dates?cached.dates.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,sectorChange:cached.sectorChange,sectorName:cached.sectorName};}
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],opens:cached.opens?cached.opens.slice():[],dates:cached.dates?cached.dates.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,officialPrevClose:cached.officialPrevClose,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,sectorChange:cached.sectorChange,sectorName:cached.sectorName};}
   var json=await enqueueStock(async function(){
     var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(25000),cache:"no-store"});
     var body=await res.json().catch(function(){return null;});
@@ -440,9 +440,9 @@ async function fetchYahoo(ticker){
   var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null,topixChange=result.topixChange!=null?result.topixChange:null;
   var sectorChange=result.sectorChange!=null?result.sectorChange:null,sectorName=result.sectorName||null;
   var filledClose=fill(q.close);
-  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,sectorChange:sectorChange,sectorName:sectorName};
+  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fill(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,officialPrevClose:(meta.regularMarketPreviousClose!=null?meta.regularMarketPreviousClose:null),real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,sectorChange:sectorChange,sectorName:sectorName};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),opens:data.opens.slice(),dates:data.dates.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,sectorChange:data.sectorChange,sectorName:data.sectorName};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),opens:data.opens.slice(),dates:data.dates.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,officialPrevClose:data.officialPrevClose,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,sectorChange:data.sectorChange,sectorName:data.sectorName};
 }
 
 
@@ -1987,9 +1987,15 @@ function analyzeStock(stock,pd,vixVal){
   }
   breakdown.push({label:"ATR消化率",delta:sc-scChk});scChk=sc;
 
-  // 前日終値は日付配列から実測する（pd.previousClose＝chartPreviousCloseは約1ヶ月前の
-  // 値になるため、日付データが無い場合の最終フォールバックとしてのみ使用）
+  // ── 前日終値 ──────────────────────────────────────────────────────────────
+  // 個別株の終値は15:30のクロージング・オークション(大引け)で決まるため、15分足の
+  // 最終バーの終値とは1%近くズレることがある。公式の前営業日終値を最優先で使い、
+  // 前日の値幅から大きく外れている場合だけ15分足ベースに戻す（誤配信への保険）。
   var prevClose=findPrevClose(closes,pd.dates)||pd.previousClose;
+  if(pd.officialPrevClose>0){
+    if(!pivot) prevClose=pd.officialPrevClose; // 検算材料が無い時も公式値の方が確か
+    else if(pd.officialPrevClose>=pivot.prevLow*0.98&&pd.officialPrevClose<=pivot.prevHigh*1.02) prevClose=pd.officialPrevClose;
+  }
   var change=prevClose?((price-prevClose)/prevClose*100).toFixed(2):"0.00";
 
   // ── 対TOPIX相対強弱（日本株限定・最大6点）───────────────────────────────
@@ -2362,11 +2368,24 @@ function analyzeStock(stock,pd,vixVal){
       }
     }
   }
-  // ── 週足高安値（直近5営業日相当）──────────────────────────────────────────
-  var weekBars=Math.min(DAY_BARS*5,closes.length);
-  var weekHighsArr=highs.slice(-weekBars),weekLowsArr=lows.slice(-weekBars);
-  var weekHigh=weekHighsArr.length?Math.max.apply(null,weekHighsArr):null;
-  var weekLow=weekLowsArr.length?Math.min.apply(null,weekLowsArr):null;
+  // ── 週足高安値（直近5営業日）──────────────────────────────────────────────
+  // 固定本数(26本×5日)だと、東証は1日22本なうえ場中は当日の足が少ないため、窓が
+  // 時間とともに後ろへずれて同じ日でも値が動いてしまう。日付で5営業日ぶんを切り出す。
+  var weekHigh=null,weekLow=null;
+  if(pd.dates&&pd.dates.length===closes.length&&closes.length>0){
+    var wDays=[],wStart=0;
+    for(var wi=pd.dates.length-1;wi>=0;wi--){
+      if(wDays.indexOf(pd.dates[wi])===-1){
+        if(wDays.length>=5) break;
+        wDays.push(pd.dates[wi]);
+      }
+      wStart=wi;
+    }
+    for(var wj=wStart;wj<=n;wj++){
+      if(highs[wj]!=null&&(weekHigh===null||highs[wj]>weekHigh)) weekHigh=highs[wj];
+      if(lows[wj]!=null&&(weekLow===null||lows[wj]<weekLow)) weekLow=lows[wj];
+    }
+  }
   var wDec=stock.market==="JP"?0:2;
   weekHigh=weekHigh!=null?parseFloat(weekHigh.toFixed(wDec)):null;
   weekLow=weekLow!=null?parseFloat(weekLow.toFixed(wDec)):null;
@@ -4371,7 +4390,7 @@ function MarketBar(){
         var price=meta.regularMarketPrice||0;
         // 指数も個別銘柄と同じ15分足データのため、chartPreviousCloseではなく実測値を使う
         var q0=(r0.indicators&&r0.indicators.quote&&r0.indicators.quote[0])||{};
-        var prev=findPrevClose(q0.close,q0.date)||meta.chartPreviousClose||price;
+        var prev=meta.regularMarketPreviousClose||findPrevClose(q0.close,q0.date)||meta.chartPreviousClose||price;
         var change=prev?((price-prev)/prev*100).toFixed(2):"0.00";
         return{key:idx.key,price:price,change:change,label:idx.label,prefix:idx.prefix,round:idx.round};
       }catch(e){return{key:idx.key,error:true,label:idx.label};}
