@@ -10,6 +10,18 @@ import { withFallback } from "./_fallbackCache.js";
 
 const redis = Redis.fromEnv();
 
+// ── タイムスタンプ→取引所ローカル日付("YYYY-MM-DD")変換 ──────────────────
+// Yahooの15分足は時刻を result.timestamp(Unix秒) で返すが、アプリ側(App.js)は
+// quote[0].date（日付文字列の配列）を読んで「本日分の足」を特定している。
+// この配列が無いと、前日比・ギャップ・当日ブレイク・ORB・当日VWAPが全て機能しない。
+// gmtoffset: Yahooのmetaに入る取引所のUTCオフセット秒（東京=32400）
+function toLocalDates(timestamps, gmtoffset) {
+  const off = (typeof gmtoffset === "number" ? gmtoffset : 0) * 1000;
+  return (timestamps || []).map(function (t) {
+    return t == null ? null : new Date(t * 1000 + off).toISOString().slice(0, 10);
+  });
+}
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -57,7 +69,10 @@ async function handleJP(ticker, res) {
     const highs   = result.indicators?.quote?.[0]?.high   || [];
     const lows    = result.indicators?.quote?.[0]?.low    || [];
     const volumes = result.indicators?.quote?.[0]?.volume || [];
+    const opens   = result.indicators?.quote?.[0]?.open   || [];
     const meta = result.meta || {};
+    // アプリ側の「本日分」特定に必須の日付配列（東京市場: UTC+9h=32400秒）
+    const dates = toLocalDates(result.timestamp, meta.gmtoffset != null ? meta.gmtoffset : 32400);
 
     const currentPrice = meta.regularMarketPrice || 0;
     const previousClose = meta.chartPreviousClose || meta.regularMarketPreviousClose || 0;
@@ -98,7 +113,7 @@ async function handleJP(ticker, res) {
             dataRange: "30d",
           },
           indicators: {
-            quote: [{ close: closes, high: highs, low: lows, volume: volumes }],
+            quote: [{ close: closes, high: highs, low: lows, volume: volumes, open: opens, date: dates }],
           },
           per: per, pbr: pbr, eps: eps, bps: bps, dividendYield: dividendYield,
           analystTarget: null, sector: null,
@@ -376,6 +391,10 @@ async function handleUS(ticker, res) {
       result.meta.chartPreviousClose = previousClose;
       result.meta.dataInterval = "15m";
       result.meta.dataRange = "30d";
+      // 指数もアプリ側(MarketBar)が日付ベースで前日終値を実測するため、日付配列を付与する
+      // （各取引所のローカル日付。gmtoffsetはYahooのmetaにほぼ必ず入っている）
+      const q0 = result.indicators?.quote?.[0];
+      if (q0) q0.date = toLocalDates(result.timestamp, meta.gmtoffset);
       // アプリ側（fetchYahoo）はこれらの項目を参照するため、常にnullで揃えておく
       result.per = null;
       result.pbr = null;
