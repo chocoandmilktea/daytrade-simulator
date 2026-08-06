@@ -424,6 +424,20 @@ async function buildStockUniverse(manualSectors,skipAI){
   return{stocks:out,sectors:sectors};
 }
 
+// ── 前日終値の特定（前日比・ギャップ判定で共通利用）──────────────────────────
+// meta.chartPreviousClose は「取得したチャート範囲の直前の終値」なので、15分足を
+// 約20営業日分まとめて取得している本アプリでは約1ヶ月前の終値になり、前日比には
+// 使えない。日付配列をさかのぼり「最終日より前の日の、最後の終値」を前日終値とする。
+// 寄り付き前・休場（最終日＝前営業日）でも同じロジックで正しく機能する。
+function findPrevClose(closes,dates){
+  if(!closes||!dates||dates.length!==closes.length||dates.length<2) return null;
+  var lastDate=dates[dates.length-1];
+  for(var i=dates.length-1;i>=0;i--){
+    if(dates[i]!==lastDate&&closes[i]!=null) return closes[i];
+  }
+  return null;
+}
+
 // 15分足データ取得（メイン分析用・約20営業日分。実際の取得期間はapi/stock.js側で固定）
 async function fetchYahoo(ticker){
   var now=Date.now();
@@ -1943,7 +1957,10 @@ function analyzeStock(stock,pd,vixVal){
   }
   breakdown.push({label:"ATR消化率",delta:sc-scChk});scChk=sc;
 
-  var change=pd.previousClose?((price-pd.previousClose)/pd.previousClose*100).toFixed(2):"0.00";
+  // 前日終値は日付配列から実測する（pd.previousClose＝chartPreviousCloseは約1ヶ月前の
+  // 値になるため、日付データが無い場合の最終フォールバックとしてのみ使用）
+  var prevClose=findPrevClose(closes,pd.dates)||pd.previousClose;
+  var change=prevClose?((price-prevClose)/prevClose*100).toFixed(2):"0.00";
 
   // ── 対TOPIX相対強弱（日本株限定・最大6点）───────────────────────────────
   // 個別銘柄の当日騰落率からTOPIXの当日騰落率を引いた差分。市場全体の地合いを
@@ -2124,7 +2141,7 @@ function analyzeStock(stock,pd,vixVal){
   // しているか(モメンタム継続)／埋めに来ているか(反転警戒)」も合わせて判定
   if(todayStart!==null&&pd.opens&&pd.opens[todayStart]>0){
     var todayOpen=pd.opens[todayStart];
-    var gapPct=pd.previousClose?((todayOpen-pd.previousClose)/pd.previousClose*100):0;
+    var gapPct=prevClose?((todayOpen-prevClose)/prevClose*100):0;
     var holdPct=todayOpen?((price-todayOpen)/todayOpen*100):0;
     if(gapPct>=1.5){
       if(holdPct>=-0.3){sc+=5;signals.push({label:"ギャップ",val:"上ギャップ維持(+"+gapPct.toFixed(1)+"%)",state:1});}
@@ -4310,10 +4327,13 @@ function MarketBar(){
       try{
         var res=await fetch("https://daytrade-simulator.vercel.app/api/stock?ticker="+encodeURIComponent(idx.ticker),{signal:AbortSignal.timeout(8000)});
         var json=await res.json();
-        var meta=json&&json.chart&&json.chart.result&&json.chart.result[0]&&json.chart.result[0].meta;
+        var r0=json&&json.chart&&json.chart.result&&json.chart.result[0];
+        var meta=r0&&r0.meta;
         if(!meta) return{key:idx.key,error:true};
         var price=meta.regularMarketPrice||0;
-        var prev=meta.chartPreviousClose||price;
+        // 指数も個別銘柄と同じ15分足データのため、chartPreviousCloseではなく実測値を使う
+        var q0=(r0.indicators&&r0.indicators.quote&&r0.indicators.quote[0])||{};
+        var prev=findPrevClose(q0.close,q0.date)||meta.chartPreviousClose||price;
         var change=prev?((price-prev)/prev*100).toFixed(2):"0.00";
         return{key:idx.key,price:price,change:change,label:idx.label,prefix:idx.prefix,round:idx.round};
       }catch(e){return{key:idx.key,error:true,label:idx.label};}
