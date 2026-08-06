@@ -918,18 +918,34 @@ function stripAiData(t){
   if(j!==-1&&"<AI_DATA>".indexOf(t.slice(j))===0) return t.slice(0,j);
   return t;
 }
+// JSON.parseに失敗した場合の保険：文字列が多少崩れていても、entry/target/stopなど
+// 必要な項目だけを正規表現で直接拾い出す（AIの出力形式が完全なJSONでなくても救済する）
+function extractAiFieldsLoose(text){
+  function num(key){var m=text.match(new RegExp('"'+key+'"\\s*:\\s*(-?[0-9.]+)'));return m?parseFloat(m[1]):undefined;}
+  function str(key){var m=text.match(new RegExp('"'+key+'"\\s*:\\s*"([^"]*)"'));return m?m[1]:undefined;}
+  var entry=num("entry"),target=num("target"),stop=num("stop");
+  if(entry===undefined&&target===undefined&&stop===undefined) return null;
+  var result={entry:entry,target:target,stop:stop};
+  var direction=str("direction"),confidence=num("confidence"),timeframe=str("timeframe"),reason=str("reason");
+  if(direction||confidence!==undefined||timeframe||reason) result.forecast={direction:direction,confidence:confidence,timeframe:timeframe,reason:reason};
+  return result;
+}
 // AI_DATAタグ（無ければ末尾JSON）から数値データを取り出し、本文と分けて返す
+// 正規のJSON.parseがダメでも、緩い抽出（extractAiFieldsLoose）で二段構えで拾う
 function parseAiResult(raw){
   var tagMatch=raw.match(/<AI_DATA>([\s\S]*?)<\/AI_DATA>/);
   var parsed=null,cleanText=raw;
   if(tagMatch){
-    try{parsed=JSON.parse(tagMatch[1]);}catch(je){}
+    try{parsed=JSON.parse(tagMatch[1]);}catch(je){parsed=extractAiFieldsLoose(tagMatch[1]);}
     cleanText=raw.replace(tagMatch[0],"");
   }else{
     var stripped=raw.replace(/```json[\s\S]*?```/g,"");
     var braceIdx=stripped.lastIndexOf("{");
     if(braceIdx!==-1){
-      try{parsed=JSON.parse(stripped.slice(braceIdx));cleanText=stripped.slice(0,braceIdx);}catch(je2){}
+      try{parsed=JSON.parse(stripped.slice(braceIdx));cleanText=stripped.slice(0,braceIdx);}
+      catch(je2){parsed=extractAiFieldsLoose(stripped.slice(braceIdx));cleanText=stripped.slice(0,braceIdx);}
+    }else{
+      parsed=extractAiFieldsLoose(raw); // タグも末尾JSONも無い最終手段：本文全体から直接探す
     }
   }
   return{parsed:parsed,cleanText:cleanText};
@@ -964,7 +980,7 @@ async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading,daily){
     }
 
     var out=parseAiResult(raw);
-    if(out.parsed&&typeof out.parsed.entry!=="undefined") setAiEntry(out.parsed);
+    if(out.parsed) setAiEntry(out.parsed);
     if(out.parsed&&out.parsed.forecast) recordAiForecast(s.ticker,s.rawPrice,out.parsed.forecast,s.market); // s.priceは"¥9,300"という表示文字列なので数値のrawPriceを渡す
     setAiText(out.cleanText.trim()||"分析できませんでした。");
   }catch(e){
@@ -4282,7 +4298,7 @@ function StockDetailPanel(p){
               <button onClick={function(){setShowAi(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
             </div>
             {aiLoading&&!aiText?(<div style={{textAlign:"center",padding:"12px 0"}}><div style={{fontSize:18}}>⏳</div><div style={{fontSize:14,color:"#4a90c0",marginTop:4}}>AIが分析中...</div></div>):(<div style={{fontSize:15,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}{aiLoading&&<span style={{color:"#22d3a0"}}>▌</span>}</div>)}
-            {!aiLoading&&aiEntry&&(
+            {!aiLoading&&aiEntry&&aiEntry.entry!=null&&aiEntry.target!=null&&aiEntry.stop!=null&&(
               <div style={{background:"#071428",border:"1px solid #4a90c040",borderRadius:8,padding:"8px 10px",marginTop:8}}>
                 <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 AIエントリー提案</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
@@ -4292,8 +4308,14 @@ function StockDetailPanel(p){
                 </div>
               </div>
             )}
-            {!aiLoading&&aiEntry&&(
-              <button onClick={function(){setTradePrefill({buy:aiEntry.entry,sell:aiEntry.target,stop:aiEntry.stop});setShowAi(false);setShowTrade(true);}} style={{width:"100%",marginTop:8,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"9px",fontSize:13,fontWeight:700,cursor:"pointer"}}>🎯 AI提案でトレード登録</button>
+            {!aiLoading&&aiText&&(
+              <button onClick={function(){
+                if(aiEntry&&aiEntry.entry!=null&&aiEntry.target!=null){setTradePrefill({buy:aiEntry.entry,sell:aiEntry.target,stop:aiEntry.stop});}
+                else{setTradePrefill(null);} // AIの数値が読み取れなかった時は空欄で開き、手入力してもらう
+                setShowAi(false);setShowTrade(true);
+              }} style={{width:"100%",marginTop:8,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"9px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                {aiEntry&&aiEntry.entry!=null&&aiEntry.target!=null?"🎯 AI提案でトレード登録":"📝 トレード登録（数値は手入力）"}
+              </button>
             )}
             {!aiLoading&&aiEntry&&ForecastBox(aiEntry.forecast)}
             {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
