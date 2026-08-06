@@ -1012,29 +1012,6 @@ function calcPivot(closes,highs,lows){var DAY=26,len=closes.length;if(len<DAY*2)
 // ATR(真の値幅の平均)。period本分のTrue Rangeを単純平均。ボラティリティ判定に使用
 function calcATR(closes,highs,lows,period){var trs=[];for(var i=1;i<closes.length;i++){var h=highs[i]||closes[i],l=lows[i]||closes[i],pc=closes[i-1];trs.push(Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc)));}var slice=trs.slice(-period);return slice.length?slice.reduce(function(a,b){return a+b;},0)/slice.length:null;}
 
-// ── 日足ATR（ATR消化率の基準値専用）───────────────────────────────────────
-// calcATRに15分足を渡すと「15分1本あたりの平均値幅」になるため、1日の値幅と
-// 比べると必ず7〜8倍(=700〜800%)になってしまう。ここでは日付ごとに15分足を
-// まとめて日足(高値/安値/終値)を作り直し、そこからATRを算出する。
-// ※当日の足はまだ未完成なので必ず除外する（この関数は取引時間中のみ呼ばれる）
-function calcDailyATR(closes,highs,lows,dates,period){
-  if(!dates||dates.length!==closes.length||dates.length<2) return null;
-  var days=[],cur=null;
-  for(var i=0;i<dates.length;i++){
-    if(closes[i]==null||highs[i]==null||lows[i]==null) continue;
-    if(!cur||cur.d!==dates[i]){cur={d:dates[i],h:highs[i],l:lows[i],c:closes[i]};days.push(cur);}
-    else{if(highs[i]>cur.h)cur.h=highs[i];if(lows[i]<cur.l)cur.l=lows[i];cur.c=closes[i];}
-  }
-  days.pop(); // 当日（未完成）を除外
-  if(days.length<2) return null;
-  var use=days.slice(-(period+1)),trs=[];
-  for(var j=1;j<use.length;j++){
-    var pc=use[j-1].c;
-    trs.push(Math.max(use[j].h-use[j].l,Math.abs(use[j].h-pc),Math.abs(use[j].l-pc)));
-  }
-  return trs.length?trs.reduce(function(a,b){return a+b;},0)/trs.length:null;
-}
-
 // ===== 予測レンジ（簡易版） =====
 // 直近period日の値動きの荒さσを求める。σ＝1日あたり何%動くかの目安（対数ベース）
 function calcVolSigma(closes,period){
@@ -1968,12 +1945,13 @@ function analyzeStock(stock,pd,vixVal){
   // 既に値幅の大部分を使い切っている場合、その日のうちにさらに同方向へ伸びる余地は
   // 乏しく、高値掴み・追いかけ買いのリスクが高いと判断してスコアを抑える（ボーナスなし）
   // ※基準は必ず日足ATR。15分足ATRと比べると常に700〜800%になり判定が成立しない
-  var dailyAtr=(todayStart!==null)?calcDailyATR(closes,highs,lows,pd.dates,14):null;
-  if(todayStart!==null&&dailyAtr>0){
+  // ここで算出した atrDaily は後段の買値プラン（buildBuyPlan）でも使い回す
+  var atrDaily=calcDailyATR(closes,highs,lows,pd.dates,14);
+  if(todayStart!==null&&atrDaily>0){
     var tHighsAtr=highs.slice(todayStart,n+1),tLowsAtr=lows.slice(todayStart,n+1);
     if(tHighsAtr.length>0){
       var todayRange=Math.max.apply(null,tHighsAtr)-Math.min.apply(null,tLowsAtr);
-      var atrUsedPct=todayRange/dailyAtr*100;
+      var atrUsedPct=todayRange/atrDaily*100;
       if(atrUsedPct>=130){sc-=8;signals.push({label:"ATR消化率",val:"消化"+atrUsedPct.toFixed(0)+"%(過熱・追随危険)",state:-1});}
       else if(atrUsedPct>=90){sc-=4;signals.push({label:"ATR消化率",val:"消化"+atrUsedPct.toFixed(0)+"%(値幅使い切り注意)",state:-1});}
       else if(atrUsedPct>=50){signals.push({label:"ATR消化率",val:"消化"+atrUsedPct.toFixed(0)+"%(順調)",state:0});}
@@ -2327,7 +2305,7 @@ function analyzeStock(stock,pd,vixVal){
   };
   // ── デイトレ用 買値（エントリー1本）────────────────────────────────
   // VWAPより上の銘柄のみ対象。VWAP下・値幅使い切り時は買値を出さない(null)
-  var atrDaily=calcDailyATR(closes,highs,lows,pd.dates,14);
+  // 日足ATRはATR消化率の判定時に算出済み。ここでは換算できなかった場合の保険のみ
   if(!(atrDaily>0)) atrDaily=atr*5; // 日足に換算できない時の近似（15分足26本ぶん≒√26倍）
   var buyPlan=null;
   if(pd.real&&vwap!==null&&price>vwap&&atr>0){
