@@ -5358,7 +5358,7 @@ function SyncPanel(p){
           {syncStatus==="loading"?"同期中...":syncStatus==="ok"?"✅ 同期完了！":syncStatus==="error"?"❌ IDが見つかりません":"このIDで同期する"}
         </button>
       </div>
-      <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px"}}>
+      <div style={{background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
         <div style={{fontSize:13,fontWeight:700,color:"#4a90c0",marginBottom:10}}>使い方</div>
         {[["1","🔐で合言葉＋PINを決めてログイン"],["2","別端末でも同じ合言葉＋PINでログイン"],["3","キャッシュを消してしまっても、同じ合言葉＋PINで元に戻せる"]].map(function(row){
           return(<div key={row[0]} style={{display:"flex",gap:10,marginBottom:8,alignItems:"flex-start"}}>
@@ -5367,6 +5367,22 @@ function SyncPanel(p){
           </div>);
         })}
         <div style={{fontSize:11,color:"#2a6060",marginTop:8}}>※ お気に入り・トレードの登録・変更時に自動でサーバーに保存されます</div>
+      </div>
+      <div style={{background:"#2a1400",border:"1px solid #fb923c",borderRadius:10,padding:"14px 16px"}}>
+        <div style={{fontSize:14,fontWeight:700,color:"#fbbf24",marginBottom:4}}>🗑️ 的中率データのリセット</div>
+        <div style={{fontSize:12,color:"#c99a5a",marginBottom:10}}>スコア推移・AI予想の記録をすべて消去します。お気に入り・トレード記録・ログイン情報は消えません</div>
+        <button onClick={function(){
+          if(!confirm("スコア推移・AI予想の記録をすべて削除します。元に戻せません。よろしいですか？"))return;
+          try{
+            var removed=0;
+            Object.keys(localStorage).forEach(function(k){
+              if(k.indexOf("sh_")===0||k.indexOf("aipred_")===0){localStorage.removeItem(k);removed++;}
+            });
+            alert(removed+"件のデータを削除しました");
+          }catch(e){alert("削除に失敗しました: "+e.message);}
+        }} style={{width:"100%",background:"#3a1a00",border:"1px solid #fb923c",borderRadius:8,color:"#fbbf24",padding:"10px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
+          スコア推移・AI予想の記録を削除
+        </button>
       </div>
     </div>
   );
