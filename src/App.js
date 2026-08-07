@@ -888,10 +888,12 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
     var w52=calc52w(dailyByTicker&&dailyByTicker[s.ticker],s.rawPrice);
     if(!w52) hasStale52=true;
     var trendLine="";
-    if(s.scoreHist&&s.scoreHist.length>=2){
+    // 履歴2件だと「初回スコア→今日」の差がそのまま出て +97 のような極端な値になる。
+    // 3件以上に限定し、何日分の推移かも添えてAIが過大評価しないようにする
+    if(s.scoreHist&&s.scoreHist.length>=3){
       var slice=s.scoreHist.slice(-5);
       var trend=Math.round(slice[slice.length-1].s-slice[0].s); // 小数のまま出すと桁が汚れるので丸める
-      trendLine="  スコア推移: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"\n";
+      trendLine="  スコア推移: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"（"+slice.length+"日分）\n";
     }
     var per=s.per!=null?s.per.toFixed(1):"─";
     var pbr=s.pbr!=null?s.pbr.toFixed(2):"─";
@@ -923,7 +925,7 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
         " / 利確 "+unit+s.buyPlan.target+"(+"+s.buyPlan.gainPct+"%)"+
         " / 損切 "+unit+s.buyPlan.stop+"(-"+s.buyPlan.lossPct+"%)"+
         " / RR 1:"+s.buyPlan.rr+"　根拠: "+s.buyPlan.reason+"\n"
-      :"  買いプラン(アプリ算出): なし（VWAP割れ・勢い不足・値幅使い切りのいずれかのため）\n";
+      :"  買いプラン(アプリ算出): なし（理由: "+(s.planSkip||"条件未達")+"）\n";
     // 統計ベースの過去実績（AI不使用・実データのみ）。指標から推論できない独立情報として渡す
     var acc=buildAccuracyPart(s.signals,s.score);
     var accPart=acc?acc.replace(/\n+$/,"").split("\n").map(function(l){return"  "+l;}).join("\n")+"\n":"";
@@ -949,6 +951,7 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
       signalsLine+
       accPart).replace(/\n+$/,""); // 末尾の余分な改行を落として無駄なトークンを減らす
   }).join("\n\n");
+  var kw=top.length>1?"各銘柄":"この銘柄"; // 1件コピー時に「各銘柄」と書かないための切替
   var note=jpLimited===false?"":"（日本株限定・出来高急増率×ボラティリティ順）";
   var head=top.length===1?"以下は対象銘柄1件のデータです":"以下はスコア上位"+top.length+"銘柄のデータです"+note;
   var tickRule=top.some(function(s){return s.market==="JP";})
@@ -957,21 +960,23 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
   return"あなたは株式トレードのアナリストです。"+head+"。\n"+
     "データ取得時刻: "+new Date().toLocaleString("ja-JP")+"（この時刻を「今」として判断してください）\n\n"+
 
-    "【手順1】各銘柄の直近1週間のニュース（決算、業績修正、適時開示など）をWeb検索で確認し、判定に反映してください。\n"+
-    "・検索は上記の会社名で行ってください。「7203.T」のような証券コード単体の検索は、別の銘柄の情報を拾う原因になります。\n"+
+    "【手順1】"+kw+"の直近1週間のニュース（決算、業績修正、適時開示など）をWeb検索で確認し、判定に反映してください。\n"+
+    "・検索は下記の会社名で行ってください。「7203.T」のような証券コード単体の検索は、別の銘柄の情報を拾う原因になります。\n"+
     "・材料が見つからない場合は「材料なし」と明記し、推測で材料を作らないでください。\n"+
-    "・ユーザーに質問や確認を求めず、手元のデータだけで分析を完了してください。\n\n"+
+    "・ユーザーに質問や確認を求めず、下記のデータとWeb検索の結果だけで判定を完結させてください。\n\n"+
 
     lines+"\n\n"+
 
-    "【手順2】各銘柄を「買い」「売り」「見送り」のいずれかで判定し、理由を1〜2文で書いてください。迷ったら「見送り」にしてください。\n\n"+
+    "【手順2】"+kw+"を「買い」「売り」「見送り」のいずれかで判定し、理由を1〜2文で書いてください。迷ったら「見送り」にしてください。\n\n"+
 
     "【手順3】価格の決め方（買い/売りと判定した場合のみ）\n"+
     "① 「買いプラン(アプリ算出)」がある銘柄を「買い」と判定した場合は、その3つの価格をそのまま使ってください。\n"+
     "② それ以外は次の式で算出してください。\n"+
     "　　買い: エントリー=現在値 ／ 利確=エントリー＋max(ATR×1.5, 現在値の1.0%) ／ 損切り=エントリー−max(ATR×0.75, 現在値の0.5%)\n"+
     "　　売り: エントリー=現在値 ／ 利確=エントリー−max(ATR×1.5, 現在値の1.0%) ／ 損切り=エントリー＋max(ATR×0.75, 現在値の0.5%)\n"+
-    "③ 上記より手前に「サポート/レジスタンス(アプリ算出)」の水準がある場合は、そちらを優先して利確・損切りに使ってかまいません（使った場合は理由に一言添える）。\n"+
+    "③ 「サポート/レジスタンス(アプリ算出)」の水準は、次の場合に②より優先して使ってかまいません（使った場合は理由に一言添える）。\n"+
+    "　　利確: ②の利確より手前に、買いならレジスタンス、売りならサポートがある場合はその水準を利確にする。\n"+
+    "　　損切り: ②の損切りのすぐ外側に、買いならサポート、売りならレジスタンスがある場合はその1円（米国株は0.01ドル）外側を損切りにする。\n"+
     "④ "+tickRule+"\n"+
     "⑤ リスクリワードは「リスク : リワード」の順で 1:○.○ と書いてください。○.○ ＝ |利確−エントリー| ÷ |エントリー−損切り|。\n"+
     "⑥ リスクリワードが1.5未満になる場合は、割に合わないので「見送り」に切り替えてください。\n"+
@@ -2495,8 +2500,14 @@ function analyzeStock(stock,pd,vixVal){
   // VWAPより上の銘柄のみ対象。VWAP下・値幅使い切り時は買値を出さない(null)
   // 日足ATRはATR消化率の判定時に算出済み。ここでは換算できなかった場合の保険のみ
   if(!(atrDaily>0)) atrDaily=atr*5; // 日足に換算できない時の近似（15分足26本ぶん≒√26倍）
-  var buyPlan=null;
-  if(pd.real&&vwap!==null&&price>vwap&&atr>0){
+  // planSkip: 買いプランを出さなかった「実際の理由」。プロンプトでそのままAIに渡す。
+  // 「いずれかのため」という曖昧な表記だと、シグナル欄の内容と食い違って見えるため
+  var buyPlan=null,planSkip=null;
+  if(!pd.real){ planSkip="株価データの取得に失敗"; }
+  else if(vwap===null){ planSkip="VWAP算出不可（出来高データなし）"; }
+  else if(!(atr>0)){ planSkip="ATR算出不可"; }
+  else if(price<=vwap){ planSkip="VWAP割れ"; }
+  else{
     var sigState=function(lbl){var h=signals.find(function(x){return x.label===lbl;});return h?h.state:0;};
     var overheat=signals.find(function(x){return x.label==="ATR消化率"&&x.state===-1;});
     var todayHigh=null;
@@ -2504,23 +2515,27 @@ function analyzeStock(stock,pd,vixVal){
       var hArr=highs.slice(todayStart,n);
       if(hArr.length) todayHigh=Math.max.apply(null,hArr);
     }
-    if(!overheat){
-      var hasMomentum=(sigState("VWAP傾き")===1&&sigState("出来高")===1);
-      var bpMode=null,bpAnchor,bpReason;
-      if(hasMomentum&&todayHigh!==null&&price>todayHigh){
+    // ※押し目待ち(dip)は廃止。勢いの条件に当てはまらない銘柄は買いプランを表示しない
+    if(overheat){
+      planSkip="本日の値幅を使い切り（"+overheat.val+"）";
+    }else if(!(sigState("VWAP傾き")===1&&sigState("出来高")===1)){
+      planSkip="勢い不足（VWAP傾き上昇と出来高急増が揃っていない）";
+    }else if(todayHigh===null){
+      planSkip="当日の値動きデータ不足";
+    }else{
+      var bpMode,bpAnchor,bpReason;
+      if(price>todayHigh){
         bpMode="now"; bpAnchor=price; bpReason="当日高値を更新中（現在値で追随）";
-      }else if(hasMomentum&&todayHigh!==null){
+      }else{
         bpMode="break"; bpAnchor=todayHigh+tickSizeFor(todayHigh,isJPmkt);
         bpReason="当日高値"+roundTickPrice(todayHigh,0,isJPmkt)+"の上抜け待ち（逆指値）";
       }
-      // ※押し目待ち(dip)は廃止。勢いの条件に当てはまらない銘柄は買いプランを表示しない
-      if(bpMode){
-        // 残り時間チェック（日本株・14:30以降のブレイク狙いは伸びきらない可能性）
-        var jstNow=new Date(Date.now()+9*3600*1000);
-        var jstMin=jstNow.getUTCHours()*60+jstNow.getUTCMinutes();
-        var lateWarn=(isJPmkt&&jstMin>=870)?"引けまで残りわずか":null;
-        buyPlan=buildBuyPlan(bpMode,bpAnchor,atrDaily,isJPmkt,bpReason,lateWarn);
-      }
+      // 残り時間チェック（日本株・14:30以降のブレイク狙いは伸びきらない可能性）
+      var jstNow=new Date(Date.now()+9*3600*1000);
+      var jstMin=jstNow.getUTCHours()*60+jstNow.getUTCMinutes();
+      var lateWarn=(isJPmkt&&jstMin>=870)?"引けまで残りわずか":null;
+      buyPlan=buildBuyPlan(bpMode,bpAnchor,atrDaily,isJPmkt,bpReason,lateWarn);
+      if(!buyPlan) planSkip="買値の算出に失敗";
     }
   }
   // ── 週足高安値（直近5営業日）──────────────────────────────────────────────
@@ -2652,7 +2667,7 @@ function analyzeStock(stock,pd,vixVal){
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
     aptScore:aptScore,
-    atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,resistance:resistance,profitLoss:profitLoss,buyPlan:buyPlan,
+    atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,resistance:resistance,profitLoss:profitLoss,buyPlan:buyPlan,planSkip:planSkip,
     scoreHist:scoreHist,
     actualWinRate:calcActualWinRate(scoreHist,null,stock.market==="JP"),
     vwap:vwap?parseFloat(vwap.toFixed(stock.market==="JP"?0:2)):null,
