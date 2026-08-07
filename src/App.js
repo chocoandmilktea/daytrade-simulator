@@ -765,14 +765,19 @@ var AI_API_URL="https://daytrade-simulator.vercel.app/api/ai";
 function buildAccuracyPart(signals,score){
   var stats=getUniverseSignalStats();
   var lines=[];
+  // 的中率50%前後はコイン投げと同じで判断材料にならないうえトークンを食うだけなので、
+  // 「55%以上(信頼できる)」か「45%以下(逆張り材料になる)」に偏ったものだけをAIに渡す
   (signals||[]).forEach(function(sig){
     var key=baseSigLabel(sig.label)+"#"+sig.state;
     var s=stats[key];
-    if(s&&s.t>=10) lines.push("  "+sig.label+": 過去的中率"+Math.round(signalQuality(s,key)*100)+"%("+s.t+"件, 予想方向が翌営業日に当たった率)");
+    if(!s||s.t<10) return;
+    var pct=Math.round(signalQuality(s,key)*100);
+    if(pct<55&&pct>45) return;
+    lines.push("  "+sig.label+": 過去的中率"+pct+"%("+s.t+"件)"+(pct<=45?" ←当たらない傾向。逆方向のヒントとして扱う":""));
   });
-  var out=lines.length?("過去のシグナル的中率(参考・スキャン銘柄全体集計):\n"+lines.join("\n")+"\n"):"";
+  var out=lines.length?("過去のシグナル的中率(スキャン銘柄全体の集計。この銘柄固有の実績ではない／50%前後の項目は省略):\n"+lines.join("\n")+"\n"):"";
   var fc=calcStatForecast(signals,stats);
-  if(fc.ready) out+="🔮統計ベース翌営業日予想(過去実績のみで算出): 期待変化率"+(fc.expPct>=0?"+":"")+fc.expPct.toFixed(1)+"% / 上昇した割合"+fc.upRate+"%("+fc.totalN+"件)\n";
+  if(fc.ready) out+="🔮統計ベース翌営業日予想(スキャン銘柄全体の集計であり、この銘柄の予想ではない): 期待変化率"+(fc.expPct>=0?"+":"")+fc.expPct.toFixed(1)+"% / 上昇した割合"+fc.upRate+"%("+fc.totalN+"件)\n";
   if(score!=null){
     var band=getUniverseBandStats().find(function(b){return b.band===bandLabelFor(score);});
     if(band&&band.total>=5) out+="スコア帯"+band.band+"点の過去実績: 翌営業日的中率"+band.winRate+"%("+band.total+"件)\n";
@@ -845,8 +850,16 @@ function calc52w(daily,price){
     if(ls[i]!=null&&ls[i]<l) l=ls[i];
   }
   if(!(h>l)) return null;
+  // 中期(直近60営業日)の高安も同じ日足から算出。15分足の"全期間"は日本株だと
+  // 約20営業日しかなくS1と重複するため、中期の節目は必ず日足側から出す。
+  var st60=Math.max(0,n-60),h60=-Infinity,l60=Infinity;
+  for(var k=st60;k<n;k++){
+    if(hs[k]!=null&&hs[k]>h60) h60=hs[k];
+    if(ls[k]!=null&&ls[k]<l60) l60=ls[k];
+  }
   return{high:h,low:l,fromHigh:(price-h)/h*100,fromLow:(price-l)/l*100,
-    position:(price-l)/(h-l)*100,days:n-st};
+    position:(price-l)/(h-l)*100,days:n-st,
+    high60:h60>l60?h60:null,low60:h60>l60?l60:null};
 }
 
 function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
@@ -868,12 +881,16 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
     });
     top=metrics.sort(function(a,b){return b.rankScore-a.rankScore;}).slice(0,n).map(function(m){return m.s;});
   }
+  var hasStale52=false; // 日足未取得で52週が出せない銘柄が1つでもあるか
   var lines=top.map(function(s,i){
-    var unit=s.market==="JP"?"¥":"$";
+    var isJPmkt=s.market==="JP";
+    var unit=isJPmkt?"¥":"$";
+    var w52=calc52w(dailyByTicker&&dailyByTicker[s.ticker],s.rawPrice);
+    if(!w52) hasStale52=true;
     var trendLine="";
     if(s.scoreHist&&s.scoreHist.length>=2){
       var slice=s.scoreHist.slice(-5);
-      var trend=slice[slice.length-1].s-slice[0].s;
+      var trend=Math.round(slice[slice.length-1].s-slice[0].s); // 小数のまま出すと桁が汚れるので丸める
       trendLine="  スコア推移: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"\n";
     }
     var per=s.per!=null?s.per.toFixed(1):"─";
@@ -886,47 +903,93 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
     var signalsLine=s.signals&&s.signals.length
       ?"  シグナル全項目:\n"+s.signals.map(function(sig){return"    "+sig.label+": "+sig.val;}).join("\n")+"\n"
       :"";
-    // アプリが算出済みの節目（チャート由来）。AIに自力計算させず同じ数値を使わせて画面と揃える
+    // アプリが算出済みの節目（チャート由来）。AIに自力計算させず同じ数値を使わせて画面と揃える。
+    // ATR利確とATR上限、ATR損切とATR下限は元が同じ計算なので重複させない（AIが別物と誤認するため）
+    // S2/R2は日足、S1/R1は15分足と取得元が違うため、まれに内外が逆転する。
+    // 「S2はS1より安い / R2はR1より高い」が成立する時だけ出す（矛盾した数値をAIに渡さない）
+    var s2v=(w52&&w52.low60!=null)?(isJPmkt?Math.round(w52.low60):parseFloat(w52.low60.toFixed(2))):null;
+    var r2v=(w52&&w52.high60!=null)?(isJPmkt?Math.round(w52.high60):parseFloat(w52.high60.toFixed(2))):null;
     var zoneArr=[];
-    if(s.profitLoss){zoneArr.push("ATR利確(×1.5) "+unit+s.profitLoss.target);zoneArr.push("ATR損切(×0.75) "+unit+s.profitLoss.stop);}
-    if(s.support){zoneArr.push("S1(20日安値) "+unit+s.support.s1);zoneArr.push("ATR下限(×1.5) "+unit+s.support.atrFloor);}
-    if(s.resistance){zoneArr.push("R1(20日高値) "+unit+s.resistance.r1);zoneArr.push("ATR上限(×1.5) "+unit+s.resistance.atrCeil);}
+    if(s.support) zoneArr.push("S1(20日安値) "+unit+s.support.s1);
+    if(s2v!=null&&s.support&&s2v<s.support.s1) zoneArr.push("S2(60日安値) "+unit+s2v);
+    if(s.support) zoneArr.push("ATR下限(×1.5) "+unit+s.support.atrFloor);
+    if(s.resistance) zoneArr.push("R1(20日高値) "+unit+s.resistance.r1);
+    if(r2v!=null&&s.resistance&&r2v>s.resistance.r1) zoneArr.push("R2(60日高値) "+unit+r2v);
+    if(s.profitLoss) zoneArr.push("ATR上限(×1.5) "+unit+s.profitLoss.target);
     var zoneLine=zoneArr.length?"  サポート/レジスタンス(アプリ算出): "+zoneArr.join(" / ")+"\n":"";
+    // アプリが算出済みの買いプラン（呼値丸め・最低値幅1.0%済み）。あればAIにそのまま使わせる
+    var planLine=s.buyPlan
+      ?"  買いプラン(アプリ算出・呼値丸め済み): エントリー "+unit+s.buyPlan.entry+
+        " / 利確 "+unit+s.buyPlan.target+"(+"+s.buyPlan.gainPct+"%)"+
+        " / 損切 "+unit+s.buyPlan.stop+"(-"+s.buyPlan.lossPct+"%)"+
+        " / RR 1:"+s.buyPlan.rr+"　根拠: "+s.buyPlan.reason+"\n"
+      :"  買いプラン(アプリ算出): なし（VWAP割れ・勢い不足・値幅使い切りのいずれかのため）\n";
     // 統計ベースの過去実績（AI不使用・実データのみ）。指標から推論できない独立情報として渡す
     var acc=buildAccuracyPart(s.signals,s.score);
     var accPart=acc?acc.replace(/\n+$/,"").split("\n").map(function(l){return"  "+l;}).join("\n")+"\n":"";
-    return(i+1)+". "+s.ticker+" ("+s.name+") ["+s.market+"]\n"+
+    // 52週は日足がある時だけ表示する。日足が無い銘柄で15分足由来の「直近1ヶ月」を
+    // 混ぜると、同じリスト内で基準の違う数値が並んでAIが横並び比較を誤るため出さない
+    var pos52=w52
+      ?w52.position.toFixed(0)+"%（52週高値比 "+w52.fromHigh.toFixed(1)+"%・上値のしこりの目安）"
+      :"─（日足未取得のため算出不可。この銘柄は52週情報なしとして判断すること）";
+    var idLine=isJPmkt
+      ?(s.name||s.ticker)+"（東京証券取引所・証券コード "+s.ticker.replace(".T","")+"）"
+      :s.ticker+(s.name?" ("+s.name+")":"");
+    return((i+1)+". "+idLine+"\n"+
       "  現在値: "+s.price+"  前日比: "+s.change+"%\n"+
       "  当日出来高: "+(s.volume||0).toLocaleString()+"（急増率: "+(s.volSurge?s.volSurge.toFixed(1)+"倍":"─")+"）\n"+
       "  総合スコア: "+s.score+"/100  トレードタイプ: "+s.tradeLabel+"\n"+
       trendLine+
       "  ATR: "+unit+s.atr+"  想定値幅: "+unit+s.atrLower+"〜"+unit+s.atrUpper+"\n"+
-      "  52週ポジション: "+(function(){
-        var w=calc52w(dailyByTicker&&dailyByTicker[s.ticker],s.rawPrice);
-        if(w) return w.position.toFixed(0)+"%（52週高値比 "+w.fromHigh.toFixed(1)+"%・上値のしこりの目安）";
-        return (s.position52!=null?s.position52.toFixed(0)+"%":"─")+"（※直近1ヶ月レンジ内の位置。52週ではない）";
-      })()+"\n"+
+      "  52週ポジション: "+pos52+"\n"+
       "  PER: "+per+"  PBR: "+pbr+"  アナリスト目標株価: "+target+"\n"+
-      "  前日高値/安値: "+prevH+"〜"+prevL+"  週足高値/安値: "+wH+"〜"+wL+"\n"+
+      "  前日高値/安値: "+prevH+"〜"+prevL+"  週足高値/安値(直近5営業日): "+wH+"〜"+wL+"\n"+
       zoneLine+
+      planLine+
       signalsLine+
-      accPart;
+      accPart).replace(/\n+$/,""); // 末尾の余分な改行を落として無駄なトークンを減らす
   }).join("\n\n");
   var note=jpLimited===false?"":"（日本株限定・出来高急増率×ボラティリティ順）";
-  return"あなたは株式トレードのアナリストです。以下はスコア上位"+top.length+"銘柄のデータです"+note+"。\n\n"+
-    "最初に各銘柄の直近1週間のニュース（決算、業績修正、適時開示など）をWeb検索で確認し、判定に反映してください。材料が見つからない場合は「材料なし」と明記し、推測で材料を作らないでください。\n\n"+
+  var head=top.length===1?"以下は対象銘柄1件のデータです":"以下はスコア上位"+top.length+"銘柄のデータです"+note;
+  var tickRule=top.some(function(s){return s.market==="JP";})
+    ?"日本株の価格は1円単位、米国株は0.01ドル単位に丸めること。"
+    :"価格は0.01ドル単位に丸めること。";
+  return"あなたは株式トレードのアナリストです。"+head+"。\n"+
+    "データ取得時刻: "+new Date().toLocaleString("ja-JP")+"（この時刻を「今」として判断してください）\n\n"+
+
+    "【手順1】各銘柄の直近1週間のニュース（決算、業績修正、適時開示など）をWeb検索で確認し、判定に反映してください。\n"+
+    "・検索は上記の会社名で行ってください。「7203.T」のような証券コード単体の検索は、別の銘柄の情報を拾う原因になります。\n"+
+    "・材料が見つからない場合は「材料なし」と明記し、推測で材料を作らないでください。\n"+
+    "・ユーザーに質問や確認を求めず、手元のデータだけで分析を完了してください。\n\n"+
+
     lines+"\n\n"+
-    "各銘柄について「買い」「売り」「見送り」のいずれかを判定し、理由を1〜2文で日本語で答えてください。\n"+
-    "判定が「買い」または「売り」の場合のみ、エントリー・利確・損切りの価格とリスクリワード比を続けて書いてください。\n"+
-    "価格の目安: 上記「サポート/レジスタンス(アプリ算出)」の水準をそのまま使ってください。無い場合のみ損切りは現在値からATR×0.75、利確はATR×1.5離れた水準（売り判定なら上下逆）で算出してください。\n"+
-    "「見送り」の場合は価格を算出せず、判定と理由のみ書いてください。買い前提で無理に価格を出さないこと。ただし材料行は判定に関わらず必ず書いてください。\n"+
-    "出力形式:\n"+
-    "銘柄コード: 判定（買い/売り/見送り） — 理由\n"+
+
+    "【手順2】各銘柄を「買い」「売り」「見送り」のいずれかで判定し、理由を1〜2文で書いてください。迷ったら「見送り」にしてください。\n\n"+
+
+    "【手順3】価格の決め方（買い/売りと判定した場合のみ）\n"+
+    "① 「買いプラン(アプリ算出)」がある銘柄を「買い」と判定した場合は、その3つの価格をそのまま使ってください。\n"+
+    "② それ以外は次の式で算出してください。\n"+
+    "　　買い: エントリー=現在値 ／ 利確=エントリー＋max(ATR×1.5, 現在値の1.0%) ／ 損切り=エントリー−max(ATR×0.75, 現在値の0.5%)\n"+
+    "　　売り: エントリー=現在値 ／ 利確=エントリー−max(ATR×1.5, 現在値の1.0%) ／ 損切り=エントリー＋max(ATR×0.75, 現在値の0.5%)\n"+
+    "③ 上記より手前に「サポート/レジスタンス(アプリ算出)」の水準がある場合は、そちらを優先して利確・損切りに使ってかまいません（使った場合は理由に一言添える）。\n"+
+    "④ "+tickRule+"\n"+
+    "⑤ リスクリワードは「リスク : リワード」の順で 1:○.○ と書いてください。○.○ ＝ |利確−エントリー| ÷ |エントリー−損切り|。\n"+
+    "⑥ リスクリワードが1.5未満になる場合は、割に合わないので「見送り」に切り替えてください。\n"+
+    "⑦ 買い前提で無理に価格を出さないこと。「見送り」なら価格は一切書かないこと。\n\n"+
+
+    "【出力形式】\n"+
+    "◆買い/売りの場合\n"+
+    "銘柄コード: 判定（買い/売り） — 理由\n"+
     "　材料: 直近ニュースの要約（なければ「材料なし」）\n"+
+    "　想定保有期間: ○営業日（トレードタイプに合わせる。デイトレ=当日中、スイング=2〜5営業日）\n"+
     "　エントリー: 価格\n"+
     "　利確: 価格\n"+
     "　損切り: 価格\n"+
-    "　リスクリワード: 1:○.○";
+    "　リスクリワード: 1:○.○\n\n"+
+    "◆見送りの場合（材料行は必ず書く。価格は書かない）\n"+
+    "銘柄コード: 見送り — 理由\n"+
+    "　材料: 直近ニュースの要約（なければ「材料なし」）"+
+    (hasStale52?"\n\n※一部の銘柄は52週情報が「─」です。その銘柄は52週の位置を推測せず、無い前提で判断してください。":"");
 }
 // 表示用にAI_DATAタグ（数値データ用の内部タグ）を隠す。
 // 書きかけの「<AI_D」のような未完成のタグも隠して、画面にチラつかないようにする。
@@ -2487,12 +2550,12 @@ function analyzeStock(stock,pd,vixVal){
     var validLows=lows.filter(function(v){return v!=null&&v>0&&!isNaN(v)&&isFinite(v);});
     var isJPfmt=stock.market==="JP";
     var s1v=validLows.length>=BB_P?Math.min.apply(null,validLows.slice(-BB_P)):null; // 20日相当
-    var s2v=validLows.length>=1?Math.min.apply(null,validLows.slice(-YEAR_BARS)):null; // 全期間
+    // ※旧S2(全期間安値)は削除。15分足の取得期間が約20営業日しかなく、S1とほぼ同値に
+    //   なるだけで意味が無かった。中期の安値は日足ベース(calc52wのlow60)を使う。
     var atrFv=price-atr*1.5;
-    if(s1v!==null&&s2v!==null&&isFinite(s1v)&&isFinite(s2v)){
+    if(s1v!==null&&isFinite(s1v)){
       support={
         s1:isJPfmt?Math.round(s1v):parseFloat(s1v.toFixed(2)),
-        s2:isJPfmt?Math.round(s2v):parseFloat(s2v.toFixed(2)),
         atrFloor:isJPfmt?Math.round(atrFv):parseFloat(atrFv.toFixed(2))
       };
     }
