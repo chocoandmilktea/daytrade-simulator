@@ -7,6 +7,15 @@ import { createPortal } from "react-dom";
 // 「実際は狭い」ことを判定できない。iOS端末では devicePixelRatio から縮小率を逆算し、
 // 画面上で実際に見えている幅に換算してスマホ判定する。
 var MOBILE_BP=768; // この幅未満（見た目換算）をスマホ表示にする
+
+// ── 端末に記憶する状態（useStateと同じ使い方）─────────────────────────────
+// タブを切り替えると部品が一度消えて状態がリセットされるため、選んだ内容を
+// localStorageに保存しておき、戻ってきた時・アプリを開き直した時に復元する。
+function usePersistedState(key,initial){
+  var s=useState(function(){try{var v=localStorage.getItem(key);return v==null?initial:JSON.parse(v);}catch(e){return initial;}});
+  useEffect(function(){try{localStorage.setItem(key,JSON.stringify(s[0]));}catch(e){}},[s[0]]);
+  return s;
+}
 function isIOSDevice(){
   var ua=navigator.userAgent||"";
   if(/iPad|iPhone|iPod/.test(ua)) return true;
@@ -3071,7 +3080,6 @@ function DailyChartWithBand(p){
           <span style={{fontSize:9,color:"#a3e635"}}>25日MA</span>
           <span style={{fontSize:9,color:"#f472b6"}}>75日MA</span>
         </div>
-        <span style={{position:"absolute",top:3,right:4,zIndex:2,fontSize:9,color:"#6a90b0",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"2px 5px"}}>日足6ヶ月</span>
         <svg width="100%" height={H} viewBox={"0 0 "+W+" "+H} preserveAspectRatio="none" style={{display:"block"}}>
           {priceLevels.map(function(v,i){
             return(<line key={"h"+i} x1={0} y1={toY(v)} x2={W} y2={toY(v)} stroke="#1a2c44" strokeWidth={1} vectorEffect="non-scaling-stroke"/>);
@@ -3250,7 +3258,6 @@ function IntradayChart1m(p){
             <span style={{fontSize:9,color:"#f472b6",whiteSpace:"nowrap"}}>75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
             {hasVolume?<span style={{fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{fontSize:9,color:"#2a4060",whiteSpace:"nowrap"}}>VWAP未対応</span>}
           </div>
-          <span style={{position:"absolute",top:4,right:4,zIndex:2,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px",pointerEvents:"none"}}>1分足</span>
         <div ref={scrollRef} onScroll={updateVisibleRange} style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <div style={{width:chartWidth}}>
             <svg width={chartWidth} height={H} style={{display:"block",overflow:"hidden"}}>
@@ -4359,9 +4366,11 @@ function StockDetailPanel(p){
 
       {/* チャート（1分足／日足6ヶ月＋予測レンジ を切替） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px",marginTop:-6}}>
-        <div style={{display:"flex",gap:6,padding:"2px 0 4px"}}>
+        <div style={{display:"flex",gap:6,padding:"2px 0 4px",alignItems:"center"}}>
           <TabBtn active={chartMode==="1m"} color="#38bdf8" label="1分足" onClick={function(){setChartMode("1m");}}/>
           <TabBtn active={chartMode==="1d"} color="#38bdf8" label="日足＋予測" onClick={function(){setChartMode("1d");}}/>
+          {/* 今表示しているチャートの種類（もとはチャート内の右上にあった表示） */}
+          <span style={{marginLeft:"auto",flexShrink:0,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px"}}>{chartMode==="1m"?"1分足":"日足6ヶ月"}</span>
         </div>
         {chartMode==="1m"
           ? <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?150:250} aiEntry={aiEntry}/>
@@ -4736,10 +4745,10 @@ function FavPanel(p){
   var extraH=isMobile?MOBILE_TABBAR_H:0; // スマホ用タブバー分の高さを差し引く
   // お気に入り登録順（新しく登録した銘柄が先頭）をデフォルト順にする
   var favStocks=favs.slice().reverse().map(function(t){return stocks.find(function(s){return s.ticker===t;});}).filter(Boolean);
-  var sortModeS=useState("reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "reg"=登録順(新しい順) / "dayType"=日中型順(日中分の累積が高い順)
+  var sortModeS=usePersistedState("fav_sort_mode","reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1]; // "reg"=登録順(新しい順) / "score"=スコア順 / "dayType"=日中型順。タブを移動しても保持される
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
-  var groupFilterS=useState(0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1]; // 0=全体
+  var groupFilterS=usePersistedState("fav_group_filter",0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1]; // 0=全体。タブを移動しても保持される
   var addGroupS=useState(0);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
   var showAccS=useState(false);var showAcc=showAccS[0],setShowAcc=showAccS[1];
   var filtersOpenS=useState(false);var filtersOpen=filtersOpenS[0],setFiltersOpen=filtersOpenS[1];
@@ -4764,6 +4773,13 @@ function FavPanel(p){
   var groupedStocks=groupFilter===0?favStocks:favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
   var mktFiltered=groupedStocks;
   var dnProgS=useState(null);var dnProg=dnProgS[0],setDnProg=dnProgS[1]; // 日中型順のための日足取得の進捗
+  // 記憶していた並び順が「日中型順」だった場合、開き直した直後は日足が未取得なので自動で取りに行く
+  var dnAutoRef=useRef(false);
+  useEffect(function(){
+    if(sortMode!=="dayType"||!mktFiltered.length||dnAutoRef.current)return;
+    dnAutoRef.current=true;
+    fillDayNightFor(mktFiltered,function(d,t){setDnProg(d<t?{d:d,t:t}:null);}).then(function(){setDnProg(null);});
+  },[sortMode,mktFiltered.length]);
   var displayStocks=sortMode==="dayType"
     ?mktFiltered.slice().sort(function(a,b){
         var ad=DAYNIGHT[a.ticker],bd=DAYNIGHT[b.ticker];
