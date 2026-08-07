@@ -886,6 +886,15 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
     var signalsLine=s.signals&&s.signals.length
       ?"  シグナル全項目:\n"+s.signals.map(function(sig){return"    "+sig.label+": "+sig.val;}).join("\n")+"\n"
       :"";
+    // アプリが算出済みの節目（チャート由来）。AIに自力計算させず同じ数値を使わせて画面と揃える
+    var zoneArr=[];
+    if(s.profitLoss){zoneArr.push("ATR利確(×1.5) "+unit+s.profitLoss.target);zoneArr.push("ATR損切(×0.75) "+unit+s.profitLoss.stop);}
+    if(s.support){zoneArr.push("S1(20日安値) "+unit+s.support.s1);zoneArr.push("ATR下限(×1.5) "+unit+s.support.atrFloor);}
+    if(s.resistance){zoneArr.push("R1(20日高値) "+unit+s.resistance.r1);zoneArr.push("ATR上限(×1.5) "+unit+s.resistance.atrCeil);}
+    var zoneLine=zoneArr.length?"  サポート/レジスタンス(アプリ算出): "+zoneArr.join(" / ")+"\n":"";
+    // 統計ベースの過去実績（AI不使用・実データのみ）。指標から推論できない独立情報として渡す
+    var acc=buildAccuracyPart(s.signals,s.score);
+    var accPart=acc?acc.replace(/\n+$/,"").split("\n").map(function(l){return"  "+l;}).join("\n")+"\n":"";
     return(i+1)+". "+s.ticker+" ("+s.name+") ["+s.market+"]\n"+
       "  現在値: "+s.price+"  前日比: "+s.change+"%\n"+
       "  当日出来高: "+(s.volume||0).toLocaleString()+"（急増率: "+(s.volSurge?s.volSurge.toFixed(1)+"倍":"─")+"）\n"+
@@ -899,17 +908,21 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
       })()+"\n"+
       "  PER: "+per+"  PBR: "+pbr+"  アナリスト目標株価: "+target+"\n"+
       "  前日高値/安値: "+prevH+"〜"+prevL+"  週足高値/安値: "+wH+"〜"+wL+"\n"+
-      signalsLine;
+      zoneLine+
+      signalsLine+
+      accPart;
   }).join("\n\n");
   var note=jpLimited===false?"":"（日本株限定・出来高急増率×ボラティリティ順）";
   return"あなたは株式トレードのアナリストです。以下はスコア上位"+top.length+"銘柄のデータです"+note+"。\n\n"+
+    "最初に各銘柄の直近1週間のニュース（決算、業績修正、適時開示など）をWeb検索で確認し、判定に反映してください。材料が見つからない場合は「材料なし」と明記し、推測で材料を作らないでください。\n\n"+
     lines+"\n\n"+
     "各銘柄について「買い」「売り」「見送り」のいずれかを判定し、理由を1〜2文で日本語で答えてください。\n"+
     "判定が「買い」または「売り」の場合のみ、エントリー・利確・損切りの価格とリスクリワード比を続けて書いてください。\n"+
-    "価格の目安: 損切りは現在値からATR×0.75、利確はATR×1.5離れた水準（売り判定なら上下逆）。ただし支持線・抵抗線（前日高値/安値、週足高値/安値、Pivot）が近い場合はそちらを優先して構いません。\n"+
-    "「見送り」の場合は価格を算出せず、判定と理由のみ書いてください。買い前提で無理に価格を出さないこと。\n"+
+    "価格の目安: 上記「サポート/レジスタンス(アプリ算出)」の水準をそのまま使ってください。無い場合のみ損切りは現在値からATR×0.75、利確はATR×1.5離れた水準（売り判定なら上下逆）で算出してください。\n"+
+    "「見送り」の場合は価格を算出せず、判定と理由のみ書いてください。買い前提で無理に価格を出さないこと。ただし材料行は判定に関わらず必ず書いてください。\n"+
     "出力形式:\n"+
     "銘柄コード: 判定（買い/売り/見送り） — 理由\n"+
+    "　材料: 直近ニュースの要約（なければ「材料なし」）\n"+
     "　エントリー: 価格\n"+
     "　利確: 価格\n"+
     "　損切り: 価格\n"+
@@ -4175,21 +4188,11 @@ function StockDetailPanel(p){
     await callAiAnalysis(s,setAiText,setAiEntry,setAiLoading,daily);
   }
 
-  var promptCopiedS=useState(false);var promptCopied=promptCopiedS[0],setPromptCopied=promptCopiedS[1];
-  function copyTradePrompt(){
-    if(!navigator.clipboard) return;
-    var dmap={};dmap[s.ticker]=daily; // 詳細画面では日足取得済み→本物の52週をプロンプトに載せる
-    navigator.clipboard.writeText(buildVolumeRankingPrompt([s],1,false,dmap)).then(function(){
-      setPromptCopied(true);
-      setTimeout(function(){setPromptCopied(false);},2000);
-    }).catch(function(){});
-  }
-
   // 判定プロンプトをClaudeアプリに直接渡す（プロンプト欄に事前入力された状態で開く）
   // ※qに渡せるのは約14,000文字までのため、余裕をみて13,000文字で切る
   // ※念のためクリップボードにも同時コピー（アプリが開かなかった時の保険）
   function openInClaude(){
-    var dmap={};dmap[s.ticker]=daily; // 📋と同じく日足を渡して本物の52週データを載せる
+    var dmap={};dmap[s.ticker]=daily; // 詳細画面では日足取得済み→本物の52週をプロンプトに載せる
     var text=buildVolumeRankingPrompt([s],1,false,dmap);
     if(text.length>13000) text=text.slice(0,13000);
     if(navigator.clipboard) navigator.clipboard.writeText(text).catch(function(){});
@@ -4269,7 +4272,6 @@ function StockDetailPanel(p){
         <a href={s.yahooUrl} target="_blank" rel="noreferrer" title="Yahoo!ファイナンス" style={{flexShrink:0,background:"#071428",border:"1px solid #4f46e5",borderRadius:6,color:"#a5b4fc",padding:"4px 9px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>🔗</a>
         <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} title="iSPEED（銘柄コードをコピー）" style={{flexShrink:0,background:"#1a0a0a",border:"1px solid #f87171",borderRadius:6,color:"#fca5a5",padding:"4px 9px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>📱</a>
         <div style={{flexShrink:0,width:30}}/>
-        <button onClick={copyTradePrompt} title="判定プロンプトをコピー" style={{flexShrink:0,background:promptCopied?"#052e16":"transparent",border:"1px solid "+(promptCopied?"#22d3a0":"#2a4060"),borderRadius:6,color:promptCopied?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>{promptCopied?"✓":"📋"}</button>
         <button onClick={openInClaude} title="Claudeアプリで判定" style={{flexShrink:0,background:"#2a1206",border:"1px solid #d97757",borderRadius:6,color:"#f0a583",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>⚡</button>
         <button onClick={function(){if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} title="再スキャン" style={{flexShrink:0,background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
         <button onClick={runAiAnalysis} disabled={aiLoading} title="AI相談" style={{flexShrink:0,background:"transparent",border:"1px solid "+(aiLoading?"#22d3a0":"#2a4060"),borderRadius:6,color:aiLoading?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:aiLoading?"not-allowed":"pointer"}}>{aiLoading?"⏳":"🤖"}</button>
@@ -5892,8 +5894,7 @@ function GuidePanel(){
       {title:"🔘 銘柄詳細のアイコン行",items:[
         "🔗：Yahoo!ファイナンスの銘柄ページを新しいタブで開く",
         "📱：銘柄コードをコピーしてiSPEEDアプリを開く（日本株向け）",
-        "📋：AI判定用のプロンプトをクリップボードにコピー（claude.aiなどに貼り付けて使う用）",
-        "⚡：判定プロンプトをClaudeアプリに直接渡して開く（コピー＆貼り付け不要。回答はチャット側に表示され、アプリのエントリー提案・的中率には記録されません）",
+        "⚡：判定プロンプトをClaudeアプリに直接渡して開く（同時にクリップボードにもコピーされます。回答はチャット側に表示され、アプリのエントリー提案・的中率には記録されません）",
         "🔄：この銘柄だけを最新データで再スキャン",
         "🤖：AIによる分析・上昇予測をポップアップ表示",
         "💹：損益シミュレーターをポップアップ表示（買値・株数から利確/損切りラインの損益を試算）",
