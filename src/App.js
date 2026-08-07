@@ -4177,6 +4177,17 @@ function StockDetailPanel(p){
     }).catch(function(){});
   }
 
+  // 判定プロンプトをClaudeアプリに直接渡す（プロンプト欄に事前入力された状態で開く）
+  // ※qに渡せるのは約14,000文字までのため、余裕をみて13,000文字で切る
+  // ※念のためクリップボードにも同時コピー（アプリが開かなかった時の保険）
+  function openInClaude(){
+    var dmap={};dmap[s.ticker]=daily; // 📋と同じく日足を渡して本物の52週データを載せる
+    var text=buildVolumeRankingPrompt([s],1,false,dmap);
+    if(text.length>13000) text=text.slice(0,13000);
+    if(navigator.clipboard) navigator.clipboard.writeText(text).catch(function(){});
+    window.location.href="claude://claude.ai/new?q="+encodeURIComponent(text);
+  }
+
   // 板スコア補正（日本株のみ。板が届いていない間はnullでパネル非表示）
   var boardPrice=(liveTick&&liveTick.price!=null)?liveTick.price:s.rawPrice;
   var boardScore=s.market==="JP"?calcBoardScore(tachibanaQuote,boardPrice):null;
@@ -4251,6 +4262,7 @@ function StockDetailPanel(p){
         <a href="ispeed://" onClick={function(){var code=s.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} title="iSPEED（銘柄コードをコピー）" style={{flexShrink:0,background:"#1a0a0a",border:"1px solid #f87171",borderRadius:6,color:"#fca5a5",padding:"4px 9px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none"}}>📱</a>
         <div style={{flexShrink:0,width:30}}/>
         <button onClick={copyTradePrompt} title="判定プロンプトをコピー" style={{flexShrink:0,background:promptCopied?"#052e16":"transparent",border:"1px solid "+(promptCopied?"#22d3a0":"#2a4060"),borderRadius:6,color:promptCopied?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>{promptCopied?"✓":"📋"}</button>
+        <button onClick={openInClaude} title="Claudeアプリで判定" style={{flexShrink:0,background:"#2a1206",border:"1px solid #d97757",borderRadius:6,color:"#f0a583",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>⚡</button>
         <button onClick={function(){if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} title="再スキャン" style={{flexShrink:0,background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
         <button onClick={runAiAnalysis} disabled={aiLoading} title="AI相談" style={{flexShrink:0,background:"transparent",border:"1px solid "+(aiLoading?"#22d3a0":"#2a4060"),borderRadius:6,color:aiLoading?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:aiLoading?"not-allowed":"pointer"}}>{aiLoading?"⏳":"🤖"}</button>
         <button onClick={function(){setShowSim(function(v){return !v;});}} title="シミュレーター" style={{flexShrink:0,background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
@@ -5873,6 +5885,7 @@ function GuidePanel(){
         "🔗：Yahoo!ファイナンスの銘柄ページを新しいタブで開く",
         "📱：銘柄コードをコピーしてiSPEEDアプリを開く（日本株向け）",
         "📋：AI判定用のプロンプトをクリップボードにコピー（claude.aiなどに貼り付けて使う用）",
+        "⚡：判定プロンプトをClaudeアプリに直接渡して開く（コピー＆貼り付け不要。回答はチャット側に表示され、アプリのエントリー提案・的中率には記録されません）",
         "🔄：この銘柄だけを最新データで再スキャン",
         "🤖：AIによる分析・上昇予測をポップアップ表示",
         "💹：損益シミュレーターをポップアップ表示（買値・株数から利確/損切りラインの損益を試算）",
