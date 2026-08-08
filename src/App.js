@@ -797,9 +797,12 @@ function buildAiPrompt(s,daily){
   var isJP=s.market==="JP";
   var relPart=(isJP&&s.relStrength!=null)?("対TOPIX相対: "+(s.relStrength>=0?"+":"")+s.relStrength.toFixed(1)+"%（個別銘柄騰落率−TOPIX騰落率。市場全体を除いた銘柄固有の強さの目安）\n"):"";
   var histPart="";
-  if(s.scoreHist&&s.scoreHist.length>=2){
+  // 休場中・寄り付き前のスキャンはVWAP等の場中指標が算出できず、スコアの土俵が場中と変わる。
+  // 混ぜて比較すると「測り方の変化」を値動きと誤認するため、取引日の記録だけで推移を出す
+  var histTD=tradingDayHist(s.scoreHist,isJP);
+  if(histTD.length>=2){
     var days=s.tradeType==="short"?5:s.tradeType==="mid"?7:10;
-    var slice=s.scoreHist.slice(-days);
+    var slice=histTD.slice(-days);
     var trend=slice[slice.length-1].s-slice[0].s;
     var atrTrend=slice[slice.length-1].atr-slice[0].atr;
     histPart="スコア推移(直近"+slice.length+"日):\n"+
@@ -899,8 +902,10 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
     var trendLine="";
     // 履歴2件だと「初回スコア→今日」の差がそのまま出て +97 のような極端な値になる。
     // 3件以上に限定し、何日分の推移かも添えてAIが過大評価しないようにする
-    if(s.scoreHist&&s.scoreHist.length>=3){
-      var slice=s.scoreHist.slice(-5);
+    // 休場中の記録はスコアの土俵が違うため、取引日の記録だけで推移を出す
+    var histTD=tradingDayHist(s.scoreHist,isJPmkt);
+    if(histTD.length>=3){
+      var slice=histTD.slice(-5);
       var trend=Math.round(slice[slice.length-1].s-slice[0].s); // 小数のまま出すと桁が汚れるので丸める
       trendLine="  スコア推移: "+(trend>10?"↑上昇中(+"+trend+")":trend<-10?"↓下落中("+trend+")":"→横ばい")+"（"+slice.length+"日分）\n";
     }
@@ -966,8 +971,14 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
   var tickRule=top.some(function(s){return s.market==="JP";})
     ?"日本株の価格は1円単位、米国株は0.01ドル単位に丸めること。"
     :"価格は0.01ドル単位に丸めること。";
+  // 休場中・寄り付き前はVWAP等の場中指標が算出できない。AIが「指標が消えた＝弱い」と
+  // 誤読しないよう、データの前提を明示する（1銘柄でも該当すれば出す）
+  var closedNote=top.some(function(s){return s.sessionStarted===false;})
+    ?"※このデータは休場中（または寄り付き前）に取得したものです。VWAP・VWAP傾き・当日ブレイク・ATR消化率などの場中指標は算出できないため、シグナル一覧に含まれていません。総合スコアも場中に算出した値とは土俵が違うので単純比較しないでください。「買いプラン(アプリ算出)」も場中専用のため出ません。\n\n"
+    :"";
   return"あなたは株式トレードのアナリストです。"+head+"。\n"+
     "データ取得時刻: "+new Date().toLocaleString("ja-JP")+"（この時刻を「今」として判断してください）\n\n"+
+    closedNote+
 
     "【手順1】"+kw+"の直近1週間のニュース（決算、業績修正、適時開示など）をWeb検索で確認し、判定に反映してください。\n"+
     "・検索は下記の会社名で行ってください。「7203.T」のような証券コード単体の検索は、別の銘柄の情報を拾う原因になります。\n"+
@@ -1466,6 +1477,20 @@ function bizDayDiff(dStr1,dStr2,isJP){
 function localYmdKey(d){
   var m=d.getMonth()+1,dd=d.getDate();
   return d.getFullYear()+"-"+(m<10?"0":"")+m+"-"+(dd<10?"0":"")+dd;
+}
+// "YYYY-MM-DD"がその市場の取引日かどうか（土日・東証の祝日を除く）。
+// 休場中に記録された古いscoreHistを、スコア推移の集計から除くために使う
+function isTradingDayStr(dStr,isJP){
+  var d=new Date(dStr+"T00:00:00");
+  if(isNaN(d.getTime())) return true; // 日付が壊れている記録は判定せずそのまま通す
+  var dw=d.getDay();
+  if(dw===0||dw===6) return false;
+  return !(isJP&&JP_HOLIDAYS[dStr]);
+}
+// scoreHistから休場日の記録を除いた配列を返す（スコア推移の比較用）
+function tradingDayHist(hist,isJP){
+  if(!hist||!hist.length) return [];
+  return hist.filter(function(x){return x&&x.d&&isTradingDayStr(x.d,isJP);});
 }
 // シグナル統計が「何営業日分（何日分の記録）から作られたか」を返す
 // 同じ日に多数の銘柄をスキャンすると件数だけが水増しされるため、日数でも信頼性を測る
@@ -2560,6 +2585,7 @@ function analyzeStock(stock,pd,vixVal){
   // 「いずれかのため」という曖昧な表記だと、シグナル欄の内容と食い違って見えるため
   var buyPlan=null,planSkip=null;
   if(!pd.real){ planSkip="株価データの取得に失敗"; }
+  else if(!sessionStarted){ planSkip="休場中（本日の取引が未開始のため場中指標を算出できず）"; }
   else if(vwap===null){ planSkip="VWAP算出不可（出来高データなし）"; }
   else if(!(atr>0)){ planSkip="ATR算出不可"; }
   else if(price<=vwap){ planSkip="VWAP割れ"; }
@@ -2656,6 +2682,9 @@ function analyzeStock(stock,pd,vixVal){
     try{
       var key="sh_"+stock.ticker;
       var hist=JSON.parse(localStorage.getItem(key)||"[]");
+      // 休場中・寄り付き前はVWAP等の場中指標が算出できず、スコアの土俵が場中と変わる。
+      // そのまま記録するとスコア推移・的中率の統計が汚れるため、記録せず既存履歴を返す
+      if(!sessionStarted) return hist;
       var today=currentSessionDate(stock.market); // UTCではなく市場のセッション日（JST基準）
       var sigKeys=signals.map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
       // 地合い情報（対TOPIX前日比・VIX・時間帯）も一緒に記録しておく（Cの機能）
@@ -2681,6 +2710,7 @@ function analyzeStock(stock,pd,vixVal){
   (function(){
     try{
       if(stock.market!=="JP") return;
+      if(!sessionStarted) return; // 休場中・寄り付き前は時間帯統計として意味がないので記録しない
       var ikey="sh_intraday_"+stock.ticker;
       var ihist=JSON.parse(localStorage.getItem(ikey)||"[]");
       var itoday=currentSessionDate("JP"); // UTCではなくJSTの営業日（この記録はJP限定）
@@ -2724,6 +2754,7 @@ function analyzeStock(stock,pd,vixVal){
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
     aptScore:aptScore,
     atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,resistance:resistance,profitLoss:profitLoss,buyPlan:buyPlan,planSkip:planSkip,
+    sessionStarted:sessionStarted, // 休場中・寄り付き前かどうか（プロンプトの注記に使用）
     scoreHist:scoreHist,
     actualWinRate:calcActualWinRate(scoreHist,null,stock.market==="JP"),
     vwap:vwap?parseFloat(vwap.toFixed(stock.market==="JP"?0:2)):null,
