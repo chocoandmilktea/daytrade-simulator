@@ -1283,6 +1283,53 @@ function fcCalibration(){
   FC_CAL_CACHE=out;FC_CAL_TS=now;return out;
 }
 
+// ── Chronos予測の答え合わせ ────────────────────────────────────────────────
+// fc_log_v1に貯まった cr(予測倍率) と a(5営業日後の実績終値) を突き合わせ、
+// 「Chronosの予測が実際に当たっているか」を集計する。
+// 単独の的中率だけでは相場の地合いに引きずられるため、必ず基準線と並べて表示する。
+var CHR_NEUTRAL=0.003; // 予測幅が±0.3%未満は「横ばい予測」とみなし方向判定から除外
+var CHR_BANDS=[{min:0.003,max:0.01,label:"±0.3〜1%"},{min:0.01,max:0.03,label:"±1〜3%"},{min:0.03,max:99,label:"±3%以上"}];
+var CHR_ACC_CACHE=null,CHR_ACC_TS=0;
+function calcChronosAccuracy(){
+  var now=Date.now();
+  if(CHR_ACC_CACHE&&now-CHR_ACC_TS<60000)return CHR_ACC_CACHE;
+  var rows=fcLoad().filter(function(r){return r.cr>0&&r.a>0&&r.p>0;});
+  var win=0,tot=0,up=0,upTot=0;   // up/upTot = 常に「上昇」と予測した場合の的中率（基準線）
+  var errC=[],errFlat=[];         // 予測倍率の誤差 / 横ばい(1.0倍)と置いた場合の誤差
+  var bands=CHR_BANDS.map(function(b){return{label:b.label,w:0,t:0};});
+  rows.forEach(function(r){
+    var pred=r.cr,act=r.a/r.p;
+    errC.push(Math.abs(pred-act));errFlat.push(Math.abs(1-act));
+    upTot++;if(act>1)up++;
+    var mag=Math.abs(pred-1);
+    if(mag<CHR_NEUTRAL)return;
+    var hit=(pred>1)===(act>1);
+    tot++;if(hit)win++;
+    for(var i=0;i<CHR_BANDS.length;i++){
+      if(mag>=CHR_BANDS[i].min&&mag<CHR_BANDS[i].max){bands[i].t++;if(hit)bands[i].w++;break;}
+    }
+  });
+  function med(a){if(!a.length)return null;a.sort(function(x,y){return x-y;});return a[Math.floor(a.length/2)];}
+  var mc=med(errC),mf=med(errFlat);
+  CHR_ACC_CACHE={
+    total:tot,winRate:tot?Math.round(win/tot*100):null,
+    baseRate:upTot?Math.round(up/upTot*100):null,baseTotal:upTot,
+    maeC:mc!=null?Math.round(mc*1000)/10:null,      // %表示に変換
+    maeFlat:mf!=null?Math.round(mf*1000)/10:null,
+    bands:bands.map(function(b){return{label:b.label,winRate:b.t?Math.round(b.w/b.t*100):null,total:b.t};})
+  };
+  CHR_ACC_TS=now;return CHR_ACC_CACHE;
+}
+// 集計結果を「スコアに統合してよいか」の一言コメントに変換する
+function chronosVerdict(a){
+  if(a.total<20)return{msg:"判定にはあと"+(20-a.total)+"件必要です（方向判定20件以上で評価）",col:"#4a7090"};
+  if(a.winRate==null||a.baseRate==null)return{msg:"データ不足",col:"#4a7090"};
+  var d=a.winRate-a.baseRate;
+  if(d>=5)return{msg:"✅ 基準線を"+d+"ポイント上回っています。スコアへの統合（アンサンブル）を検討する価値があります",col:"#22d3a0"};
+  if(d<=-5)return{msg:"⚠️ 基準線を"+Math.abs(d)+"ポイント下回っています。今のままスコアに反映するのは避けたほうが無難です",col:"#f43f5e"};
+  return{msg:"→ 基準線とほぼ同等（差"+(d>=0?"+":"")+d+"ポイント）。もう少しデータを溜めてから判断してください",col:"#fbbf24"};
+}
+
 // 別デバイスの記録と突き合わせる。同じ銘柄・同じ日は「答え合わせ済み」を優先して残す
 function fcMerge(remote){
   if(!remote||!remote.length)return;
@@ -5641,6 +5688,7 @@ function SignalAccuracyContent(p){
   var emptyLabel=tickers?(label+"の登録銘柄"):"お気に入り銘柄";
   var horizons=[{k:"d1",h:"1日後"},{k:"d3",h:"3日後"},{k:"d5",h:"5日後"}];
   var aiAcc=calcAiForecastAccuracy();
+  var chrAcc=calcChronosAccuracy(),chrV=chronosVerdict(chrAcc);
   var intradayAcc=calcIntradayAccuracy();
   var verdictAcc=calcVerdictAccuracy();
   var regime=getRegimeSignalStats();
@@ -5803,6 +5851,51 @@ function SignalAccuracyContent(p){
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🌙 Chronos予測 的中率（5営業日後）</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>毎晩自動生成される予測が、5営業日後に実際に当たったかを集計（お気に入り銘柄が対象）。予測幅±0.3%未満は「横ばい」とみなし方向判定から除きます</div>
+        {chrAcc.baseTotal===0?(
+          <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだ答え合わせ済みのデータがありません。お気に入り銘柄を毎日スキャンし、5営業日経つと溜まっていきます。</div>
+        ):(
+          <div>
+            <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
+              <div style={{flex:1}}>項目</div>
+              <div style={{width:52,textAlign:"right"}}>的中率</div>
+              <div style={{width:40,textAlign:"right"}}>件数</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830",opacity:chrAcc.total>=5?1:0.5}}>
+              <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>Chronos 方向的中率</div>
+              <div style={{width:52,textAlign:"right",color:cellColor(chrAcc.winRate),fontWeight:700}}>{chrAcc.winRate!=null?chrAcc.winRate+"%":"-"}</div>
+              <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{chrAcc.total}</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
+              <div style={{flex:1,color:"#6a8aa8",fontFamily:"monospace"}}>基準線：常に「上昇」</div>
+              <div style={{width:52,textAlign:"right",color:"#6a8aa8",fontWeight:700}}>{chrAcc.baseRate!=null?chrAcc.baseRate+"%":"-"}</div>
+              <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{chrAcc.baseTotal}</div>
+            </div>
+            <div style={{fontSize:11,color:"#2a6090",marginTop:10,marginBottom:4}}>予測幅別（予測の強さごと）</div>
+            {chrAcc.bands.map(function(b,i){
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830",opacity:b.total>=5?1:0.5}}>
+                  <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{b.label}</div>
+                  <div style={{width:52,textAlign:"right",color:cellColor(b.winRate),fontWeight:700}}>{b.winRate!=null?b.winRate+"%":"-"}</div>
+                  <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{b.total}</div>
+                </div>
+              );
+            })}
+            <div style={{fontSize:11,color:"#2a6090",marginTop:10,marginBottom:4}}>値幅の誤差（中央値・小さいほど良い）</div>
+            <div style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px"}}>
+              <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>Chronos予測</div>
+              <div style={{width:92,textAlign:"right",color:(chrAcc.maeC!=null&&chrAcc.maeFlat!=null&&chrAcc.maeC<chrAcc.maeFlat)?"#22d3a0":"#f43f5e",fontWeight:700}}>{chrAcc.maeC!=null?chrAcc.maeC+"%":"-"}</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px"}}>
+              <div style={{flex:1,color:"#6a8aa8",fontFamily:"monospace"}}>基準線：横ばい予測</div>
+              <div style={{width:92,textAlign:"right",color:"#6a8aa8",fontWeight:700}}>{chrAcc.maeFlat!=null?chrAcc.maeFlat+"%":"-"}</div>
+            </div>
+            <div style={{marginTop:10,padding:"8px 10px",background:chrV.col+"14",border:"1px solid "+chrV.col+"44",borderRadius:6,fontSize:12,color:chrV.col,lineHeight:1.6}}>{chrV.msg}</div>
           </div>
         )}
       </div>
