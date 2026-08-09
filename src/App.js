@@ -1999,6 +1999,8 @@ function buildVerdict(o){
 // 「買い」と出た時に実際に上がったかを集計する。翌営業日版と当日引け版の2本立て
 var VERDICT_ACC_CACHE=null,VERDICT_ACC_TS=0;
 var VERDICT_ORDER=["BUY","TRY","WATCH","SKIP"];
+// 「当日の引けまで」とみなせる最終記録の時間帯（これ以外で終わった日は当日集計から除外）
+var CLOSE_SESSION="後場後半";
 function calcVerdictAccuracy(){
   var now=Date.now();
   if(VERDICT_ACC_CACHE&&now-VERDICT_ACC_TS<UNIVERSE_STATS_TTL) return VERDICT_ACC_CACHE;
@@ -2018,11 +2020,12 @@ function calcVerdictAccuracy(){
       var hist=JSON.parse(localStorage.getItem(k)||"[]");
       if(k.indexOf("sh_intraday_")===0){
         // 当日版：同じ日の最後の記録（＝引けに近い時点）と比べる
+        // ただし最後の記録が「後場後半(14:00以降)」でない日は“引けまで”と呼べないため集計しない
         for(var i=0;i<hist.length;i++){
           var c=hist[i];if(!c.v||c.p==null) continue;
           var last=null;
           for(var j=hist.length-1;j>i;j--){if(hist[j].d===c.d&&hist[j].p!=null){last=hist[j];break;}}
-          if(!last) continue;
+          if(!last||last.session!==CLOSE_SESSION) continue;
           tally(td,c.v,priceMoveState(c.p,last.p),(last.p-c.p)/c.p*100);
         }
       }else{
@@ -5863,12 +5866,30 @@ function SignalAccuracyContent(p){
     return inv;
   })();
   function cellColor(wr){return wr==null?"#4a7090":wr>=60?"#22d3a0":wr>=50?"#fbbf24":"#f43f5e";}
+  // 的中率セル：的中率（上段）と、平均で何%動いたか（下段・小さく）
+  // 勝率だけでは「小さく勝って大きく負ける」が見抜けないため平均騰落率を併記する
+  function rateCell(r){
+    return(
+      <div style={{width:52,textAlign:"right"}}>
+        <div style={{color:cellColor(r.winRate),fontWeight:700}}>{r.winRate!=null?r.winRate+"%":"-"}</div>
+        {r.avgPct!=null?<div style={{color:r.avgPct>=0?"#22d3a0":"#f43f5e",fontSize:9}}>{(r.avgPct>=0?"+":"")+r.avgPct.toFixed(2)+"%"}</div>:null}
+      </div>
+    );
+  }
+  // 的中率の誤差の目安（95%信頼区間の半分・±ポイント）。件数が少ないほど大きくなる
+  function marginOfError(r){
+    if(!r.total||r.winRate==null) return null;
+    var p=r.winRate/100;
+    return Math.round(196*Math.sqrt(p*(1-p)/r.total));
+  }
   // 件数セル：勝敗に使った件数（上段）と、横ばいで除外した引き分け件数（下段・小さく）
   function cntCell(r){
+    var moe=marginOfError(r);
     return(
       <div style={{width:46,textAlign:"right"}}>
         <div style={{color:"#4a7090"}}>{r.total}</div>
         {r.draw>0?<div style={{color:"#2a6090",fontSize:9}}>{"引分"+r.draw}</div>:null}
+        {moe!=null?<div style={{color:"#2a6090",fontSize:9}}>{"±"+moe+"pt"}</div>:null}
       </div>
     );
   }
@@ -5910,7 +5931,7 @@ function SignalAccuracyContent(p){
       )}
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🚦 総合判定 的中率</div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>総合判定が出た後、実際に価格が上がったかを集計（日本株のみ）。左＝当日の引けまで（デイトレ向け）／右＝翌営業日。値動きが±0.3%未満のほぼ横ばいは勝敗に数えず「引分」として件数だけ表示します</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>総合判定が出た後、実際に価格が上がったかを集計（日本株のみ）。左＝当日の引けまで（デイトレ向け・その日の最後のスキャンが14時以降だった日のみ）／右＝翌営業日。値動きが±0.3%未満のほぼ横ばいは勝敗に数えず「引分」として件数だけ表示します</div>
         {verdictAcc.today.every(function(r){return r.total===0&&r.draw===0;})&&verdictAcc.next.every(function(r){return r.total===0&&r.draw===0;})?(
           <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。スキャンを重ねると溜まっていきます。</div>
         ):(
@@ -5927,14 +5948,14 @@ function SignalAccuracyContent(p){
               return(
                 <div key={r.key} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
                   <div style={{flex:1,color:(BADGE[r.key]||{}).text,fontWeight:700}}>{r.label}</div>
-                  <div style={{width:52,textAlign:"right",color:cellColor(r.winRate),fontWeight:700}}>{r.winRate!=null?r.winRate+"%":"-"}</div>
+                  {rateCell(r)}
                   {cntCell(r)}
-                  <div style={{width:52,textAlign:"right",color:cellColor(nxr.winRate),fontWeight:700}}>{nxr.winRate!=null?nxr.winRate+"%":"-"}</div>
+                  {rateCell(nxr)}
                   {cntCell(nxr)}
                 </div>
               );
             })}
-            <div style={{fontSize:11,color:"#2a6090",marginTop:8}}>※「買い」の的中率が「様子見」「見送り」を上回っていれば、判定が機能している目安です</div>
+            <div style={{fontSize:11,color:"#2a6090",marginTop:8}}>※小さい数字は上から「平均騰落率」「引分（±0.3%未満で除外）」「誤差の目安」。<br/>※判定どうしの差が誤差の目安（±◯pt）より小さいうちは、まだ優劣を判断できません<br/>※勝率が低くても平均騰落率がプラスなら「たまに大きく勝つ」型で、期待値はプラスです</div>
           </div>
         )}
       </div>
