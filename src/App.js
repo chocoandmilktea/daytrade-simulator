@@ -6153,7 +6153,7 @@ function GuidePanel(){
         "検索欄にティッカーコード（例：AAPL、7203）を入力すると新規銘柄を追加登録できる（登録グループも指定可）",
         "市場（US/JP）で絞り込み表示可能（スコアの高い順に並びます）",
         "「📊的中率」ボタンでお気に入り銘柄のシグナル的中率を確認",
-        "「🏭業種まとめ登録」ボタン：業種を1つ選ぶと、その業種の出来高上位50銘柄を選んだグループへ一括登録（取得できた件数が50未満の場合はその分だけ登録）。登録直後は株価が未取得のため「⭐お気に入りのみスキャン」を実行すると一覧に並ぶ",
+        "「🏭業種まとめ登録」ボタン：業種を1つ選ぶと、その業種の出来高上位50銘柄を選んだグループへ一括登録（取得できた件数が50未満の場合はその分だけ登録）。登録した銘柄の株価は自動で取得され、そのままお気に入り一覧に並ぶ（取得中は「銘柄データを取得中... 12/50」と表示）",
         "同じ画面の下部にある「🗑 一括解除」で、保存先（全体・グループ1〜4）ごとにまとめてお気に入りから外せる"
       ]},
     ]},
@@ -6403,8 +6403,13 @@ export default function App(){
     setBulkMsg("");
     if(!window.confirm(bulkSector+"（"+SECTOR_CODES[bulkSector]+"）の出来高上位 "+tickers.length+"銘柄を\n「"+groupLabel(bulkGroup)+"」に登録します。\n\n新規 "+added+"件 / 登録済み "+(tickers.length-added)+"件（保存先を変更）\n\nよろしいですか？"))return;
     applyFavBulk(tickers,bulkGroup);
+    // 登録した銘柄をその場で取得し、お気に入り一覧にすぐ並ぶようにする
+    setBulkMsg("銘柄データを取得中... 0/"+tickers.length);
+    var loaded=await loadStocksFor(list,function(d,t){setBulkMsg("銘柄データを取得中... "+d+"/"+t);});
+    if(loaded.length)startDayNightFill(loaded); // 続けて☀️日中型も裏で取得
+    setBulkMsg("");
     setBulkOpen(false);setBulkSector(null);
-    window.alert("✅ "+tickers.length+"銘柄を登録しました（新規 "+added+"件）\n\n株価やスコアは「⭐お気に入りのみスキャン」を実行すると表示されます");
+    window.alert("✅ "+tickers.length+"銘柄を「"+groupLabel(bulkGroup)+"」に登録しました（新規 "+added+"件）\n\nお気に入りタブに表示されます");
   }
   function bulkRemoveGroup(groupNum){
     var targets=favs.filter(function(t){return (favGroups[t]==null?0:favGroups[t])===groupNum;});
@@ -6418,6 +6423,29 @@ export default function App(){
     window.alert("✅ "+targets.length+"銘柄を解除しました");
   }
   function groupCount(n){return favs.filter(function(t){return (favGroups[t]==null?0:favGroups[t])===n;}).length;}
+  // 一括登録した銘柄を、その場で株価取得して一覧（stocks）に加える。
+  // これをしないと、お気に入り一覧は「株価データを持つ銘柄」しか表示しないため
+  // 登録したのに画面に出てこない状態になる
+  async function loadStocksFor(list,onProgress){
+    var universe=list.filter(function(s){return !stocks.some(function(x){return x.ticker===s.ticker;});})
+      .map(function(s){
+        var isJP=s.ticker.endsWith(".T"),code=s.ticker.replace(".T","");
+        return{ticker:s.ticker,name:s.name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code};
+      });
+    if(!universe.length)return[];
+    await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
+    var done=0,results=[];
+    await Promise.all(universe.map(async function(stock){
+      var pd=await fetchYahooSafe(stock.ticker);
+      try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+      done++;if(onProgress)onProgress(done,universe.length);
+    }));
+    setStocks(function(prev){
+      var seen={};prev.forEach(function(s){seen[s.ticker]=true;});
+      return prev.concat(results.filter(function(s){return !seen[s.ticker];}));
+    });
+    return results;
+  }
 
   function renameGroup(groupNum,name){
     var nextNames=Object.assign({},groupNames);nextNames[groupNum]=name;
@@ -6671,7 +6699,7 @@ export default function App(){
   var TAB_LABELS={"all":"全銘柄","fav":"お気に入り","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期","guide":"使い方"};
 
   var sectorPickerModal=sectorPickerOpen&&createPortal(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div onClick={function(e){if(e.target===e.currentTarget)setSectorPickerOpen(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:520,maxHeight:"80vh",display:"flex",flexDirection:"column",color:"#b8cce0"}}>
         <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:8}}>業種を選択（{pickedSectors.length}/3）</div>
         <div style={{overflowY:"auto",marginBottom:10}}>
@@ -6707,7 +6735,7 @@ export default function App(){
 
   // 再スキャンメニュー（全銘柄タブの「再スキャン」ボタンから開く：起動時と同じ3択＋現在の銘柄でリロード）
   var rescanMenu=rescanMenuOpen&&createPortal(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div onClick={function(e){if(e.target===e.currentTarget)setRescanMenuOpen(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:8,color:"#b8cce0"}}>
         <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:4}}>🔄 再スキャン方法を選択</div>
         <button onClick={function(){setRescanMenuOpen(false);startOmakase();}} style={{padding:"12px 10px",background:"#0ea5e9",border:"none",borderRadius:8,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>🤖 おまかせ（AIがトレンド業種を選定）</button>
@@ -6723,7 +6751,7 @@ export default function App(){
 
   // 🏭 業種まとめ登録モーダル（業種を1つ選び、出来高上位50をお気に入りへ／保存先ごとに一括解除）
   var sectorBulkModal=bulkOpen&&createPortal(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div onClick={function(e){if(e.target===e.currentTarget&&!bulkMsg)setBulkOpen(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:520,maxHeight:"85vh",display:"flex",flexDirection:"column",color:"#b8cce0"}}>
         <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:2}}>🏭 業種まとめ登録</div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>業種を1つ選ぶと、その業種の出来高上位50銘柄をまとめてお気に入りに登録します</div>
