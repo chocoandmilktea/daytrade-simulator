@@ -8,6 +8,16 @@ import { createPortal } from "react-dom";
 // 画面上で実際に見えている幅に換算してスマホ判定する。
 var MOBILE_BP=768; // この幅未満（見た目換算）をスマホ表示にする
 
+// ── レイアウトの手動切替（自動 / スマホ版固定 / PC版固定）─────────────────────
+// ホーム画面から「Webアプリ」として開くと、画面を左右に寄せても横幅が正しく伝わらず
+// 自動判定がPC版のままになることがある。そのため一番上の帯のボタンで手動指定できるようにする。
+var LAYOUT_KEY="layout_mode"; // "auto"（自動）/ "sp"（スマホ版固定）/ "pc"（PC版固定）
+function getLayoutMode(){try{return localStorage.getItem(LAYOUT_KEY)||"auto";}catch(e){return "auto";}}
+function setLayoutMode(m){
+  try{localStorage.setItem(LAYOUT_KEY,m);}catch(e){}
+  window.dispatchEvent(new Event("layoutmodechange")); // 画面全体に切替を知らせる
+}
+
 // ── 端末に記憶する状態（useStateと同じ使い方）─────────────────────────────
 // タブを切り替えると部品が一度消えて状態がリセットされるため、選んだ内容を
 // localStorageに保存しておき、戻ってきた時・アプリを開き直した時に復元する。
@@ -23,6 +33,9 @@ function isIOSDevice(){
   return /Macintosh/.test(ua)&&(navigator.maxTouchPoints||0)>1;
 }
 function calcIsMobile(){
+  var mode=getLayoutMode();
+  if(mode==="sp") return true;   // 手動でスマホ版を選択中
+  if(mode==="pc") return false;  // 手動でPC版を選択中
   var w=window.innerWidth||document.documentElement.clientWidth||0;
   if(w<MOBILE_BP) return true;          // 素直に狭い場合はそのままスマホ判定
   if(!isIOSDevice()) return false;      // PCブラウザは幅どおりに判定
@@ -40,17 +53,33 @@ function useIsMobile(){
     var vv=window.visualViewport;
     window.addEventListener("resize",onResize);
     window.addEventListener("orientationchange",onResize);
+    window.addEventListener("layoutmodechange",onResize); // 手動切替ボタンからの通知
     if(vv&&vv.addEventListener) vv.addEventListener("resize",onResize);
     onResize(); // マウント直後にも一度判定（分割表示で開いた場合の取りこぼし防止）
     return function(){
       window.removeEventListener("resize",onResize);
       window.removeEventListener("orientationchange",onResize);
+      window.removeEventListener("layoutmodechange",onResize);
       if(vv&&vv.removeEventListener) vv.removeEventListener("resize",onResize);
     };
   },[]);
   return isMobile;
 }
 var MOBILE_HEADER_H=50,MOBILE_TABBAR_H=44; // ヘッダー高さ・スマホ用タブバー高さ（sticky位置計算に使用）
+
+// 一番上の帯に置くレイアウト切替ボタン（押すたびに 自動→スマホ版→PC版→自動 と一巡）
+function LayoutModeBtn(){
+  var s=useState(getLayoutMode);var mode=s[0],setMode=s[1];
+  var NEXT={auto:"sp",sp:"pc",pc:"auto"};
+  var LABEL={auto:"🔄自動",sp:"📱スマホ",pc:"💻PC"};
+  var COLOR={auto:"#4a7090",sp:"#22d3a0",pc:"#0ea5e9"};
+  return(
+    <button onClick={function(){var n=NEXT[mode];setMode(n);setLayoutMode(n);}} title="表示レイアウトの切替（自動→スマホ版→PC版）"
+      style={{flexShrink:0,background:"transparent",border:"1px solid "+COLOR[mode],borderRadius:6,color:COLOR[mode],padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>
+      {LABEL[mode]}
+    </button>
+  );
+}
 
 var BADGE = {
   BUY:   { bg:"#052e16", border:"#22d3a0", text:"#22d3a0", label:"買い"   },
@@ -530,7 +559,6 @@ function genSim(ticker,errMsg){
 }
 
 // ── トレードシミュレーター（仮想売買の記録・検証）───────────────────────────
-// 「アプリ予想」＝アプリのシグナル判断に従った場合の検証、「個人予想」＝アプリの判断と異なる自分の判断の検証
 function fmtMoney(v,isJP){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);}
 function fmtPnl(v,isJP){var sign=v>=0?"+":"";return isJP?sign+"¥"+Math.round(v).toLocaleString():sign+"$"+v.toFixed(2);}
 
@@ -607,7 +635,9 @@ function isMarketOpen(market){
     return timeMin>=usStartMin||timeMin<usEndMin;
   }
 }
-function tradeStorageKey(kind){return kind==="app"?"trade_app_v1":"trade_personal_v1";}
+function tradeStorageKey(){return "trade_personal_v1";}
+// 「アプリ予想」機能は廃止（トレードは1本化）。旧データが残っていれば起動時に削除する
+try{localStorage.removeItem("trade_app_v1");}catch(e){}
 function loadTrades(kind){try{var v=localStorage.getItem(tradeStorageKey(kind));return v?JSON.parse(v):[];}catch(e){return[];}}
 function saveTrades(kind,list){try{localStorage.setItem(tradeStorageKey(kind),JSON.stringify(list));}catch(e){}}
 
@@ -679,20 +709,18 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection)
   saveTrades(kind,list);
   return list;
 }
-// 指定銘柄がアプリ予想・個人予想のどちらかで進行中(waiting/active)かどうか
-function hasActiveTrade(ticker,appTrades,personalTrades){
-  var lists=[appTrades||[],personalTrades||[]];
-  for(var i=0;i<lists.length;i++){
-    for(var j=0;j<lists[i].length;j++){
-      var t=lists[i][j];
-      if(t.ticker===ticker&&(t.status==="waiting"||t.status==="active")) return true;
-    }
+// 指定銘柄が進行中(waiting/active)のトレードを持っているかどうか
+function hasActiveTrade(ticker,trades){
+  var list=trades||[];
+  for(var i=0;i<list.length;i++){
+    var t=list[i];
+    if(t.ticker===ticker&&(t.status==="waiting"||t.status==="active")) return true;
   }
   return false;
 }
 // ★ボタンの見た目：進行中トレードがあれば赤、無ければ従来通りお気に入り色分け
-function starStyle(ticker,isFav,appTrades,personalTrades){
-  if(hasActiveTrade(ticker,appTrades,personalTrades)) return {symbol:"★",color:"#f43f5e"};
+function starStyle(ticker,isFav,trades){
+  if(hasActiveTrade(ticker,trades)) return {symbol:"★",color:"#f43f5e"};
   return isFav(ticker)?{symbol:"★",color:"#fbbf24"}:{symbol:"☆",color:"#2a4060"};
 }
 function removeTradeRecord(kind,id){var list=loadTrades(kind).filter(function(t){return t.id!==id;});saveTrades(kind,list);return list;}
@@ -1040,160 +1068,6 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
     "銘柄コード: 見送り — 理由\n"+
     "　材料: 直近ニュースの要約（なければ「材料なし」）"+
     (hasStale52?"\n\n※一部の銘柄は52週情報が「─」です。その銘柄は52週の位置を推測せず、無い前提で判断してください。":"");
-}
-// 表示用にAI_DATAタグ（数値データ用の内部タグ）を隠す。
-// 書きかけの「<AI_D」のような未完成のタグも隠して、画面にチラつかないようにする。
-function stripAiData(t){
-  var m=t.match(/<AI_DATA>[\s\S]*?<\/AI_DATA>/);
-  if(m) return t.replace(m[0],"");
-  var i=t.indexOf("<AI_DATA>");
-  if(i!==-1) return t.slice(0,i);
-  var j=t.lastIndexOf("<");
-  if(j!==-1&&"<AI_DATA>".indexOf(t.slice(j))===0) return t.slice(0,j);
-  return t;
-}
-// JSON.parseに失敗した場合の保険：文字列が多少崩れていても、entry/target/stopなど
-// 必要な項目だけを正規表現で直接拾い出す（AIの出力形式が完全なJSONでなくても救済する）
-function extractAiFieldsLoose(text){
-  function num(key){var m=text.match(new RegExp('"'+key+'"\\s*:\\s*(-?[0-9.]+)'));return m?parseFloat(m[1]):undefined;}
-  function str(key){var m=text.match(new RegExp('"'+key+'"\\s*:\\s*"([^"]*)"'));return m?m[1]:undefined;}
-  var entry=num("entry"),target=num("target"),stop=num("stop");
-  if(entry===undefined&&target===undefined&&stop===undefined) return null;
-  var result={entry:entry,target:target,stop:stop};
-  var direction=str("direction"),confidence=num("confidence"),timeframe=str("timeframe"),reason=str("reason");
-  if(direction||confidence!==undefined||timeframe||reason) result.forecast={direction:direction,confidence:confidence,timeframe:timeframe,reason:reason};
-  return result;
-}
-// AI_DATAタグ（無ければ末尾JSON）から数値データを取り出し、本文と分けて返す
-// 正規のJSON.parseがダメでも、緩い抽出（extractAiFieldsLoose）で二段構えで拾う
-function parseAiResult(raw){
-  var tagMatch=raw.match(/<AI_DATA>([\s\S]*?)<\/AI_DATA>/);
-  var parsed=null,cleanText=raw;
-  if(tagMatch){
-    try{parsed=JSON.parse(tagMatch[1]);}catch(je){parsed=extractAiFieldsLoose(tagMatch[1]);}
-    cleanText=raw.replace(tagMatch[0],"");
-  }else{
-    var stripped=raw.replace(/```json[\s\S]*?```/g,"");
-    var braceIdx=stripped.lastIndexOf("{");
-    if(braceIdx!==-1){
-      try{parsed=JSON.parse(stripped.slice(braceIdx));cleanText=stripped.slice(0,braceIdx);}
-      catch(je2){parsed=extractAiFieldsLoose(stripped.slice(braceIdx));cleanText=stripped.slice(0,braceIdx);}
-    }else{
-      parsed=extractAiFieldsLoose(raw); // タグも末尾JSONも無い最終手段：本文全体から直接探す
-    }
-  }
-  return{parsed:parsed,cleanText:cleanText};
-}
-async function callAiAnalysis(s,setAiText,setAiEntry,setAiLoading,daily){
-  var raw="";
-  try{
-    var res=await fetch(AI_API_URL,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        prompt:buildAiPrompt(s,daily),
-        system:"必ず自分でWeb検索ツールを使って、この銘柄の最新ニュース・材料を確認してから回答してください。日本株の検索はプロンプトに書かれた会社名で行い、「8308.T」のような証券コード単体では検索しないでください（別銘柄の情報を拾う原因になります）。銘柄が特定できない場合でも、ユーザーに質問や確認を求めず、自律的に分析を完了してください。\n\n回答の一番最初に、解説文より前に必ず次の形式でJSONデータを出力してください:\n<AI_DATA>{\"entry\":推奨エントリー価格の数値,\"target\":利確目標価格の数値,\"stop\":損切りラインの数値,\"forecast\":{\"direction\":\"上昇\"または\"下落\"または\"中立\",\"confidence\":0〜100の確信度数値,\"timeframe\":\"期間目安(例:1〜3営業日)\",\"reason\":\"見通しの理由を1文で\"}}</AI_DATA>\nこのタグの後に、通常の分析コメント（買い/売り推奨、Entry/Target/Stopの詳細、今後の見通しなど）を日本語で記載してください。",
-        useWebSearch:true,
-        stream:true
-      }),signal:AbortSignal.timeout(45000)});
-    if(!res.ok) throw new Error("サーバーエラー("+res.status+")");
-
-    if(res.body&&res.body.getReader){
-      // ストリーミング：届いた文字を書けた端から画面に反映していく
-      var reader=res.body.getReader(),dec=new TextDecoder(),last=0;
-      for(;;){
-        var r=await reader.read();
-        if(r.done) break;
-        raw+=dec.decode(r.value,{stream:true});
-        var now=Date.now();
-        if(now-last>120){last=now;setAiText(stripAiData(raw));} // 描画は最短0.12秒間隔に間引く
-      }
-    }else{
-      // 万一ストリーミングが使えない環境では従来どおり全文まとめて受け取る
-      var txt=await res.text();
-      try{var j2=JSON.parse(txt);if(j2.error) throw new Error(j2.error);raw=j2.text||"";}
-      catch(pe){raw=txt;}
-    }
-
-    var out=parseAiResult(raw);
-    if(out.parsed) setAiEntry(out.parsed);
-    if(out.parsed&&out.parsed.forecast) recordAiForecast(s.ticker,s.rawPrice,out.parsed.forecast,s.market); // s.priceは"¥9,300"という表示文字列なので数値のrawPriceを渡す
-    setAiText(out.cleanText.trim()||"分析できませんでした。");
-  }catch(e){
-    // 途中まで届いていれば、それを残したうえで注意書きを添える（全部消えるより親切）
-    var partial=stripAiData(raw).trim();
-    var msg="エラーが発生しました: "+(e.message||JSON.stringify(e)||"不明なエラー");
-    setAiText(partial?(partial+"\n\n──\n（"+msg+" 途中までの内容を表示しています）"):msg);
-  }
-  setAiLoading(false);
-}
-// ── AI予想（forecast）の的中率トラッキング ───────────────────────────────
-// AI分析を実行するたびに「その日時点の予想方向・確信度・株価」を記録し、
-// 後日scoreHist（実際の値動き）と突き合わせてAI予想自体の的中率を検証する
-function recordAiForecast(ticker,price,forecast,market){
-  if(!forecast||!forecast.direction||price==null) return;
-  var key="aipred_"+ticker;
-  // scoreHist側と同じ日付基準でないと突き合わせが成立しないため、必ずセッション日を使う
-  var today=currentSessionDate(market||"JP");
-  var hist;try{hist=JSON.parse(localStorage.getItem(key)||"[]");}catch(e){hist=[];}
-  var idx=hist.findIndex(function(x){return x.d===today;});
-  var entry={d:today,p:price,dir:forecast.direction,conf:forecast.confidence};
-  if(idx>=0)hist[idx]=entry;else hist.push(entry);
-  if(hist.length>60)hist=hist.slice(-60); // 最大60日分保持
-  try{localStorage.setItem(key,JSON.stringify(hist));}catch(e){}
-}
-// 全銘柄のAI予想記録とscoreHist（実際の終値）を突き合わせて的中率を算出
-// 「中立」予想は方向判定ができないため集計対象から除外する
-function calcAiForecastAccuracy(){
-  var horizons=[1,3];
-  var byHorizon={};horizons.forEach(function(h){byHorizon[h]={w:0,t:0};});
-  var byConf={"50-69":{w:0,t:0},"70-89":{w:0,t:0},"90+":{w:0,t:0}};
-  try{
-    Object.keys(localStorage).forEach(function(key){
-      if(key.indexOf("aipred_")!==0) return;
-      var ticker=key.slice(7);
-      var preds;try{preds=JSON.parse(localStorage.getItem(key)||"[]");}catch(e){preds=[];}
-      var hist;try{hist=JSON.parse(localStorage.getItem("sh_"+ticker)||"[]");}catch(e){hist=[];}
-      if(!hist.length||!preds.length) return;
-      preds.forEach(function(pr){
-        if(!pr.dir||pr.dir.indexOf("中立")!==-1) return;
-        var idx=hist.findIndex(function(x){return x.d===pr.d;});
-        if(idx<0) return;
-        horizons.forEach(function(h){
-          var base=hist[idx],nxt=hist[idx+h];
-          if(!nxt||nxt.p==null||base.p==null) return;
-          if(bizDayDiff(base.d,nxt.d,/\.T$/.test(ticker))!==h) return; // 記録が飛んだペアは「h日後」として不正確なので除外
-          var move=priceMoveState(base.p,nxt.p);
-          if(move===0) return; // 誤差レベルの値動きは集計対象外
-          var won=pr.dir.indexOf("上昇")!==-1?(move>0):(move<0);
-          byHorizon[h].t++;if(won)byHorizon[h].w++;
-          if(h===1){
-            var band=pr.conf>=90?"90+":pr.conf>=70?"70-89":"50-69";
-            byConf[band].t++;if(won)byConf[band].w++;
-          }
-        });
-      });
-    });
-  }catch(e){}
-  function pct(o){return o.t>0?Math.round(o.w/o.t*100):null;}
-  return{
-    byHorizon:horizons.map(function(h){return{h:h,winRate:pct(byHorizon[h]),total:byHorizon[h].t};}),
-    byConfidence:["50-69","70-89","90+"].map(function(k){return{band:k,winRate:pct(byConf[k]),total:byConf[k].t};})
-  };
-}
-// 見通し（forecast）表示用の共通コンポーネント
-function ForecastBox(f){
-  if(!f) return null;
-  var col=f.direction&&f.direction.indexOf("上昇")!==-1?"#22d3a0":f.direction&&f.direction.indexOf("下落")!==-1?"#f43f5e":"#fbbf24";
-  var icon=col==="#22d3a0"?"📈":col==="#f43f5e"?"📉":"➖";
-  return(
-    <div style={{background:"#040c18",border:"1px solid "+col+"40",borderRadius:8,padding:"8px 10px",marginTop:8}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-        <div style={{fontSize:11,fontWeight:700,color:col}}>{icon} 今後の見通し: {f.direction||"─"}</div>
-        <div style={{fontSize:11,fontWeight:700,color:col}}>確信度 {f.confidence!=null?f.confidence+"%":"─"}</div>
-      </div>
-      {f.timeframe&&<div style={{fontSize:11,color:"#4a7090",marginBottom:3}}>期間目安: {f.timeframe}</div>}
-      {f.reason&&<div style={{fontSize:12,color:"#b8cce0",lineHeight:1.5}}>{f.reason}</div>}
-    </div>
-  );
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -1808,7 +1682,7 @@ function getTrendPhaseSignalStats(){
 // ── 実トレード×シグナル：完了トレードの損益と、登録時に点灯していたシグナルの関係 ──
 // sigKeysAtAddを保存し始めた新しいトレードだけが対象。完了トレードが貯まると自動で表示される
 function calcTradeSignalStats(){
-  var all=loadTrades("app").concat(loadTrades("personal"));
+  var all=loadTrades("personal");
   var stats={};
   all.forEach(function(t){
     if(t.status!=="done"||t.pnlPercent==null||!t.sigKeysAtAdd||!t.sigKeysAtAdd.length) return;
@@ -3363,9 +3237,7 @@ function IntradayChart1m(p){
   var maInfoOpenS=useState(false);var maInfoOpen=maInfoOpenS[0],setMaInfoOpen=maInfoOpenS[1]; // 左上「MA/VWAP」タップ時の説明モーダル
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
 
-  var aiLevels=p.aiEntry||null; // AI分析のentry/target/stop/forecast
-  var hasForecast=!!(aiLevels&&aiLevels.forecast&&aiLevels.forecast.direction);
-  var PROJECTION_W=hasForecast?46:0; // 予測トレンド線用の余白
+  var PROJECTION_W=0; // 右側の余白（現在は使用しない）
   var hasData=!!(data&&data.m1&&data.m1.closes&&data.m1.closes.length>=2);
   var m1=hasData?data.m1:{closes:[],opens:[],highs:[],lows:[],times:[],volumes:null,dates:null};
   var fullOpens=m1.opens||m1.closes,fullHighs=m1.highs||m1.closes,fullLows=m1.lows||m1.closes;
@@ -3445,7 +3317,6 @@ function IntradayChart1m(p){
   var lineVals=visMa25.concat(visMa75);
   if(visVwap)lineVals=lineVals.concat(visVwap);
   expandTo(lineVals,0.5);                                                  // MA/VWAPは値幅の50%まで
-  if(aiLevels)expandTo([aiLevels.entry,aiLevels.target,aiLevels.stop],1);  // AIラインは100%まで
   rng=mx-mn||1;
   var pad=rng*0.05;
   mn-=pad;mx+=pad;rng=mx-mn||1;
@@ -3499,37 +3370,6 @@ function IntradayChart1m(p){
               {ptsVwap&&<polyline points={ptsVwap} fill="none" stroke="#38bdf8" strokeWidth={1}/>}
               {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={1.2}/>}
               {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={1.2}/>}
-              {/* AI分析：エントリー/利確/損切りの水平線 */}
-              {aiLevels&&[
-                {v:aiLevels.entry,color:"#fbbf24",label:"エントリー"},
-                {v:aiLevels.target,color:"#22d3a0",label:"利確"},
-                {v:aiLevels.stop,color:"#f43f5e",label:"損切り"}
-              ].map(function(o,i){
-                if(o.v==null)return null;
-                var y=toY(o.v);
-                return(
-                  <g key={i}>
-                    <line x1={0} y1={y} x2={chartWidth} y2={y} stroke={o.color} strokeWidth={1} strokeDasharray="4,3"/>
-                    <text x={chartWidth-4} y={y-3} fontSize={9} fill={o.color} textAnchor="end">{o.label} {fmtPriceLabel(o.v)}</text>
-                  </g>
-                );
-              })}
-              {/* AI分析：今後の見通し（forecast）を点線トレンドで表示 */}
-              {hasForecast&&(function(){
-                var dir=aiLevels.forecast.direction||"",conf=aiLevels.forecast.confidence!=null?aiLevels.forecast.confidence:50;
-                var x0=toX(n-1),y0=toY(fullCloses[fullCloses.length-1]);
-                var up=dir.indexOf("上昇")>=0,down=dir.indexOf("下落")>=0;
-                var dy=(up?-1:down?1:0)*34*(conf/100); // 確信度が高いほど傾きを大きく
-                var x1=x0+PROJECTION_W-6,y1=Math.max(4,Math.min(H-4,y0+dy));
-                var col=up?"#22d3a0":down?"#f43f5e":"#8a9bb0";
-                return(
-                  <g>
-                    <line x1={x0} y1={y0} x2={x1} y2={y1} stroke={col} strokeWidth={1.6} strokeDasharray="3,3"/>
-                    <circle cx={x1} cy={y1} r={2.5} fill={col}/>
-                    <text x={x1} y={y1+(dy<=0?-6:12)} fontSize={9} fill={col} textAnchor="middle">AI予想{conf}%</text>
-                  </g>
-                );
-              })()}
             </svg>
             <div style={{position:"relative",height:14,marginTop:3}}>
               {timeLabels.map(function(t,i){
@@ -3542,10 +3382,6 @@ function IntradayChart1m(p){
         <div style={{width:RIGHT_GUTTER,flexShrink:0,display:"flex",flexDirection:"column",justifyContent:"space-between",fontSize:11,color:"#a8c0d8",textAlign:"right",height:H,paddingTop:2,paddingBottom:2,boxSizing:"border-box"}}>
           {priceLevels.map(function(v,i){return <span key={i}>{fmtPriceLabel(v,rng)}</span>;})}
         </div>
-      </div>
-      <div style={{display:"flex",gap:10,fontSize:10,marginTop:3,flexWrap:"wrap"}}>
-        {aiLevels&&<span style={{color:"#fbbf24"}}>┈ AI分析ライン（エントリー/利確/損切り）</span>}
-        {hasForecast&&<span style={{color:"#8a9bb0"}}>┈ AI予想トレンド（{aiLevels.forecast.direction}・確信度{aiLevels.forecast.confidence}%）</span>}
       </div>
       {maInfoOpen&&createPortal(
         <div onClick={function(){setMaInfoOpen(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
@@ -3687,27 +3523,24 @@ function MarketRegimeBanner(p){
   var down=t<=-0.5,up=t>=0.5;
   var col=down?"#f43f5e":up?"#22d3a0":"#fbbf24";
   var head=down?"⚠️ 逆風日":up?"🟢 順風日":"➖ 中立";
-  var note=down?"市場全体が下落中。買いシグナルは通りにくい地合いです"
-    :up?"市場全体が上昇中。買いシグナルが通りやすい地合いです"
-    :"市場全体はほぼ横ばいです";
   return(
-    <div style={{background:"#050e1c",border:"1px solid "+col+"55",borderRadius:8,padding:"6px 10px",marginBottom:8,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-      <span style={{fontSize:12,fontWeight:800,color:col}}>{head}</span>
-      <span style={{fontSize:11,color:"#8fb0d0",fontFamily:"monospace"}}>TOPIX {(t>=0?"+":"")+t.toFixed(2)}%</span>
-      <span style={{fontSize:10,color:"#4a7090"}}>{note}</span>
+    <div title={down?"市場全体が下落中。買いシグナルは通りにくい地合いです":up?"市場全体が上昇中。買いシグナルが通りやすい地合いです":"市場全体はほぼ横ばいです"}
+      style={{background:"#050e1c",border:"1px solid "+col+"55",borderRadius:6,padding:"2px 8px",display:"flex",alignItems:"center",gap:6,flexShrink:0,whiteSpace:"nowrap"}}>
+      <span style={{fontSize:11,fontWeight:800,color:col}}>{head}</span>
+      <span style={{fontSize:10,color:"#8fb0d0",fontFamily:"monospace"}}>TOPIX {(t>=0?"+":"")+t.toFixed(2)}%</span>
     </div>
   );
 }
 
 // ── StockCard ────────────────────────────────────────────────────────────────
-// ── トレード登録モーダル（買い/売り価格を入力し、アプリ予想 or 個人予想へ追加）─────
+// ── トレード登録モーダル（買い/売り価格を入力してトレードへ追加）─────
 function TradeAddModal(p){
   var s=p.s;
   var isMobile=useIsMobile();
-  var buyS=useState(p.prefill?String(p.prefill.buy):(s.rawPrice!=null?String(s.rawPrice):""));var buyVal=buyS[0],setBuyVal=buyS[1];
+  var buyS=useState(s.rawPrice!=null?String(s.rawPrice):"");var buyVal=buyS[0],setBuyVal=buyS[1];
   var buyDirS=useState("down");var buyDir=buyDirS[0],setBuyDir=buyDirS[1]; // 指値(down)／逆指値(up)。常に「指値」を初期値にし、必要な時だけ手動で切り替える
-  var sellS=useState(p.prefill?String(p.prefill.sell):"");var sellVal=sellS[0],setSellVal=sellS[1];
-  var stopS=useState(p.prefill&&p.prefill.stop!=null?String(p.prefill.stop):"");var stopVal=stopS[0],setStopVal=stopS[1];
+  var sellS=useState("");var sellVal=sellS[0],setSellVal=sellS[1];
+  var stopS=useState("");var stopVal=stopS[0],setStopVal=stopS[1];
   var sharesS=useState("100");var sharesVal=sharesS[0],setSharesVal=sharesS[1];
   var riskS=useState(String(loadRiskUnit()));var riskVal=riskS[0],setRiskVal=riskS[1];
   var capS=useState(String(loadCapital()));var capVal=capS[0],setCapVal=capS[1];
@@ -3757,7 +3590,6 @@ function TradeAddModal(p){
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
         </div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:12}}>価格が指定値に到達すると自動で開始・終了します（判定はトレードタブの更新ボタンで反映）</div>
-        {p.prefill&&<div style={{fontSize:11,color:"#4a90c0",background:"#0a1a3a",border:"1px solid #4a90c040",borderRadius:6,padding:"6px 8px",marginBottom:10}}>🤖 AI分析の提案値を反映しています。必要に応じて数値を編集してください。</div>}
         {s.profitLoss&&(
           <button onClick={function(){setSellVal(String(s.profitLoss.target));setStopVal(String(s.profitLoss.stop));}} style={{width:"100%",background:"#0a1a3a",border:"1px solid #0ea5e950",borderRadius:8,color:"#0ea5e9",padding:"7px",fontSize:12,fontWeight:700,cursor:"pointer",marginBottom:10}}>📐 標準ライン(ATR)を使う（利確{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}／損切り{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}）</button>
         )}
@@ -3824,10 +3656,7 @@ function TradeAddModal(p){
           })()}
         </div>
         {validMsg()&&<div style={{fontSize:11,color:"#f43f5e",marginBottom:8}}>{validMsg()}</div>}
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          <button onClick={function(){add("app");}} disabled={!valid()} style={{background:valid()?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>🎯 アプリ予想タブへ追加</button>
-          <button onClick={function(){add("personal");}} disabled={!valid()} style={{background:valid()?"linear-gradient(135deg,#a78bfa,#7c3aed)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>👤 個人予想タブへ追加</button>
-        </div>
+        <button onClick={function(){add("personal");}} disabled={!valid()} style={{width:"100%",background:valid()?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>🎯 トレードに登録</button>
       </div>
     </div>
   );
@@ -3861,7 +3690,7 @@ function FavPickerModal(p){
 
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
-  var star=starStyle(s.ticker,isFav,p.appTrades,p.personalTrades);
+  var star=starStyle(s.ticker,isFav,p.personalTrades);
   var bc=BADGE[s.verdict||s.timing]||BADGE[s.timing],mc=MKT[s.market]||MKT["US"],isUp=parseFloat(s.change)>=0;
   var isMobile=useIsMobile(); // スマホはカード内チャートを非表示（詳細モーダル側で確認する運用）
   // ── チャート（カードが選択された時だけ取得＝体感速度・API負荷を改善）───
@@ -4459,7 +4288,7 @@ function StockDetailPanel(p){
   var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
   var pos52=s.position52!=null?Math.min(98,Math.max(2,s.position52)):null;
   var pos52Color=pos52!=null?(pos52<=25?"#22d3a0":pos52<=75?"#fbbf24":"#f43f5e"):null;
-  var star=starStyle(s.ticker,isFav,p.appTrades,p.personalTrades);
+  var star=starStyle(s.ticker,isFav,p.personalTrades);
 
   // チャート（1分足＋25期・75期の短期MA）：この銘柄が選択された時に取得
   // intraday: undefined=読込中, null=データなし, オブジェクト=取得済み
@@ -4481,7 +4310,6 @@ function StockDetailPanel(p){
 
   var showSimS=useState(false);var showSim=showSimS[0],setShowSim=showSimS[1];
   var showTradeS=useState(false);var showTrade=showTradeS[0],setShowTrade=showTradeS[1];
-  var tradePrefillS=useState(null);var tradePrefill=tradePrefillS[0],setTradePrefill=tradePrefillS[1]; // AI提案からトレード登録を開いた時の初期値
   var simSharesS=useState("100");var simShares=simSharesS[0],setSimShares=simSharesS[1];
   var simBuyS=useState(s.rawPrice?s.rawPrice.toFixed(2):"");var simBuy=simBuyS[0],setSimBuy=simBuyS[1];
   useEffect(function(){var isJP=s.market==="JP";setSimBuy(s.rawPrice?(isJP?String(Math.round(s.rawPrice)):s.rawPrice.toFixed(2)):"");},[s.ticker]);
@@ -4489,19 +4317,8 @@ function StockDetailPanel(p){
   var simStopS=useState(-5);var simStop=simStopS[0],setSimStop=simStopS[1];
   var simTargetInputS=useState("3");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
   var simStopInputS=useState("-5");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
-  var showAiS=useState(false);var showAi=showAiS[0],setShowAi=showAiS[1];
   var showSupportInfoS=useState(false);var showSupportInfo=showSupportInfoS[0],setShowSupportInfo=showSupportInfoS[1];
   var showStatInfoS=useState(false);var showStatInfo=showStatInfoS[0],setShowStatInfo=showStatInfoS[1];
-  var aiTextS=useState("");var aiText=aiTextS[0],setAiText=aiTextS[1];
-  var aiLoadingS=useState(false);var aiLoading=aiLoadingS[0],setAiLoading=aiLoadingS[1];
-
-  var aiEntryS=useState(null);var aiEntry=aiEntryS[0],setAiEntry=aiEntryS[1];
-
-  async function runAiAnalysis(){
-    if(aiLoading) return;
-    setShowAi(true);setAiLoading(true);setAiText("");setAiEntry(null);
-    await callAiAnalysis(s,setAiText,setAiEntry,setAiLoading,daily);
-  }
 
   // 判定プロンプトをClaudeアプリに直接渡す（プロンプト欄に事前入力された状態で開く）
   // ※qに渡せるのは約14,000文字までのため、余裕をみて13,000文字で切る
@@ -4589,9 +4406,8 @@ function StockDetailPanel(p){
         <div style={{flexShrink:0,width:30}}/>
         <button onClick={openInClaude} title="Claudeアプリで判定" style={{flexShrink:0,background:"#2a1206",border:"1px solid #d97757",borderRadius:6,color:"#f0a583",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>⚡</button>
         <button onClick={function(){if(onRescan&&!rescanLoading)onRescan(s.ticker);}} disabled={rescanLoading} title="再スキャン" style={{flexShrink:0,background:"transparent",border:"1px solid "+(rescanLoading?"#fbbf24":"#2a4060"),borderRadius:6,color:rescanLoading?"#fbbf24":"#4a7090",padding:"4px 9px",fontSize:14,cursor:rescanLoading?"not-allowed":"pointer"}}>{rescanLoading?"⏳":"🔄"}</button>
-        <button onClick={runAiAnalysis} disabled={aiLoading} title="AI相談" style={{flexShrink:0,background:"transparent",border:"1px solid "+(aiLoading?"#22d3a0":"#2a4060"),borderRadius:6,color:aiLoading?"#22d3a0":"#4a7090",padding:"4px 9px",fontSize:14,cursor:aiLoading?"not-allowed":"pointer"}}>{aiLoading?"⏳":"🤖"}</button>
         <button onClick={function(){setShowSim(function(v){return !v;});}} title="シミュレーター" style={{flexShrink:0,background:showSim?"#1a0a3a":"transparent",border:"1px solid "+(showSim?"#a78bfa":"#2a4060"),borderRadius:6,color:showSim?"#a78bfa":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>💹</button>
-        <button onClick={function(){setTradePrefill(null);setShowTrade(function(v){return !v;});}} title="トレード登録" style={{flexShrink:0,background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
+        <button onClick={function(){setShowTrade(function(v){return !v;});}} title="トレード登録" style={{flexShrink:0,background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
       </div>
 
       {/* チャート（1分足／日足6ヶ月＋予測レンジ を切替） */}
@@ -4603,7 +4419,7 @@ function StockDetailPanel(p){
           <span style={{marginLeft:"auto",flexShrink:0,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px"}}>{chartMode==="1m"?"1分足":"日足6ヶ月"}</span>
         </div>
         {chartMode==="1m"
-          ? <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?150:250} aiEntry={aiEntry}/>
+          ? <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?150:250}/>
           : <DailyChartWithBand daily={daily} ticker={s.ticker} height={isMobile?150:250}/>}
       </div>
 
@@ -4621,46 +4437,6 @@ function StockDetailPanel(p){
         </div>
       </div>
 
-      {showAi&&createPortal(
-        <div onClick={function(e){if(e.target===e.currentTarget){setShowAi(false);}}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
-          <div style={{background:"#040c18",border:"1px solid #22d3a050",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-              <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                <div style={{fontSize:14,fontWeight:700,color:"#22d3a0"}}>🤖 AI分析</div>
-                {s.scoreHist&&(<span style={{fontSize:9,padding:"1px 5px",borderRadius:4,
-                  background:s.scoreHist.length>=7?"#052e16":s.scoreHist.length>=3?"#1c1400":"#1f0010",
-                  color:s.scoreHist.length>=7?"#22d3a0":s.scoreHist.length>=3?"#fbbf24":"#f43f5e",
-                  border:"1px solid "+(s.scoreHist.length>=7?"#22d3a0":s.scoreHist.length>=3?"#fbbf24":"#f43f5e")}}>
-                  {s.scoreHist.length>=7?"精度◎":s.scoreHist.length>=3?"精度△("+s.scoreHist.length+"日)":"精度⚠️("+s.scoreHist.length+"日)"}
-                </span>)}
-              </div>
-              <button onClick={function(){setShowAi(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
-            </div>
-            {aiLoading&&!aiText?(<div style={{textAlign:"center",padding:"12px 0"}}><div style={{fontSize:18}}>⏳</div><div style={{fontSize:14,color:"#4a90c0",marginTop:4}}>AIが分析中...</div></div>):(<div style={{fontSize:15,color:"#b8cce0",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiText}{aiLoading&&<span style={{color:"#22d3a0"}}>▌</span>}</div>)}
-            {!aiLoading&&aiEntry&&aiEntry.entry!=null&&aiEntry.target!=null&&aiEntry.stop!=null&&(
-              <div style={{background:"#071428",border:"1px solid #4a90c040",borderRadius:8,padding:"8px 10px",marginTop:8}}>
-                <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:6}}>🎯 AIエントリー提案</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-                  <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:10,color:"#22d3a0"}}>📥 エントリー</div><div style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>{s.market==="JP"?"¥"+Math.round(aiEntry.entry).toLocaleString():"$"+parseFloat(aiEntry.entry).toFixed(2)}</div></div>
-                  <div style={{background:"#071e10",border:"1px solid #22d3a040",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:10,color:"#22d3a0"}}>🎯 利確</div><div style={{fontSize:14,fontWeight:800,color:"#22d3a0"}}>{s.market==="JP"?"¥"+Math.round(aiEntry.target).toLocaleString():"$"+parseFloat(aiEntry.target).toFixed(2)}</div></div>
-                  <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"5px 8px"}}><div style={{fontSize:10,color:"#f43f5e"}}>🛑 損切り</div><div style={{fontSize:14,fontWeight:800,color:"#f43f5e"}}>{s.market==="JP"?"¥"+Math.round(aiEntry.stop).toLocaleString():"$"+parseFloat(aiEntry.stop).toFixed(2)}</div></div>
-                </div>
-              </div>
-            )}
-            {!aiLoading&&aiText&&(
-              <button onClick={function(){
-                if(aiEntry&&aiEntry.entry!=null&&aiEntry.target!=null){setTradePrefill({buy:aiEntry.entry,sell:aiEntry.target,stop:aiEntry.stop});}
-                else{setTradePrefill(null);} // AIの数値が読み取れなかった時は空欄で開き、手入力してもらう
-                setShowAi(false);setShowTrade(true);
-              }} style={{width:"100%",marginTop:8,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:8,color:"#fff",padding:"9px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
-                {aiEntry&&aiEntry.entry!=null&&aiEntry.target!=null?"🎯 AI提案でトレード登録":"📝 トレード登録（数値は手入力）"}
-              </button>
-            )}
-            {!aiLoading&&aiEntry&&ForecastBox(aiEntry.forecast)}
-            {!aiLoading&&aiText&&(<button onClick={runAiAnalysis} style={{marginTop:8,background:"transparent",border:"1px solid #1e4070",borderRadius:6,color:"#4a7090",padding:"4px 10px",fontSize:14,cursor:"pointer",fontFamily:"monospace",width:"100%"}}>🔄 再分析</button>)}
-          </div>
-        </div>
-      ,document.body)}
       {showStatInfo&&createPortal(
         <div onClick={function(e){if(e.target===e.currentTarget)setShowStatInfo(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
           <div style={{background:"#040c18",border:"1px solid #4a90c050",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
@@ -4767,7 +4543,7 @@ function StockDetailPanel(p){
         );
       })(),document.body)}
 
-      {showTrade&&createPortal(<TradeAddModal s={s} onAddTrade={p.onAddTrade} prefill={tradePrefill} onClose={function(){setShowTrade(false);setTradePrefill(null);}}/>,document.body)}
+      {showTrade&&createPortal(<TradeAddModal s={s} onAddTrade={p.onAddTrade} onClose={function(){setShowTrade(false);}}/>,document.body)}
 
       {showTachibana&&createPortal(<TachibanaQuoteModal quote={tachibanaQuote} onClose={function(){setShowTachibana(false);}}/>,document.body)}
     </div>
@@ -4779,7 +4555,7 @@ function MobileStockDetailModal(p){
   if(!p.s) return null;
   return createPortal(
     <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",inset:0,zIndex:1500,background:"#040c18",overflowY:"auto",WebkitOverflowScrolling:"touch",padding:10}}>
-      <StockDetailPanel key={p.s&&p.s.ticker} s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading} allStocks={p.allStocks} onAddTrade={p.onAddTrade} onClose={p.onClose} appTrades={p.appTrades} personalTrades={p.personalTrades}/>
+      <StockDetailPanel key={p.s&&p.s.ticker} s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading} allStocks={p.allStocks} onAddTrade={p.onAddTrade} onClose={p.onClose} personalTrades={p.personalTrades}/>
     </div>,
     document.body
   );
@@ -4883,7 +4659,7 @@ function MarketBar(){
 // 「📋全銘柄（スキャン結果すべて）」として扱う
 function FavPanel(p){
   var stocks=p.stocks,setStocks=p.setStocks,favs=p.favs,toggleFav=p.toggleFav,vix=p.vix;
-  var appTrades=p.appTrades,personalTrades=p.personalTrades;
+  var personalTrades=p.personalTrades;
   var favGroups=p.favGroups,groupNames=p.groupNames,renameGroup=p.renameGroup;
   var loading=p.loading,progress=p.progress||{done:0,total:0,msg:null},ts=p.ts;
   var isMobile=useIsMobile();
@@ -4975,15 +4751,16 @@ function FavPanel(p){
     if(name&&name.trim())renameGroup(num,name.trim());
   }
   var divider=<span style={{flexShrink:0,width:1,alignSelf:"stretch",background:"#1e3050"}}/>;
+  // PC版だけ、区切りの位置に余白を足して見やすくする（スマホは横スクロールのため余白なし）
+  var pcGap=isMobile?null:<span style={{flexShrink:0,width:14}}/>;
   var realCount=stocks.filter(function(s){return s.real;}).length;
 
   var cardGrid=(
     <>
-      <MarketRegimeBanner stocks={stocks}/>
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8}}>
         {displayStocks.map(function(s,i){
           var cross=s.signals&&s.signals.length>0?classifyStockFn(s):null;
-          return <div key={s.ticker} style={{display:"contents"}}><StockCard s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/></div>;
+          return <div key={s.ticker} style={{display:"contents"}}><StockCard s={s} toggleFav={toggleFav} isFav={isFavRef} cross={cross} vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[s.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} personalTrades={personalTrades}/></div>;
         })}
       </div>
     </>
@@ -4992,7 +4769,7 @@ function FavPanel(p){
   return(
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(50+extraH)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4}}>
-        {/* 件数 / 検索 / グループ / 初動順 / スコア順 / 業種まとめ登録 / 的中率 / 再スキャン（横スクロール1行）*/}
+        {/* 件数 / 検索 / グループ / 初動順 / スコア順 / 業種まとめ登録 / 的中率 ／ 右端に再スキャン（PC版）*/}
         <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",display:"flex",gap:4,alignItems:"center",flexWrap:"nowrap",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <span style={{fontSize:10,color:"#4a7090",flexShrink:0,whiteSpace:"nowrap"}} title={"取得できた銘柄数／スキャンした銘柄数（表示中は"+displayStocks.length+"件）"}>
             <span style={{color:"#22d3a0",fontWeight:700}}>{realCount}</span>/{stocks.length}
@@ -5007,15 +4784,18 @@ function FavPanel(p){
           </select>
           <button onClick={addByTicker} style={{flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>追加</button>
           {divider}
+          {pcGap}
           {gBtn(-1,"📋全銘柄")}
           {gBtn(0,"⭐全体")}
           {[1,2,3,4].map(function(n){return <span key={n} style={{flexShrink:0,display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
           {divider}
+          {pcGap}
           {sBtn("momentum","🌱初動順",TIP_MOM,"#22d3a0")}
           {sBtn("score","🏆スコア順",TIP_SCORE,"#fbbf24")}
           {p.onBulkSector&&<button onClick={p.onBulkSector} style={{flexShrink:0,background:"transparent",border:"1px solid #0ea5e955",borderRadius:6,color:"#7dd3fc",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>🏭業種まとめ登録</button>}
+          {pcGap}
           <button onClick={function(){setShowAcc(true);}} style={{flexShrink:0,background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>📊的中率</button>
-          {p.onScan&&<button onClick={p.onScan} style={{flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>}
+          {p.onScan&&<button onClick={p.onScan} style={{flexShrink:0,marginLeft:isMobile?0:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>}
         </div>
         {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:4}}>{statusMsg}</div>}
         {showAcc&&createPortal(<SignalAccuracyModal onClose={function(){setShowAcc(false);}}/>,document.body)}
@@ -5025,13 +4805,13 @@ function FavPanel(p){
         {isMobile?(
           <>
             {cardGrid}
-            <MobileStockDetailModal s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} onClose={function(){p.setSelectedStock(null);}} appTrades={appTrades} personalTrades={personalTrades}/>
+            <MobileStockDetailModal s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} onClose={function(){p.setSelectedStock(null);}} personalTrades={personalTrades}/>
           </>
         ):(
           <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
             <div style={{width:"45%",flexShrink:0}}>{cardGrid}</div>
             <div style={{flex:1,position:"sticky",top:0,maxHeight:"calc(100vh - 200px)",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-              <StockDetailPanel key={p.selectedStock&&p.selectedStock.ticker} s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} appTrades={appTrades} personalTrades={personalTrades}/>
+              <StockDetailPanel key={p.selectedStock&&p.selectedStock.ticker} s={p.selectedStock} toggleFav={toggleFav} isFav={isFavRef} vix={vix} usdJpy={p.usdJpy} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.selectedStock&&p.rescanLoading[p.selectedStock.ticker]} allStocks={stocks} onAddTrade={p.onAddTrade} personalTrades={personalTrades}/>
             </div>
           </div>
         )}
@@ -5045,14 +4825,13 @@ function FavPanel(p){
   );
 }
 
-// ── トレードタブ：アプリ予想／個人予想の一覧・損益集計 ─────────────────────────
+// ── トレードタブ：登録トレードの一覧・損益集計 ─────────────────────────────
 function TradePanel(p){
   var stocks=p.stocks,toggleFav=p.toggleFav,favs=p.favs,vix=p.vix;
   var isMobile=useIsMobile();
-  var subS=useState("app");var sub=subS[0],setSub=subS[1];
   var selIdS=useState(null);var selId=selIdS[0],setSelId=selIdS[1];
   function isFavRef(t){return favs.indexOf(t)>=0;}
-  var list=sub==="app"?p.appTrades:p.personalTrades;
+  var list=p.personalTrades;
   var waitingList=list.filter(function(t){return t.status==="waiting";});
   var activeList=list.filter(function(t){return t.status==="active";});
   var doneList=list.filter(function(t){return t.status==="done";});
@@ -5060,10 +4839,8 @@ function TradePanel(p){
   // 勝率：完了トレードのうち損益がプラスだった割合
   var winRate=doneList.length?Math.round(doneList.filter(function(t){return(t.pnl||0)>0;}).length/doneList.length*100):null;
   var rStats=calcRStats(doneList);
-  // 的中率の集計対象：アプリ予想／個人予想を合わせた全登録銘柄（お気に入りタブの集計とは分離）
-  // ※シグナル的中率は銘柄ごとのスコア履歴（scoreHist）から算出しており、価格設定(アプリ/個人)とは無関係なため
-  //   タブでは分けず、両方に登録した銘柄をまとめて1つの集計として表示する
-  var tradeTickers=Array.from(new Set(p.appTrades.concat(p.personalTrades).map(function(t){return t.ticker;})));
+  // 的中率の集計対象：登録している全トレード銘柄（お気に入りタブの集計とは分離）
+  var tradeTickers=Array.from(new Set(list.map(function(t){return t.ticker;})));
   // スマホはタップして表示（初期非表示）、PC/iPadは今まで通り常時表示
   var showAccS=useState(!isMobile);var showAccuracy=showAccS[0],setShowAccuracy=showAccS[1];
   var selTrade=selId?list.find(function(t){return t.id===selId;}):null;
@@ -5095,14 +4872,6 @@ function TradePanel(p){
 
   return(
     <div style={{display:"flex",flexDirection:"column",gap:10}}>
-      <div style={{display:"flex",gap:6}}>
-        <TabBtn active={sub==="app"} onClick={function(){setSub("app");setSelId(null);}} color="#0ea5e9" label={"🎯 アプリ予想 ("+p.appTrades.length+")"}/>
-        <TabBtn active={sub==="personal"} onClick={function(){setSub("personal");setSelId(null);}} color="#a78bfa" label={"👤 個人予想 ("+p.personalTrades.length+")"}/>
-      </div>
-      <div style={{fontSize:11,color:"#4a7090",background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
-        {sub==="app"?"アプリの買いシグナル判断を忠実に守った場合の検証用":"アプリの判断とは異なる、自分自身の判断を検証するためのタブ"}
-      </div>
-
       <div style={{display:"flex",gap:12,alignItems:"flex-start",flexDirection:isMobile?"column":"row"}}>
         <div style={{width:(!showAccuracy||isMobile)?"100%":"60%",flexShrink:0,display:"flex",flexDirection:"column",gap:10,minWidth:0}}>
           <div style={{background:"#050e1c",borderRadius:10,padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
@@ -5131,21 +4900,19 @@ function TradePanel(p){
 
         {showAccuracy&&(
           <div style={{flex:1,width:isMobile?"100%":undefined,position:isMobile?"static":"sticky",top:0,background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:16,maxHeight:isMobile?undefined:"calc(100vh - 200px)",overflowY:isMobile?"visible":"auto",WebkitOverflowScrolling:"touch"}}>
-            <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:10}}>📊 シグナル的中率（全トレード銘柄・アプリ/個人共通）</div>
+            <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:10}}>📊 シグナル的中率（全トレード銘柄）</div>
             <SignalAccuracyContent tickers={tradeTickers} label="全トレード"/>
           </div>
         )}
       </div>
 
-      <WeightAdjustVerificationPanel appTrades={p.appTrades} personalTrades={p.personalTrades}/>
-
       {selTrade&&createPortal(
-        <TradeDetailModal t={selTrade} s={selStock} kind={sub} stocks={stocks} toggleFav={toggleFav} isFav={isFavRef}
+        <TradeDetailModal t={selTrade} s={selStock} kind="personal" stocks={stocks} toggleFav={toggleFav} isFav={isFavRef}
           vix={vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock}
           onRescan={p.onRescan} rescanLoading={p.rescanLoading} onAddTrade={p.onAddTrade}
           onRemoveTrade={function(kind,id){p.onRemoveTrade(kind,id);setSelId(null);}}
           onEditTrade={p.onEditTrade} onForceComplete={p.onForceComplete} onClose={function(){setSelId(null);}}
-          appTrades={p.appTrades} personalTrades={p.personalTrades}/>,
+          personalTrades={p.personalTrades}/>,
         document.body
       )}
     </div>
@@ -5267,7 +5034,7 @@ function TradeDetailModal(p){
         {isJP&&<a href="ispeed://" onClick={function(){var code=t.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>}
 
         {p.s?(
-          <StockCard s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[t.ticker]} allStocks={p.stocks} onAddTrade={p.onAddTrade} appTrades={p.appTrades} personalTrades={p.personalTrades}/>
+          <StockCard s={p.s} toggleFav={p.toggleFav} isFav={p.isFav} vix={p.vix} usdJpy={p.usdJpy} setSelectedStock={p.setSelectedStock} selectedStock={p.selectedStock} onRescan={p.onRescan} rescanLoading={p.rescanLoading&&p.rescanLoading[t.ticker]} allStocks={p.stocks} onAddTrade={p.onAddTrade} personalTrades={p.personalTrades}/>
         ):(
           <div style={{fontSize:11,color:"#2a4060",padding:"6px 0"}}>{t.ticker.replace(".T","")}（データ取得中… 「再スキャン」を実行すると表示されます）</div>
         )}
@@ -5624,7 +5391,6 @@ function SyncPanel(p){
     try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs||[]));}catch(e){}
     if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
     if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
-    if(data.appTrades){saveTrades("app",data.appTrades);p.setAppTrades(data.appTrades);}
     if(data.personalTrades){saveTrades("personal",data.personalTrades);p.setPersonalTrades(data.personalTrades);}
     if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(t){localStorage.setItem("sh_"+t,JSON.stringify(data.scoreHist[t]));});}catch(e){}}
     try{localStorage.setItem("daytrade_uid",id);}catch(e){}
@@ -5657,7 +5423,7 @@ function SyncPanel(p){
         // 初めての合言葉＋PIN→端末データは消さず、そのままこのIDで新規登録
         try{localStorage.setItem("daytrade_uid",id);}catch(e){}
         if(setUserId)setUserId(id);
-        if(p.syncToServer)p.syncToServer(p.favs,p.favGroups,p.groupNames,p.appTrades,p.personalTrades,id);
+        if(p.syncToServer)p.syncToServer(p.favs,p.favGroups,p.groupNames,p.personalTrades,id);
       }
       setLoginStatus("ok");
       try{localStorage.setItem("daytrade_login_done","1");}catch(e){}
@@ -5668,7 +5434,7 @@ function SyncPanel(p){
     }
   }
   var favCount=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]").length;}catch(e){return 0;}})();
-  var tradeCount=(function(){try{return loadTrades("app").length+loadTrades("personal").length;}catch(e){return 0;}})();
+  var tradeCount=(function(){try{return loadTrades("personal").length;}catch(e){return 0;}})();
   var loginReady=word.trim()&&pin.trim();
   return(
     <div>
@@ -5743,56 +5509,15 @@ function formatSigKeyLabel(key){
   return label+" "+stateLabel;
 }
 
-// ── 実績反映調整の効果検証パネル ─────────────────────────────────────────
-// 登録時点の重み補正(weightAdjustAtAdd)の向きごとに完了トレードを3グループに分け、
-// 実際の勝率・平均損益を比較する（アプリ予想／個人予想を合算・タブ切替に関わらず常時表示）
-// ※このパネル追加より前に登録されたトレードにはweightAdjustAtAdd記録がないため集計対象外
-function WeightAdjustVerificationPanel(p){
-  var doneAll=(p.appTrades||[]).concat(p.personalTrades||[]).filter(function(t){return t.status==="done"&&t.weightAdjustAtAdd!=null;});
-  function bucket(filterFn){
-    var arr=doneAll.filter(filterFn);
-    var win=arr.length?Math.round(arr.filter(function(t){return(t.pnl||0)>0;}).length/arr.length*100):null;
-    var avgPct=arr.length?arr.reduce(function(a,t){return a+(t.pnlPercent||0);},0)/arr.length:null;
-    return{count:arr.length,winRate:win,avgPct:avgPct};
-  }
-  var rows=[
-    {label:"補正プラス（強気側に加点）",d:bucket(function(t){return t.weightAdjustAtAdd>0;}),color:"#22d3a0"},
-    {label:"補正マイナス（弱気側に減点）",d:bucket(function(t){return t.weightAdjustAtAdd<0;}),color:"#f43f5e"},
-    {label:"補正なし",d:bucket(function(t){return t.weightAdjustAtAdd===0;}),color:"#4a7090"}
-  ];
-  return(
-    <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:16}}>
-      <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:6}}>🧪 実績反映調整の効果検証</div>
-      <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>登録時点の重み補正の向きごとに完了トレードを分け、実際の勝率・平均損益を比較します（アプリ予想・個人予想を合算）</div>
-      {doneAll.length===0?(
-        <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだ検証対象データがありません。トレードを登録・完了させると溜まっていきます。</div>
-      ):(
-        rows.map(function(r,i){
-          return(
-            <div key={i} style={{padding:"8px 0",borderBottom:i<rows.length-1?"1px solid #0a1830":"none"}}>
-              <div style={{fontSize:12,color:"#b8cce0",marginBottom:4}}>{r.label}（{r.d.count}件）</div>
-              <div style={{display:"flex",gap:16,fontSize:13}}>
-                <span style={{color:r.color,fontWeight:700}}>勝率 {r.d.winRate!=null?r.d.winRate+"%":"—"}</span>
-                <span style={{color:r.color,fontWeight:700}}>平均損益 {r.d.avgPct!=null?(r.d.avgPct>=0?"+":"")+r.d.avgPct.toFixed(1)+"%":"—"}</span>
-              </div>
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
-}
-
 // シグナル的中率の中身（お気に入りタブ／トレードタブ両方から使う）
 // tickers省略時はお気に入り銘柄で集計。指定時はそのtickerだけで集計（トレードタブ用・お気に入りとは分離）
 function SignalAccuracyContent(p){
   var tickers=p&&p.tickers;
-  var label=(p&&p.label)||"アプリ予想";
+  var label=(p&&p.label)||"トレード";
   var data=tickers?calcSignalAccuracyMulti(tickers):calcFavSignalAccuracyMulti();
   var bandData=getUniverseBandStats();
   var emptyLabel=tickers?(label+"の登録銘柄"):"お気に入り銘柄";
   var horizons=[{k:"d1",h:"1日後"},{k:"d3",h:"3日後"},{k:"d5",h:"5日後"}];
-  var aiAcc=calcAiForecastAccuracy();
   var chrAcc=calcChronosAccuracy(),chrV=chronosVerdict(chrAcc);
   var intradayAcc=calcIntradayAccuracy();
   var verdictAcc=calcVerdictAccuracy();
@@ -5948,42 +5673,6 @@ function SignalAccuracyContent(p){
               </div>
             );
           })
-        )}
-      </div>
-      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
-        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🤖 AI予想 的中率</div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>個別銘柄のAI分析で出た予想方向（上昇/下落）が、実際に当たったかを集計。「中立」予想は対象外です</div>
-        {aiAcc.byHorizon.every(function(h){return h.total===0;})?(
-          <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。銘柄詳細でAI分析を実行すると溜まっていきます。</div>
-        ):(
-          <div>
-            <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
-              <div style={{flex:1}}>ホライズン</div>
-              <div style={{width:52,textAlign:"right"}}>的中率</div>
-              <div style={{width:40,textAlign:"right"}}>件数</div>
-            </div>
-            {aiAcc.byHorizon.map(function(h,i){
-              var reliable=h.total>=5;
-              return(
-                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830",opacity:reliable?1:0.5}}>
-                  <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{h.h+"日後"}</div>
-                  <div style={{width:52,textAlign:"right",color:cellColor(h.winRate),fontWeight:700}}>{h.winRate!=null?h.winRate+"%":"-"}</div>
-                  <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{h.total}</div>
-                </div>
-              );
-            })}
-            <div style={{fontSize:11,color:"#2a6090",marginTop:10,marginBottom:4}}>確信度帯別（1日後判定）</div>
-            {aiAcc.byConfidence.map(function(c,i){
-              var reliable=c.total>=5;
-              return(
-                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:i<aiAcc.byConfidence.length-1?"1px solid #0a1830":"none",opacity:reliable?1:0.5}}>
-                  <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{"確信度 "+c.band}</div>
-                  <div style={{width:52,textAlign:"right",color:cellColor(c.winRate),fontWeight:700}}>{c.winRate!=null?c.winRate+"%":"-"}</div>
-                  <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{c.total}</div>
-                </div>
-              );
-            })}
-          </div>
         )}
       </div>
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
@@ -6162,11 +5851,12 @@ function SignalAccuracyContent(p){
 
 function SignalAccuracyModal(p){
   var onClose=p.onClose;
+  var isMobile=useIsMobile();
   return(
-    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:500,background:"#000000cc",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:500,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}
       onTouchEnd={function(e){if(e.target===e.currentTarget){e.preventDefault();onClose();}}}
       onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:480,maxHeight:"88vh",overflowY:"scroll",WebkitOverflowScrolling:"touch"}}>
+      <div style={{background:"#071428",border:"1px solid #1e4070",borderRadius:14,padding:20,width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"scroll",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
           <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>📊 シグナル的中率</div>
           <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:14,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
@@ -6180,10 +5870,10 @@ function SignalAccuracyModal(p){
 function GuidePanel(){
   var openS=useState("fav");var openKey=openS[0],setOpenKey=openS[1];
   var CATS=[
-    {key:"fav",icon:"⭐",label:"お気に入り／全銘柄",sections:[
+    {key:"fav",icon:"⭐",label:"メイン（お気に入り／全銘柄）",sections:[
       {title:"📋 一覧の使い方",items:[
         "銘柄カードをタップ → 詳細シグナル表示",
-        "上部バーは横スクロールします（件数／銘柄検索／グループ／🌱初動順／🏆スコア順／🏭業種まとめ登録／📊的中率／再スキャン）",
+        "上部バーは横スクロールします（件数／銘柄検索／グループ／🌱初動順／🏆スコア順／🏭業種まとめ登録／📊的中率／再スキャン。PC版では再スキャンが右端に並びます）",
         "「📋全銘柄」＝今回スキャンした全銘柄を表示。「⭐全体」＝お気に入り登録銘柄をすべて表示",
         "★/☆ボタンでお気に入りの登録・解除",
         "グループ1〜4に分類可能（グループ名は選択中に表示される✎アイコンで編集）",
@@ -6226,7 +5916,6 @@ function GuidePanel(){
         "📱：銘柄コードをコピーしてiSPEEDアプリを開く（日本株向け）",
         "⚡：判定プロンプトをClaudeアプリに直接渡して開く（同時にクリップボードにもコピーされます。回答はチャット側に表示され、アプリのエントリー提案・的中率には記録されません）",
         "🔄：この銘柄だけを最新データで再スキャン",
-        "🤖：AIによる分析・上昇予測をポップアップ表示",
         "💹：損益シミュレーターをポップアップ表示（買値・株数から利確/損切りラインの損益を試算）",
         "🎯：この銘柄をトレード登録（買い価格・売り価格＝利確ライン・株数を入力）"
       ]},
@@ -6234,11 +5923,9 @@ function GuidePanel(){
     {key:"trade",icon:"🎯",label:"トレード",sections:[
       {title:null,items:[
         "銘柄カードの🎯ボタンからトレード登録（買い価格・売り価格＝利確ライン・株数を入力。損切り価格は必須）",
-        "「🎯アプリ予想」：アプリの買いシグナル判断を忠実に守った場合の検証用タブ",
-        "「👤個人予想」：アプリの判断とは別に、自分自身の判断を検証するためのタブ",
         "価格が指定値に到達すると自動で「待機中→進行中→完了」に遷移（判定は🔄価格更新ボタンで反映）",
         "完了したトレードの合計損益・勝率を集計表示",
-        "「📊的中率」でアプリ予想／個人予想それぞれに登録した銘柄のシグナル的中率を確認",
+        "「📊的中率」で登録した銘柄のシグナル的中率を確認",
         "詳細モーダルの📱iSPEEDボタンで銘柄コードをコピーし、iSPEEDアプリへ遷移（日本株のみ）"
       ]},
     ]},
@@ -6406,7 +6093,7 @@ export default function App(){
   // 起動時のサーバー読み込みが終わるまでtrueにならない。falseの間は保存を止めて、
   // 「読み込み前の古いデータで上書きしてしまう」事故を防ぐ
   var syncLoadedS=useState(false);var syncLoaded=syncLoadedS[0],setSyncLoaded=syncLoadedS[1];
-  function syncToServer(nextFavs,nextGroups,nextGroupNames,nextAppTrades,nextPersonalTrades,targetId){
+  function syncToServer(nextFavs,nextGroups,nextGroupNames,nextPersonalTrades,targetId){
     if(!syncLoaded)return; // 起動時の読み込み完了前は保存しない
     fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
       favs:nextFavs,
@@ -6414,7 +6101,7 @@ export default function App(){
       forecasts:fcLoad(),
       groups:nextGroups,
       groupNames:nextGroupNames,
-      appTrades:nextAppTrades!==undefined?nextAppTrades:appTrades,
+      appTrades:[], // アプリ予想は廃止（サーバー側の旧データも空で上書きする）
       personalTrades:nextPersonalTrades!==undefined?nextPersonalTrades:personalTrades
     })}).catch(function(){});
   }
@@ -6529,34 +6216,29 @@ export default function App(){
   }
 
   // ── トレードシミュレーター：状態管理・登録・削除・価格判定 ───────────────────
-  var atS=useState(function(){return loadTrades("app");});var appTrades=atS[0],setAppTrades=atS[1];
   var ptS=useState(function(){return loadTrades("personal");});var personalTrades=ptS[0],setPersonalTrades=ptS[1];
   var tradeRefreshingS=useState(false);var tradeRefreshing=tradeRefreshingS[0],setTradeRefreshing=tradeRefreshingS[1];
   function addTradeHandler(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection){
     var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection);
-    if(kind==="app"){setAppTrades(next);syncToServer(favs,favGroups,groupNames,next,undefined);}
-    else{setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,undefined,next);}
+    setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,next);
   }
   function removeTradeHandler(kind,id){
     var next=removeTradeRecord(kind,id);
-    if(kind==="app"){setAppTrades(next);syncToServer(favs,favGroups,groupNames,next,undefined);}
-    else{setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,undefined,next);}
+    setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,next);
   }
   function editTradeHandler(kind,id,updates){
     var next=editTradeRecord(kind,id,updates);
-    if(kind==="app"){setAppTrades(next);syncToServer(favs,favGroups,groupNames,next,undefined);}
-    else{setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,undefined,next);}
+    setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,next);
   }
   function forceCompleteHandler(kind,id,curPrice){
     var next=forceCompleteTradeRecord(kind,id,curPrice);
-    if(kind==="app"){setAppTrades(next);syncToServer(favs,favGroups,groupNames,next,undefined);}
-    else{setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,undefined,next);}
+    setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,next);
   }
   // 保有中（waiting/active）のトレード銘柄の価格を手動で更新（🔄ボタン）。自動の定期更新は行わない
   // 日本株は立花証券のリアルタイム値を最優先。取れない場合のみYahoo（約20分遅れ）を使う
   function refreshTradePrices(){
     var tickers=[];
-    appTrades.concat(personalTrades).forEach(function(t){
+    personalTrades.forEach(function(t){
       if(t.status!=="done"&&tickers.indexOf(t.ticker)<0)tickers.push(t.ticker);
     });
     if(!tickers.length)return;
@@ -6570,11 +6252,9 @@ export default function App(){
     })).then(function(results){
       var priceMap={};results.forEach(function(r){if(r.price!=null)priceMap[r.ticker]=r.price;});
       if(Object.keys(priceMap).length>0){
-        var nextApp=applyPricesToTrades("app",priceMap);
         var nextPersonal=applyPricesToTrades("personal",priceMap);
-        setAppTrades(nextApp);
         setPersonalTrades(nextPersonal);
-        syncToServer(favs,favGroups,groupNames,nextApp,nextPersonal);
+        syncToServer(favs,favGroups,groupNames,nextPersonal);
       }
     }).finally(function(){setTradeRefreshing(false);});
   }
@@ -6633,7 +6313,7 @@ export default function App(){
       var uTickers=universe.map(function(s){return s.ticker;});
       favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
       // トレード登録中（待機中・進行中）の銘柄も、カード表示のため必ずuniverseに含める
-      loadTrades("app").concat(loadTrades("personal")).forEach(function(t){
+      loadTrades("personal").forEach(function(t){
         if(t.status==="done")return;
         if(!universe.some(function(u){return u.ticker===t.ticker;})){
           var isJP=t.ticker.endsWith(".T"),code=t.ticker.replace(".T","");
@@ -6674,7 +6354,7 @@ export default function App(){
         universe.push({ticker:ticker,name:name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
       }
       favList.forEach(function(t){push(t);});
-      loadTrades("app").concat(loadTrades("personal")).forEach(function(t){if(t.status!=="done")push(t.ticker,t.name);});
+      loadTrades("personal").forEach(function(t){if(t.status!=="done")push(t.ticker,t.name);});
       if(universe.length===0){setProgress({done:0,total:0,msg:"⚠️ お気に入り銘柄が登録されていません"});return;}
       await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
       setProgress({done:0,total:universe.length,msg:null});
@@ -6756,7 +6436,6 @@ export default function App(){
         if(data.favs&&data.favs.length>0){setFavs(data.favs.slice());try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}}
         if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
         if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
-        if(data.appTrades){saveTrades("app",data.appTrades);setAppTrades(data.appTrades);}
         if(data.personalTrades){saveTrades("personal",data.personalTrades);setPersonalTrades(data.personalTrades);}
         if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(ticker){localStorage.setItem("sh_"+ticker,JSON.stringify(data.scoreHist[ticker]));});}catch(e){}}
         if(data.forecasts){try{fcMerge(data.forecasts);}catch(e){}}
@@ -6770,7 +6449,7 @@ export default function App(){
     recordFavForecasts(favs);
   },[syncLoaded,favs]);
   var TABS=[["fav","⭐"],["trade","🎯"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"],["guide","📘"]];
-  var TAB_LABELS={"fav":"お気に入り","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期","guide":"使い方"};
+  var TAB_LABELS={"fav":"メイン","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期","guide":"使い方"};
 
   var sectorPickerModal=sectorPickerOpen&&createPortal(
     <div onClick={function(e){if(e.target===e.currentTarget)setSectorPickerOpen(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -6907,11 +6586,17 @@ export default function App(){
   return(
     <div style={{minHeight:"100vh",background:"#040c18",backgroundAttachment:"fixed",fontFamily:"monospace",color:"#b8cce0"}}>
       <div style={{background:"linear-gradient(180deg,#071428,#050f20)",borderBottom:"1px solid #0f2040",padding:"8px 12px",marginLeft:isMobile?0:50}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff"}}>
-            DaySimulator <span style={{fontSize:12,color:"#4a7090",fontWeight:400}}>/ {TAB_LABELS[activeTab]}</span>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0,flex:1,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+            <div style={{fontSize:14,fontWeight:800,color:"#e0f0ff",flexShrink:0,whiteSpace:"nowrap"}}>
+              DaySimulator <span style={{fontSize:12,color:"#4a7090",fontWeight:400}}>/ {TAB_LABELS[activeTab]}</span>
+            </div>
+            <MarketRegimeBanner stocks={stocks}/>
           </div>
-          <MarketHours/>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+            <MarketHours/>
+            <LayoutModeBtn/>
+          </div>
         </div>
         {dnFill&&<div style={{fontSize:10,color:"#fbbf24",marginTop:2}}>☀️ 日中型を取得中... {dnFill.d}/{dnFill.t}（一覧はそのまま使えます）</div>}
         {sectorPickerModal}
@@ -6931,13 +6616,13 @@ export default function App(){
           </div>
         )}
         <div style={{marginLeft:isMobile?0:50,padding:isMobile?"6px 6px 100px":"10px 10px 120px"}}>
-                    {activeTab==="fav"&&<FavPanel onBulkSector={function(){setBulkOpen(true);}} loading={loading} progress={progress} ts={ts} onScan={function(){setRescanMenuOpen(true);}} stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} appTrades={appTrades} personalTrades={personalTrades}/>}
-          {activeTab==="trade"&&<TradePanel stocks={stocks} appTrades={appTrades} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler} onForceComplete={forceCompleteHandler} onRefreshTrades={refreshTradePrices} tradeRefreshing={tradeRefreshing}/>}
+                    {activeTab==="fav"&&<FavPanel onBulkSector={function(){setBulkOpen(true);}} loading={loading} progress={progress} ts={ts} onScan={function(){setRescanMenuOpen(true);}} stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} personalTrades={personalTrades}/>}
+          {activeTab==="trade"&&<TradePanel stocks={stocks} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler} onForceComplete={forceCompleteHandler} onRefreshTrades={refreshTradePrices} tradeRefreshing={tradeRefreshing}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading} favs={favs} toggleFav={toggleFav}/>}
           {activeTab==="news"&&<NewsPanel/>}
           {activeTab==="event"&&<EventPanel stocks={stocks}/>}
-          {activeTab==="sync"&&<SyncPanel userId={userId} setUserId={setUserId} syncApi={SYNC_API} favs={favs} favGroups={favGroups} groupNames={groupNames} appTrades={appTrades} personalTrades={personalTrades} syncToServer={syncToServer} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} setAppTrades={setAppTrades} setPersonalTrades={setPersonalTrades} scan={scan}/>}
+          {activeTab==="sync"&&<SyncPanel userId={userId} setUserId={setUserId} syncApi={SYNC_API} favs={favs} favGroups={favGroups} groupNames={groupNames} personalTrades={personalTrades} syncToServer={syncToServer} setFavs={setFavs} setFavGroups={setFavGroups} setGroupNames={setGroupNames} setPersonalTrades={setPersonalTrades} scan={scan}/>}
           {activeTab==="guide"&&<GuidePanel/>}
         </div>
       </div>
