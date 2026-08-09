@@ -167,6 +167,20 @@ var DAILY_API="https://daytrade-simulator.vercel.app/api/daily";
 var TACHIBANA_WATCH_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-watch";
 var TACHIBANA_QUOTE_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-quote";
 
+// ── 東証33業種コード（業種名 → 4桁コード）─────────────────────────────
+// ニュースに出てきた業種にコードを添えて表示する用途と、業種まとめ登録の表示に使う
+var SECTOR_CODES={"水産・農林業":"0050","鉱業":"1050","建設業":"2050","食料品":"3050","繊維製品":"3100","パルプ・紙":"3150","化学":"3200","医薬品":"3250","石油・石炭製品":"3300","ゴム製品":"3350","ガラス・土石製品":"3400","鉄鋼":"3450","非鉄金属":"3500","金属製品":"3550","機械":"3600","電気機器":"3650","輸送用機器":"3700","精密機器":"3750","その他製品":"3800","電気・ガス業":"4050","陸運業":"5050","海運業":"5100","空運業":"5150","倉庫・運輸関連業":"5200","情報・通信業":"5250","卸売業":"6050","小売業":"6100","銀行業":"7050","証券、商品先物取引業":"7100","保険業":"7150","その他金融業":"7200","不動産業":"8050","サービス業":"9050"};
+// ニュース記事でよく使われる呼び方 → 正式な業種名（例：「半導体関連が上昇」→ 電気機器）
+var SECTOR_ALIASES={"半導体":"電気機器","電機":"電気機器","自動車":"輸送用機器","商社":"卸売業","総合商社":"卸売業","電力":"電気・ガス業","ガス":"電気・ガス業","通信":"情報・通信業","銀行":"銀行業","証券":"証券、商品先物取引業","保険":"保険業","不動産":"不動産業","小売":"小売業","建設":"建設業","海運":"海運業","空運":"空運業","鉄道":"陸運業","医薬":"医薬品","製薬":"医薬品","食品":"食料品","非鉄":"非鉄金属","繊維":"繊維製品","石油":"石油・石炭製品","精密":"精密機器","倉庫":"倉庫・運輸関連業"};
+// 文章の中から業種を見つけてコード付きで返す（最大3件・重複なし）
+function detectSectors(text){
+  var t=String(text||""),found=[],names={};
+  function push(name){if(!name||names[name]||!SECTOR_CODES[name])return;names[name]=true;found.push({name:name,code:SECTOR_CODES[name]});}
+  Object.keys(SECTOR_CODES).forEach(function(name){if(t.indexOf(name)>=0)push(name);});
+  Object.keys(SECTOR_ALIASES).forEach(function(word){if(t.indexOf(word)>=0)push(SECTOR_ALIASES[word]);});
+  return found.slice(0,3);
+}
+
 // ── 立花証券のリアルタイム現在値を1銘柄ぶん取得する ──────────────────────
 // しくみ：サーバー(VPS)が立花証券から受け取った値をRedisに書き込み、アプリはそれを読む。
 // タップ直後はRedisにまだ値が無いので、①「この銘柄を見ている」と登録(watch) →
@@ -4917,6 +4931,7 @@ function FavPanel(p){
             <button onClick={addByTicker} style={{background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",flex:"0 0 auto"}}>追加</button>
           </div>
           {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
+          {p.onBulkSector&&<button onClick={p.onBulkSector} style={{width:"100%",marginTop:6,background:"transparent",border:"1px solid #0ea5e955",borderRadius:6,color:"#7dd3fc",padding:"6px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>🏭 業種まとめ登録（出来高上位50）</button>}
         </div>
         <button onClick={function(){setFiltersOpen(function(v){return !v;});}} style={{width:"100%",background:"#071428",border:"1px solid #0f2040",borderRadius:10,color:"#4a90c0",padding:"6px 12px",fontSize:11,cursor:"pointer",fontFamily:"monospace",marginBottom:4,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span>🔍 絞り込み（グループ・市場）</span>
@@ -4954,6 +4969,7 @@ function FavPanel(p){
             {sBtn("dayType","☀️日中順",TIP_DAY)}
             {sBtn("score","🏆スコア順",TIP_SCORE)}
             <button onClick={function(){setShowAcc(true);}} style={{background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>📊的中率</button>
+            {p.onBulkSector&&<button onClick={p.onBulkSector} style={{background:"transparent",border:"1px solid #0ea5e955",borderRadius:6,color:"#7dd3fc",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>🏭業種まとめ登録</button>}
           </div>
           {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:6}}>{statusMsg}</div>}
         </div>
@@ -5405,10 +5421,19 @@ function NewsPanel(){
               return(
                 <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
                   {items.map(function(item,i){
+                    // 見出し・要約・影響の文章から業種を拾い、東証33業種コードを添えて表示
+                    var secs=detectSectors((item.headline||"")+" "+(item.summary||"")+" "+(item.impact||""));
                     return(
                       <div key={i} style={{background:"#071428",border:"1px solid #1e3050",borderRadius:8,padding:"12px 14px"}}>
                         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:6}}>{item.headline}</div>
                         <div style={{fontSize:12,color:"#b8cce0",lineHeight:1.7,marginBottom:8}}>{item.summary}</div>
+                        {secs.length>0&&(
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+                            {secs.map(function(sec){
+                              return <span key={sec.code} title="東証33業種コード" style={{background:"#0ea5e918",border:"1px solid #0ea5e955",borderRadius:6,padding:"3px 8px",fontSize:11,color:"#7dd3fc",fontFamily:"monospace"}}>🏭 {sec.code} {sec.name}</span>;
+                            })}
+                          </div>
+                        )}
                         <div style={{background:openCat.color+"18",border:"1px solid "+openCat.color+"44",borderRadius:6,padding:"6px 10px",fontSize:11,color:openCat.color}}>
                           💡 {item.impact}
                         </div>
@@ -6106,6 +6131,7 @@ function GuidePanel(){
         "使い方の基本：🌙は「夜に買え」というサインではなく「デイトレの対象から外す」サイン。スコアが高くても🌙なら見送る、という消去法で使うのが安全",
         "🌙の値幅を取るには引け前に買って翌朝売る持ち越しが必要になるが、夜間に悪材料が出ると逆指値が効かず大きな損失になり得るため、このアプリでは推奨していない",
         "検証の背景：登録銘柄50・のべ23,105日分の検証で、上昇銘柄でも寄り→引けの平均はマイナス（上昇の大半は夜間に発生）と判明。日中に上がる癖のある銘柄を選ぶこと自体が優位性になる、という結果に基づく機能",
+        "スキャンすると、一覧が表示された直後から裏側で日足を1銘柄ずつ取得し、☀️バッジが自動で埋まっていく（ヘッダーに「☀️日中型を取得中... 3/50」と進捗を表示）。アプリ内でタブを移動しても止まらず、ブラウザを裏に回して止まった場合も画面に戻った時点で続きから再開する",
         "一覧上部の「☀️日中型順」ボタンで、日中分の累積が高い順に並び替え可能（日足が未取得の銘柄は自動取得され、取得できないものは下に並ぶ）",
         "数字は過去1年の癖であり将来の保証ではない。銘柄の性質が変われば数字も変わる"
       ]},
@@ -6126,7 +6152,9 @@ function GuidePanel(){
         "「全体」フィルターで登録済みお気に入りを全件表示",
         "検索欄にティッカーコード（例：AAPL、7203）を入力すると新規銘柄を追加登録できる（登録グループも指定可）",
         "市場（US/JP）で絞り込み表示可能（スコアの高い順に並びます）",
-        "「📊的中率」ボタンでお気に入り銘柄のシグナル的中率を確認"
+        "「📊的中率」ボタンでお気に入り銘柄のシグナル的中率を確認",
+        "「🏭業種まとめ登録」ボタン：業種を1つ選ぶと、その業種の出来高上位50銘柄を選んだグループへ一括登録（取得できた件数が50未満の場合はその分だけ登録）。登録直後は株価が未取得のため「⭐お気に入りのみスキャン」を実行すると一覧に並ぶ",
+        "同じ画面の下部にある「🗑 一括解除」で、保存先（全体・グループ1〜4）ごとにまとめてお気に入りから外せる"
       ]},
     ]},
     {key:"trade",icon:"🎯",label:"トレード",sections:[
@@ -6164,6 +6192,7 @@ function GuidePanel(){
       {title:null,items:[
         "「🔄最新ニュース取得」でTDnet適時開示とYahooファイナンスの見出しを取得し、AIが「金融政策／決算・業績／経済指標／相場急変／セクター動向」の5カテゴリに要約",
         "実際に取得したデータのみを要約対象とし、Web検索やAIの独自知識は使用しない",
+        "記事の中に業種（セクター）が出てきた場合は、🏭バッジで東証33業種コードを一緒に表示（例：🏭 3650 電気機器）。そのコードを「🏭業種まとめ登録」で使えば、該当業種の出来高上位50銘柄をまとめてお気に入りに入れられる",
         "画面下部には外部ニュースサイトへのリンクも用意"
       ]},
     ]},
@@ -6347,6 +6376,49 @@ export default function App(){
     applyFav(ticker,groupNum);
   }
   function isFav(ticker){return favs.indexOf(ticker)>=0;}
+
+  // ── 🏭 業種まとめ登録：出来高上位50銘柄を一括でお気に入りに入れる／保存先ごとに一括解除 ──
+  var bulkOpenS=useState(false);var bulkOpen=bulkOpenS[0],setBulkOpen=bulkOpenS[1];
+  var bulkSecS=useState(null);var bulkSector=bulkSecS[0],setBulkSector=bulkSecS[1];   // 選んだ業種名（1つだけ）
+  var bulkGrpS=useState(0);var bulkGroup=bulkGrpS[0],setBulkGroup=bulkGrpS[1];        // 保存先 0=全体 / 1〜4=グループ
+  var bulkMsgS=useState("");var bulkMsg=bulkMsgS[0],setBulkMsg=bulkMsgS[1];           // 処理中・結果のメッセージ
+  function groupLabel(n){return n===0?"全体（未分類）":groupNames[n];}
+  // 複数銘柄をまとめて登録（保存とサーバー同期は最後に1回だけ＝通信を節約）
+  function applyFavBulk(tickers,groupNum){
+    var next=favs.slice(),nextGroups=Object.assign({},favGroups);
+    tickers.forEach(function(t){if(next.indexOf(t)<0)next.push(t);nextGroups[t]=groupNum;});
+    setFavs(next);setFavGroups(nextGroups);
+    try{localStorage.setItem("fav_tickers",JSON.stringify(next));localStorage.setItem("fav_groups",JSON.stringify(nextGroups));}catch(e){}
+    syncToServer(next,nextGroups,groupNames);
+  }
+  async function bulkAddSector(){
+    if(!bulkSector||bulkMsg)return;
+    setBulkMsg("「"+bulkSector+"」の出来高上位を取得中...");
+    var r=await fetchSectorRanking([bulkSector]);
+    var list=(r.stocks||[]).filter(function(s){return s.market==="JP";})
+      .sort(function(a,b){return (b.volume||0)-(a.volume||0);}).slice(0,50);
+    if(!list.length){setBulkMsg("");window.alert("⚠️ 銘柄を取得できませんでした。時間をおいて再度お試しください");return;}
+    var tickers=list.map(function(s){return s.ticker;});
+    var added=tickers.filter(function(t){return favs.indexOf(t)<0;}).length;
+    setBulkMsg("");
+    if(!window.confirm(bulkSector+"（"+SECTOR_CODES[bulkSector]+"）の出来高上位 "+tickers.length+"銘柄を\n「"+groupLabel(bulkGroup)+"」に登録します。\n\n新規 "+added+"件 / 登録済み "+(tickers.length-added)+"件（保存先を変更）\n\nよろしいですか？"))return;
+    applyFavBulk(tickers,bulkGroup);
+    setBulkOpen(false);setBulkSector(null);
+    window.alert("✅ "+tickers.length+"銘柄を登録しました（新規 "+added+"件）\n\n株価やスコアは「⭐お気に入りのみスキャン」を実行すると表示されます");
+  }
+  function bulkRemoveGroup(groupNum){
+    var targets=favs.filter(function(t){return (favGroups[t]==null?0:favGroups[t])===groupNum;});
+    if(!targets.length){window.alert("「"+groupLabel(groupNum)+"」に登録された銘柄はありません");return;}
+    if(!window.confirm("「"+groupLabel(groupNum)+"」の "+targets.length+"銘柄をお気に入りから外します。\nこの操作は元に戻せません。よろしいですか？"))return;
+    var next=favs.filter(function(t){return targets.indexOf(t)<0;});
+    var nextGroups=Object.assign({},favGroups);targets.forEach(function(t){delete nextGroups[t];});
+    setFavs(next);setFavGroups(nextGroups);
+    try{localStorage.setItem("fav_tickers",JSON.stringify(next));localStorage.setItem("fav_groups",JSON.stringify(nextGroups));}catch(e){}
+    syncToServer(next,nextGroups,groupNames);
+    window.alert("✅ "+targets.length+"銘柄を解除しました");
+  }
+  function groupCount(n){return favs.filter(function(t){return (favGroups[t]==null?0:favGroups[t])===n;}).length;}
+
   function renameGroup(groupNum,name){
     var nextNames=Object.assign({},groupNames);nextNames[groupNum]=name;
     setGroupNames(nextNames);
@@ -6405,6 +6477,30 @@ export default function App(){
     }).finally(function(){setTradeRefreshing(false);});
   }
 
+  // ── ☀️日中型のバックグラウンド取得 ────────────────────────────────────
+  // 一覧はすぐ表示し、その裏で日足を1銘柄ずつ取得して☀️バッジを順に埋める。
+  // アプリ内でタブを移動しても処理は止まらない。ただしブラウザごと裏に回すと
+  // iPadOSが処理を一時停止することがあるため、画面に戻った時に続きから再開する。
+  var dnFillS=useState(null);var dnFill=dnFillS[0],setDnFill=dnFillS[1];
+  var dnBusyRef=useRef(false); // 二重起動の防止
+  var dnListRef=useRef([]);    // 取得対象の銘柄リスト（最後のスキャン結果）
+  var startDayNightFill=useCallback(function(list){
+    if(list&&list.length)dnListRef.current=list;
+    if(dnBusyRef.current||!dnListRef.current.length)return;
+    dnBusyRef.current=true;
+    function refresh(){setStocks(function(prev){return prev.slice();});} // 取得できた分をバッジに反映
+    fillDayNightFor(dnListRef.current,function(d,t){
+      setDnFill(d<t?{d:d,t:t}:null);refresh();
+    }).then(function(){setDnFill(null);refresh();})
+      .catch(function(){setDnFill(null);})
+      .finally(function(){dnBusyRef.current=false;});
+  },[]);
+  useEffect(function(){
+    function onVisible(){if(document.visibilityState==="visible")startDayNightFill();}
+    document.addEventListener("visibilitychange",onVisible);
+    return function(){document.removeEventListener("visibilitychange",onVisible);};
+  },[startDayNightFill]);
+
   var scan=useCallback(async function(manualSectors,skipAI){
     setLoading(true);
     CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止）
@@ -6455,12 +6551,13 @@ export default function App(){
       results.sort(function(x,y){return y.score-x.score;});
       setStocks(results);
       setTs(new Date().toLocaleTimeString("ja-JP"));
+      startDayNightFill(results); // 表示後に☀️日中型を裏で取得
     }catch(err){
       setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
     }finally{
       setLoading(false);
     }
-  },[]);
+  },[startDayNightFill]);
   // ⭐お気に入り＋トレード登録中の銘柄だけを分析（AI業種選定・ランキング取得なしで高速）
   var scanFavsOnly=useCallback(async function(){
     setLoading(true);
@@ -6488,10 +6585,11 @@ export default function App(){
       results.sort(function(x,y){return y.score-x.score;});
       setStocks(results);
       setTs(new Date().toLocaleTimeString("ja-JP"));
+      startDayNightFill(results); // 表示後に☀️日中型を裏で取得
     }catch(err){
       setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
     }finally{setLoading(false);}
-  },[vix]);
+  },[vix,startDayNightFill]);
   function startFavsOnly(){setStartMode("favs");scanFavsOnly();}
   var rescanLoadingS=useState({});var rescanLoading=rescanLoadingS[0],setRescanLoading=rescanLoadingS[1];
   var rescanOne=useCallback(async function(ticker){
@@ -6616,7 +6714,60 @@ export default function App(){
         <button onClick={function(){setRescanMenuOpen(false);setPickedSectors([]);setSectorPickerOpen(true);}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>📋 業種コード一覧から選ぶ</button>
         <button onClick={function(){setRescanMenuOpen(false);reloadCurrentUniverse();}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#b8cce0",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>🔁 今の銘柄でリロード</button>
         <button onClick={function(){setRescanMenuOpen(false);scanFavsOnly();}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#fbbf24",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>⭐ お気に入りのみスキャン</button>
+        <button onClick={function(){setRescanMenuOpen(false);setBulkOpen(true);}} style={{padding:"12px 10px",background:"#050f20",border:"1px solid #1e3050",borderRadius:8,color:"#7dd3fc",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>🏭 業種まとめ登録（上位50をお気に入りへ）</button>
         <button onClick={function(){setRescanMenuOpen(false);}} style={{padding:"8px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
+      </div>
+    </div>,
+    document.body
+  );
+
+  // 🏭 業種まとめ登録モーダル（業種を1つ選び、出来高上位50をお気に入りへ／保存先ごとに一括解除）
+  var sectorBulkModal=bulkOpen&&createPortal(
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:520,maxHeight:"85vh",display:"flex",flexDirection:"column",color:"#b8cce0"}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:2}}>🏭 業種まとめ登録</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>業種を1つ選ぶと、その業種の出来高上位50銘柄をまとめてお気に入りに登録します</div>
+        <div style={{overflowY:"auto",marginBottom:10}}>
+          {SECTOR_STYLE_GROUPS.map(function(g){
+            var key=g[0],label=g[1];
+            var list=JP_33_SECTORS.filter(function(name){return SECTOR_STYLE[name]===key;});
+            return(
+              <div key={key} style={{marginBottom:10}}>
+                <div style={{fontSize:11,fontWeight:700,color:"#4a90c0",margin:"4px 0"}}>{label}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 10px"}}>
+                  {list.map(function(name){
+                    var active=bulkSector===name;
+                    return(
+                      <button key={name} onClick={function(){setBulkSector(active?null:name);}} style={{textAlign:"left",padding:"6px 8px",background:active?"#0ea5e930":"transparent",border:"1px solid "+(active?"#0ea5e9":"#1e3050"),borderRadius:6,color:active?"#7dd3fc":"#b8cce0",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>
+                        {active?"✓ ":""}{SECTOR_CODES[name]} {name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{fontSize:11,color:"#2a6090",marginBottom:4}}>保存先</div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          {[0,1,2,3,4].map(function(n){
+            var active=bulkGroup===n;
+            return <button key={n} onClick={function(){setBulkGroup(n);}} style={{background:active?"#fbbf2420":"transparent",border:"1px solid "+(active?"#fbbf24":"#1e3050"),borderRadius:6,color:active?"#fbbf24":"#4a6080",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{n===0?"全体":groupNames[n]}（{groupCount(n)}）</button>;
+          })}
+        </div>
+        {bulkMsg&&<div style={{fontSize:11,color:"#0ea5e9",marginBottom:8}}>{bulkMsg}</div>}
+        <button onClick={bulkAddSector} disabled={!bulkSector||!!bulkMsg} style={{padding:"12px 10px",background:(bulkSector&&!bulkMsg)?"#0ea5e9":"#1e3050",border:"none",borderRadius:8,color:"#fff",fontSize:13,fontWeight:700,cursor:(bulkSector&&!bulkMsg)?"pointer":"default",fontFamily:"monospace",marginBottom:10}}>
+          ⭐ 出来高上位50を「{groupLabel(bulkGroup)}」に一括登録
+        </button>
+        <div style={{borderTop:"1px solid #1e3050",paddingTop:10,marginBottom:10}}>
+          <div style={{fontSize:11,color:"#2a6090",marginBottom:4}}>保存先ごとに一括解除（登録した銘柄をまとめて外す）</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {[0,1,2,3,4].map(function(n){
+              return <button key={n} onClick={function(){bulkRemoveGroup(n);}} style={{background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:6,color:"#f43f5e",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>🗑 {n===0?"全体":groupNames[n]}（{groupCount(n)}）</button>;
+            })}
+          </div>
+        </div>
+        <button onClick={function(){setBulkOpen(false);setBulkMsg("");}} style={{padding:"8px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>閉じる</button>
       </div>
     </div>,
     document.body
@@ -6660,9 +6811,11 @@ export default function App(){
           </div>
           <MarketHours/>
         </div>
+        {dnFill&&<div style={{fontSize:10,color:"#fbbf24",marginTop:2}}>☀️ 日中型を取得中... {dnFill.d}/{dnFill.t}（一覧はそのまま使えます）</div>}
         {sectorPickerModal}
         {rescanMenu}
         {favPickerModal}
+        {sectorBulkModal}
       </div>
       {isMobile&&(
         <div style={{display:"flex",gap:4,padding:"4px 8px",background:"#050f20",borderBottom:"1px solid #0f2040",overflowX:"auto",WebkitOverflowScrolling:"touch",height:MOBILE_TABBAR_H,boxSizing:"border-box",alignItems:"center"}}>
@@ -6677,7 +6830,7 @@ export default function App(){
         )}
         <div style={{marginLeft:isMobile?0:50,padding:isMobile?"6px 6px 100px":"10px 10px 120px"}}>
           {activeTab==="all"&&<AllStocksPanel stocks={stocks} loading={loading} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} onScan={function(){setRescanMenuOpen(true);}} ts={ts} progress={progress} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} appTrades={appTrades} personalTrades={personalTrades}/>}
-          {activeTab==="fav"&&<FavPanel stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} appTrades={appTrades} personalTrades={personalTrades}/>}
+          {activeTab==="fav"&&<FavPanel onBulkSector={function(){setBulkOpen(true);}} stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} appTrades={appTrades} personalTrades={personalTrades}/>}
           {activeTab==="trade"&&<TradePanel stocks={stocks} appTrades={appTrades} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler} onForceComplete={forceCompleteHandler} onRefreshTrades={refreshTradePrices} tradeRefreshing={tradeRefreshing}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading} favs={favs} toggleFav={toggleFav}/>}
