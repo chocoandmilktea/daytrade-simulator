@@ -1698,12 +1698,15 @@ function calcIntradayAccuracy(){
       var byDate={};
       hist.forEach(function(e){(byDate[e.d]=byDate[e.d]||[]).push(e);});
       Object.keys(byDate).forEach(function(d){
-        var entries=byDate[d];
-        var closeEntry=entries[entries.length-1]; // その日最後の記録＝引けに近いスナップショット
-        if(closeEntry.p==null) return;
-        entries.forEach(function(e){
-          if(e===closeEntry||e.p==null||e.s<60) return;
+        var entries=byDate[d],ei=entries.length-1;
+        if(ei<1) return;
+        // 終点はその日の最後の記録。ただし後場後半か引け後で終わっていない日は「当日終値」と呼べない
+        var closeEntry=entries[ei],endRank=sessionRankAt(entries,ei);
+        if(closeEntry.p==null||endRank==null||endRank<SESSION_RANK["後場後半"]) return;
+        entries.forEach(function(e,idx){
+          if(idx>=ei||e.p==null||e.s<60) return;
           if(INTRADAY_SESSIONS.indexOf(e.session)===-1) return;
+          if(!isFarEnoughPair(e,closeEntry,sessionRankAt(entries,idx),endRank)) return; // 近すぎる比較は除外
           var move=priceMoveState(e.p,closeEntry.p);
           if(move===0) return; // 誤差レベルの値動きは集計対象外
           scoreStats[e.session].t++;
@@ -1999,8 +2002,32 @@ function buildVerdict(o){
 // 「買い」と出た時に実際に上がったかを集計する。翌営業日版と当日引け版の2本立て
 var VERDICT_ACC_CACHE=null,VERDICT_ACC_TS=0;
 var VERDICT_ORDER=["BUY","TRY","WATCH","SKIP"];
-// 「当日の引けまで」とみなせる最終記録の時間帯（これ以外で終わった日は当日集計から除外）
-var CLOSE_SESSION="後場後半";
+// ── 当日集計（引けまで）の時間帯ルール ──────────────────────────────────
+// 記録の"session"は場中4区分＋"時間外"。"時間外"は昼休み(11:30-12:30)と引け後(15:30〜)の
+// 両方を含むため、時刻または前後の並びから「引け後」だけを見分けて終点として使う
+var SESSION_RANK={"寄り付き":0,"前場":1,"後場前半":2,"後場後半":3};
+var AFTER_CLOSE_RANK=4;      // 引け後（15:30以降）＝終値そのもの。終点として最良
+var MIN_PAIR_GAP_MIN=60;     // 時刻がある記録：これ未満しか離れていないペアは除外
+var MIN_PAIR_GAP_RANK=2;     // 時刻がない古い記録：時間帯がこれ以上離れていること
+function hhmmToMin(t){var m=/^(\d{1,2}):(\d{2})$/.exec(t||"");return m?parseInt(m[1],10)*60+parseInt(m[2],10):null;}
+// 同じ日の記録リストのidx番目が、1日の中でどの位置にあたるかを返す（判定不能ならnull）
+function sessionRankAt(entries,idx){
+  var e=entries[idx];
+  if(SESSION_RANK[e.session]!=null) return SESSION_RANK[e.session];
+  var mi=hhmmToMin(e.t);
+  if(mi!=null) return mi>=15*60+30?AFTER_CLOSE_RANK:null; // 時刻があれば引け後か直接わかる
+  for(var i=idx-1;i>=0;i--){                              // 時刻がない古い記録は並び順で推定
+    var r=SESSION_RANK[entries[i].session];
+    if(r!=null) return r>=SESSION_RANK["後場前半"]?AFTER_CLOSE_RANK:null;
+  }
+  return null;
+}
+// 2点が十分離れているか（数分差の比較を「当日の値動き」と誤解しないための番人）
+function isFarEnoughPair(a,b,ra,rb){
+  var ma=hhmmToMin(a.t),mb=hhmmToMin(b.t);
+  if(ma!=null&&mb!=null) return (mb-ma)>=MIN_PAIR_GAP_MIN;
+  return (ra!=null&&rb!=null)&&(rb-ra)>=MIN_PAIR_GAP_RANK;
+}
 function calcVerdictAccuracy(){
   var now=Date.now();
   if(VERDICT_ACC_CACHE&&now-VERDICT_ACC_TS<UNIVERSE_STATS_TTL) return VERDICT_ACC_CACHE;
@@ -2019,15 +2046,22 @@ function calcVerdictAccuracy(){
       if(k.indexOf("sh_")!==0) return;
       var hist=JSON.parse(localStorage.getItem(k)||"[]");
       if(k.indexOf("sh_intraday_")===0){
-        // 当日版：同じ日の最後の記録（＝引けに近い時点）と比べる
-        // ただし最後の記録が「後場後半(14:00以降)」でない日は“引けまで”と呼べないため集計しない
-        for(var i=0;i<hist.length;i++){
-          var c=hist[i];if(!c.v||c.p==null) continue;
-          var last=null;
-          for(var j=hist.length-1;j>i;j--){if(hist[j].d===c.d&&hist[j].p!=null){last=hist[j];break;}}
-          if(!last||last.session!==CLOSE_SESSION) continue;
-          tally(td,c.v,priceMoveState(c.p,last.p),(last.p-c.p)/c.p*100);
-        }
+        // 当日版：日ごとにまとめ、その日の最後の記録（後場後半 or 引け後）を終点として比べる。
+        // 終点が昼前で終わっている日、始点と終点が近すぎるペアは集計しない
+        var byDate={};
+        hist.forEach(function(e){if(e&&e.d)(byDate[e.d]=byDate[e.d]||[]).push(e);});
+        Object.keys(byDate).forEach(function(dk){
+          var es=byDate[dk],ei=es.length-1;
+          if(ei<1) return;
+          var end=es[ei],endRank=sessionRankAt(es,ei);
+          if(end.p==null||endRank==null||endRank<SESSION_RANK["後場後半"]) return;
+          for(var i=0;i<ei;i++){
+            var c=es[i];
+            if(!c.v||c.p==null) continue;
+            if(!isFarEnoughPair(c,end,sessionRankAt(es,i),endRank)) continue;
+            tally(td,c.v,priceMoveState(c.p,end.p),(end.p-c.p)/c.p*100);
+          }
+        });
       }else{
         // 翌営業日版：次の記録の価格と比べる
         if(!/\.T$/.test(k.slice(3))) return; // 日本株のみ（他集計と条件を揃える）
@@ -2796,9 +2830,11 @@ function analyzeStock(stock,pd,vixVal){
       var ihist=JSON.parse(localStorage.getItem(ikey)||"[]");
       var itoday=currentSessionDate("JP"); // UTCではなくJSTの営業日（この記録はJP限定）
       var isession=currentSessionLabel();
+      var inow=new Date(); // 記録時刻(HH:MM)。比較する2点が何分離れているかの判定に使う
+      var itime=("0"+inow.getHours()).slice(-2)+":"+("0"+inow.getMinutes()).slice(-2);
       var isigKeys=signals.filter(function(x){return x.state!==0;}).map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
       var ilast=ihist[ihist.length-1];
-      var ientry={d:itoday,session:isession,s:sc,p:price,sig:isigKeys,v:verdictKey};
+      var ientry={d:itoday,session:isession,t:itime,s:sc,p:price,sig:isigKeys,v:verdictKey};
       if(ilast&&ilast.d===itoday&&ilast.session===isession){
         ihist[ihist.length-1]=ientry;
       }else{
@@ -5931,7 +5967,7 @@ function SignalAccuracyContent(p){
       )}
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🚦 総合判定 的中率</div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>総合判定が出た後、実際に価格が上がったかを集計（日本株のみ）。左＝当日の引けまで（デイトレ向け・その日の最後のスキャンが14時以降だった日のみ）／右＝翌営業日。値動きが±0.3%未満のほぼ横ばいは勝敗に数えず「引分」として件数だけ表示します</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>総合判定が出た後、実際に価格が上がったかを集計（日本株のみ）。左＝当日の引けまで（デイトレ向け・終点はその日の最後のスキャンで、14時以降か引け後のみ／始点と1時間以上離れたペアのみ）／右＝翌営業日。値動きが±0.3%未満のほぼ横ばいは勝敗に数えず「引分」として件数だけ表示します</div>
         {verdictAcc.today.every(function(r){return r.total===0&&r.draw===0;})&&verdictAcc.next.every(function(r){return r.total===0&&r.draw===0;})?(
           <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。スキャンを重ねると溜まっていきます。</div>
         ):(
@@ -6060,7 +6096,7 @@ function SignalAccuracyContent(p){
       </div>
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>⏰ 時間帯別 的中率（当日終値との比較）</div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>その時間帯にスコア60点以上だった銘柄が、記録されたその日最後の時点までに上がっていたかを集計。翌営業日ではなく“当日中”の答え合わせです</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>その時間帯にスコア60点以上だった銘柄が、その日の引け（後場後半か引け後の最後のスキャン）までに上がっていたかを集計。始点と1時間以上離れたペアのみ対象です。翌営業日ではなく“当日中”の答え合わせです</div>
         {intradayAcc.every(function(s){return s.total===0;})?(
           <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。1日に複数回スキャンすると溜まっていきます</div>
         ):(
@@ -6070,7 +6106,7 @@ function SignalAccuracyContent(p){
               <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:i<intradayAcc.length-1?"1px solid #0a1830":"none",opacity:reliable?1:0.5}}>
                 <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{s.session}</div>
                 <div style={{width:52,textAlign:"right",color:cellColor(s.winRate),fontWeight:700}}>{s.winRate!=null?s.winRate+"%":"-"}</div>
-                <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{s.total}</div>
+                {cntCell(s)}
               </div>
             );
           })
