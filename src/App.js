@@ -708,7 +708,12 @@ function editTradeRecord(kind,id,updates){
     }
     if(t.status!=="waiting"&&updates.buyPrice!=null)next.startPrice=updates.buyPrice;
     if(t.status==="done"){
-      if(updates.sellPrice!=null)next.endPrice=updates.sellPrice;
+      // 決済価格(endPrice)は「実際にどこで終わったか」で決まる。利確で終わったトレードは
+      // 売り価格、損切りで終わったトレードは損切り価格を反映し、それ以外（引け決済・強制完了）は
+      // 記録済みの決済価格をそのまま残す。※以前は常に売り価格で上書きしていたため、
+      // 損切りで終わったトレードを編集すると損益が「利確した場合の数字」に化けていた
+      if(t.exitReason==="take_profit"&&updates.sellPrice!=null)next.endPrice=updates.sellPrice;
+      else if(t.exitReason==="stop_loss"&&updates.stopPrice!=null)next.endPrice=updates.stopPrice;
       var pnlPerShare=next.endPrice-next.startPrice;
       next.pnl=pnlPerShare*(next.shares||1);
       next.pnlPercent=next.startPrice?(pnlPerShare/next.startPrice*100):0;
@@ -761,16 +766,22 @@ function applyPricesToTrades(kind,priceMap){
       if(cur!==t.lastPrice){changed=true;return Object.assign({},t,{lastPrice:cur});}
       return t;
     }
-    // status==="active"：利確（売り価格到達）→損切り（設定時のみ）の順で判定
+    // status==="active"：損切り → 利確の順で判定する。
+    // 更新の合間の値動きは見えないため、両方に到達し得る場合は必ず不利な側（損切り）を採る。
+    // 損切りの約定価格は「損切り価格」ではなく実際の現在値を使う。損切りは逆指値＝成行注文
+    // なので、急落やギャップで飛んだ場合は損切り価格では約定せず、より下で約定するため。
+    // （損切り価格ちょうどで約定したことにすると、成績が実際より良く出てしまう）
+    if(t.stopPrice!=null&&cur<=t.stopPrice){
+      changed=true;
+      var exitStop=Math.min(t.stopPrice,cur);
+      var pnlPerShare2=exitStop-t.startPrice,pnl2=pnlPerShare2*(t.shares||1),pnlPercent2=t.startPrice?(pnlPerShare2/t.startPrice*100):0;
+      return Object.assign({},t,{status:"done",endPrice:exitStop,endAt:new Date().toISOString(),pnl:pnl2,pnlPercent:pnlPercent2,exitReason:"stop_loss",lastPrice:cur});
+    }
+    // 利確は指値注文なので、飛んでも約定は売り価格ちょうど（控えめな見積もり）のままでよい
     if(cur>=t.sellPrice){
       changed=true;
       var pnlPerShare=t.sellPrice-t.startPrice,pnl=pnlPerShare*(t.shares||1),pnlPercent=t.startPrice?(pnlPerShare/t.startPrice*100):0;
       return Object.assign({},t,{status:"done",endPrice:t.sellPrice,endAt:new Date().toISOString(),pnl:pnl,pnlPercent:pnlPercent,exitReason:"take_profit",lastPrice:cur});
-    }
-    if(t.stopPrice!=null&&cur<=t.stopPrice){
-      changed=true;
-      var pnlPerShare2=t.stopPrice-t.startPrice,pnl2=pnlPerShare2*(t.shares||1),pnlPercent2=t.startPrice?(pnlPerShare2/t.startPrice*100):0;
-      return Object.assign({},t,{status:"done",endPrice:t.stopPrice,endAt:new Date().toISOString(),pnl:pnl2,pnlPercent:pnlPercent2,exitReason:"stop_loss",lastPrice:cur});
     }
     if(cur!==t.lastPrice){changed=true;return Object.assign({},t,{lastPrice:cur});}
     return t;
@@ -897,7 +908,7 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
     var pool=stocks.filter(function(s){return s.market==="JP";});
     var metrics=pool.map(function(s){
       var surge=s.volSurge||1; // 出来高急増率＝直近5日出来高÷過去20日平均（自分比の"今の勢い"）
-      var volatility=s.rawPrice?((s.atr||0)/s.rawPrice):0; // ATR%
+      var volatility=s.rawPrice?((s.atrRawVal!=null?s.atrRawVal:(s.atr||0))/s.rawPrice):0; // ATR%（丸め前の値を使用）
       return{s:s,surge:surge,volatility:volatility};
     });
     var maxSurge=Math.max.apply(null,metrics.map(function(m){return m.surge;}).concat([1]));
@@ -2232,7 +2243,11 @@ function analyzeStock(stock,pd,vixVal){
 
   // ── ATR（値幅）算出 ─────────────────────────────────────────────────────
   var atrRaw=calcATR(closes,highs,lows,14);
-  var atr=atrRaw!=null?Math.round(atrRaw):Math.round(price*0.02);
+  // 計算には丸めていない値をそのまま使う。整数に丸めると米国株や低位株でATRが0や1に
+  // 潰れ、「値幅不足」判定・利確損切り幅・買いプランまで連鎖して壊れるため。
+  // 丸めるのは画面表示とAIプロンプトに渡すとき(atrDisp)だけにする
+  var atr=atrRaw!=null?atrRaw:price*0.02;
+  var atrDisp=isJP?Math.round(atr):parseFloat(atr.toFixed(2));
   var atrPct=price>0?(atr/price*100):0;
 
   // ── 当日データの切り出し（dates配列から本日分の開始インデックスを特定）────
@@ -2256,12 +2271,16 @@ function analyzeStock(stock,pd,vixVal){
   // ── VWAP・ピボット計算 ─────────────────────────────────────────────────────
   // VWAPは「当日分のみ」で算出する（デイトレの押し目基準にするため）。
   // 全期間累積だと数日前の値を引きずり、チャート上のVWAPとズレるため。
+  // 当日の足が1本しか無い寄り付き直後(9:00〜9:15)でも、必ず当日分だけで算出する。
+  // 以前は2本目が出るまで全期間累積(約20営業日の平均価格)に落ちていたため、
+  // 上昇中の銘柄では毎朝「VWAP上方乖離」という誤ったシグナルが点灯していた
   var vwap=null;
   if(volumes.length>0&&sessionStarted){
-    if(todayStart!==null&&n-todayStart>=1){
+    if(todayStart!==null){
       vwap=calcVWAP(closes.slice(todayStart),highs.slice(todayStart),lows.slice(todayStart),volumes.slice(todayStart));
+    }else{
+      vwap=calcVWAP(closes,highs,lows,volumes); // 日付データが無い時だけ全期間で代替
     }
-    if(vwap===null) vwap=calcVWAP(closes,highs,lows,volumes); // 当日データが取れない時のみ従来通り
   }
   var pivot=calcPivot(closes,highs,lows,pd.dates);
 
@@ -2674,8 +2693,8 @@ function analyzeStock(stock,pd,vixVal){
   }catch(e){aptScore=0;}
 
   // ── 本日の想定値幅（atrはスコア計算冒頭で算出済みのものを再利用）──────────
-  var atrUpper=Math.round(price+atr);
-  var atrLower=Math.round(price-atr);
+  var atrUpper=isJP?Math.round(price+atr):parseFloat((price+atr).toFixed(2));
+  var atrLower=isJP?Math.round(price-atr):parseFloat((price-atr).toFixed(2));
   // ── 利確/損切りライン（標準パターン：利確ATR×1.5／損切りATR×0.75、リスクリワード比1:2）──
   var isJPmkt=stock.market==="JP";
   var profitTargetV=price+atr*1.5;
@@ -2792,6 +2811,10 @@ function analyzeStock(stock,pd,vixVal){
       // 休場中・寄り付き前はVWAP等の場中指標が算出できず、スコアの土俵が場中と変わる。
       // そのまま記録するとスコア推移・的中率の統計が汚れるため、記録せず既存履歴を返す
       if(!sessionStarted) return hist;
+      // 取得失敗で疑似データ(genSim)に置き換わった場合も記録しない。乱数の価格を
+      // 「その日の実績」として残すと、翌日の本物の価格と比較され、シグナル的中率・
+      // スコア帯実績・重み補正のすべてが汚染されるため
+      if(!pd.real) return hist;
       var today=currentSessionDate(stock.market); // UTCではなく市場のセッション日（JST基準）
       var sigKeys=signals.map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
       // 地合い情報（対TOPIX前日比・VIX・時間帯）も一緒に記録しておく（Cの機能）
@@ -2799,9 +2822,9 @@ function analyzeStock(stock,pd,vixVal){
       // relは対TOPIX相対（個別銘柄の前日比 − TOPIXの前日比）。トレンド局面（初動/過熱）の判定に使う
       var ctx={topix:topixChange!=null?topixChange:null,vix:vixVal!=null?parseFloat(vixVal):null,session:currentSessionLabel(),market:stock.market,rel:relStrength!=null?relStrength:null};
       if(hist.length&&hist[hist.length-1].d===today){
-        hist[hist.length-1]={d:today,s:sc,atr:atr,p:price,sig:sigKeys,ctx:ctx,v:verdictKey};
+        hist[hist.length-1]={d:today,s:sc,atr:atrDisp,p:price,sig:sigKeys,ctx:ctx,v:verdictKey};
       }else{
-        hist.push({d:today,s:sc,atr:atr,p:price,sig:sigKeys,ctx:ctx,v:verdictKey});
+        hist.push({d:today,s:sc,atr:atrDisp,p:price,sig:sigKeys,ctx:ctx,v:verdictKey});
         if(hist.length>40)hist.shift();
       }
       localStorage.setItem(key,JSON.stringify(hist));
@@ -2826,6 +2849,7 @@ function analyzeStock(stock,pd,vixVal){
     try{
       if(stock.market!=="JP") return;
       if(!sessionStarted) return; // 休場中・寄り付き前は時間帯統計として意味がないので記録しない
+      if(!pd.real) return;        // 取得失敗の疑似データは時間帯別統計も汚すので記録しない
       var ikey="sh_intraday_"+stock.ticker;
       var ihist=JSON.parse(localStorage.getItem(ikey)||"[]");
       var itoday=currentSessionDate("JP"); // UTCではなくJSTの営業日（この記録はJP限定）
@@ -2870,7 +2894,7 @@ function analyzeStock(stock,pd,vixVal){
     overlapLabels:overlapLabels,
     tradeType:tradeType,tradeLabel:tradeLabel,tradeColor:tradeColor,
     aptScore:aptScore,
-    atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,resistance:resistance,profitLoss:profitLoss,buyPlan:buyPlan,planSkip:planSkip,
+    atr:atrDisp,atrRawVal:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,resistance:resistance,profitLoss:profitLoss,buyPlan:buyPlan,planSkip:planSkip,
     sessionStarted:sessionStarted, // 休場中・寄り付き前かどうか（プロンプトの注記に使用）
     scoreHist:scoreHist,
     momentum:momentum,
@@ -3708,9 +3732,17 @@ function TradeAddModal(p){
   function valid(){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
     if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return false;
+    if(se<=b)return false; // 利確は買い価格より上であること（下だと約定した瞬間に損失で完了してしまう）
     var sp=parseFloat(stopVal);
     if(isNaN(sp)||sp<=0||sp>=b)return false; // 損切りは必須・買い価格より下であること
     return true;
+  }
+  // 入力が揃っているのにボタンが押せない理由を1行で示す（原因が分からず詰まらないように）
+  function validMsg(){
+    var b=parseFloat(buyVal),se=parseFloat(sellVal),sp=parseFloat(stopVal);
+    if(b>0&&se>0&&se<=b)return "⚠️ 売り価格（利確）は買い価格より高い値にしてください";
+    if(b>0&&sp>0&&sp>=b)return "⚠️ 損切り価格は買い価格より低い値にしてください";
+    return null;
   }
   function add(kind){
     if(!valid())return;
@@ -3791,6 +3823,7 @@ function TradeAddModal(p){
             );
           })()}
         </div>
+        {validMsg()&&<div style={{fontSize:11,color:"#f43f5e",marginBottom:8}}>{validMsg()}</div>}
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           <button onClick={function(){add("app");}} disabled={!valid()} style={{background:valid()?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>🎯 アプリ予想タブへ追加</button>
           <button onClick={function(){add("personal");}} disabled={!valid()} style={{background:valid()?"linear-gradient(135deg,#a78bfa,#7c3aed)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>👤 個人予想タブへ追加</button>
@@ -5255,6 +5288,7 @@ function TradeDetailModal(p){
   function saveEdit(){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
     if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return;
+    if(se<=b){alert("売り価格（利確）は買い価格より高い値を入力してください");return;}
     var sp=parseFloat(stopVal);
     if(isNaN(sp)||sp<=0||sp>=b){alert("損切り価格は必須です。買い価格より低い値を入力してください（R集計に必要）");return;}
     var updates={buyPrice:b,sellPrice:se,shares:sh,stopPrice:sp};
