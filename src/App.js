@@ -2114,6 +2114,52 @@ if(typeof window!=="undefined"){
 }
 // ──────────────────────────────────────────────────────────────────────
 
+// ── 初動スコア（0〜100点・既存の総合スコアとは完全に別枠）─────────────────
+// 既存スコアは「すでに動き出した銘柄」を高く評価する設計のため、これから動く銘柄は
+// 構造的に低スコアになる。そこで「数日で動き出す直前〜動き始め」を拾う別スコアを持つ。
+//   方向(最大40点) : 対TOPIX相対の直近3営業日累積。上か下かを決める主軸
+//   連続性(最大20点): 3日ともプラスか。一発の急騰ではなく、じわじわ強い状態を評価
+//   出来高(最大20点): 動き始め(1.2〜2.5倍)が最高点。2.5倍超は「祭りの後」で0点
+//   BB収束(最大20点): 値幅が縮んでいるほど、この後の値動き拡大が期待できる
+//   減点(最大-20点) : ATR消化率90%以上／下降トレンド・デッドクロス
+// 対TOPIX相対を使うため日本株のみ。履歴が3日分揃わない銘柄はnull（判定不可）。
+var MOMENTUM_LOOKBACK=3;
+function calcMomentumScore(a){
+  if(a.market!=="JP") return null;
+  var rels=(a.hist||[]).slice(-MOMENTUM_LOOKBACK)
+    .map(function(e){return e&&e.ctx?e.ctx.rel:null;})
+    .filter(function(v){return v!=null;});
+  if(rels.length<MOMENTUM_LOOKBACK) return null;
+  var relSum=rels.reduce(function(x,y){return x+y;},0);
+  var parts=[];
+  // ① 方向：初動ゾーン(+0.5〜+3%)が最高点。+6%超は上げ切っているとみなす
+  var dir=relSum>=6?5:relSum>=3?25:relSum>=0.5?40:relSum>=-1?25:0;
+  parts.push({label:"対TOPIX累積",val:(relSum>=0?"+":"")+relSum.toFixed(1)+"%",delta:dir});
+  // ② 連続性
+  var upCount=rels.filter(function(v){return v>0;}).length;
+  var cont=upCount>=3?20:upCount>=2?10:0;
+  parts.push({label:"連続性",val:upCount+"/"+MOMENTUM_LOOKBACK+"日プラス",delta:cont});
+  // ③ 出来高（動き始めを拾う配点）
+  var vs=a.volSurge||1;
+  var vol=vs>2.5?0:vs>=1.2?20:vs>=0.8?12:0;
+  parts.push({label:"出来高",val:vs.toFixed(1)+"倍",delta:vol});
+  // ④ BB収束（既存のbwRatioをそのまま流用）
+  var bb=a.bwRatio==null?0:a.bwRatio<=0.7?20:a.bwRatio<=0.85?12:0;
+  parts.push({label:"BB収束",val:a.bwRatio==null?"─":Math.round(a.bwRatio*100)+"%",delta:bb});
+  // ⑤ 減点
+  var pen=0;
+  if(a.atrUsedPct!=null&&a.atrUsedPct>=90){pen-=10;parts.push({label:"ATR消化",val:Math.round(a.atrUsedPct)+"%(使い切り)",delta:-10});}
+  if(a.bearish){pen-=10;parts.push({label:"下降/DC",val:"トレンド逆行",delta:-10});}
+  return{score:Math.max(0,Math.min(100,dir+cont+vol+bb+pen)),
+    relSum:Math.round(relSum*10)/10,parts:parts};
+}
+// 初動スコアの表示色。60点以上＝候補、40〜59＝一応見る、それ未満は非表示
+function momentumInfo(m){
+  if(!m||m.score<40) return null;
+  return{score:m.score,color:m.score>=60?"#22d3a0":"#fbbf24",
+    bg:m.score>=60?"#052e16":"#1c1400",relSum:m.relSum};
+}
+
 function analyzeStock(stock,pd,vixVal){
   var closes=pd.closes.slice(),highs=pd.highs.slice(),lows=pd.lows.slice();
   var volumes=pd.volumes?pd.volumes.slice():[];
@@ -2715,6 +2761,14 @@ function analyzeStock(stock,pd,vixVal){
       return hist;
     }catch(e){return[];}
   })();
+  // 初動スコア（既存スコアの計算には一切影響しない・scoreHist確定後に算出）
+  var momentum=calcMomentumScore({
+    market:stock.market,hist:scoreHist,
+    volSurge:(typeof surge!=="undefined"?surge:1),
+    bwRatio:(typeof bwRatio!=="undefined"?bwRatio:null),
+    atrUsedPct:(typeof atrUsedPct!=="undefined"?atrUsedPct:null),
+    bearish:!!(hasDC||hasBearTrend)
+  });
   // ────────────────────────────────────────────────────────────────────────
 
   // ── 時間帯別検証用のイントラデイ履歴（①のscoreHistとは別キー・別ロジック）───
@@ -2770,6 +2824,7 @@ function analyzeStock(stock,pd,vixVal){
     atr:atr,atrUpper:atrUpper,atrLower:atrLower,support:support,resistance:resistance,profitLoss:profitLoss,buyPlan:buyPlan,planSkip:planSkip,
     sessionStarted:sessionStarted, // 休場中・寄り付き前かどうか（プロンプトの注記に使用）
     scoreHist:scoreHist,
+    momentum:momentum,
     actualWinRate:calcActualWinRate(scoreHist,null,stock.market==="JP"),
     vwap:vwap?parseFloat(vwap.toFixed(stock.market==="JP"?0:2)):null,
     pivot:pivot?{pp:parseFloat(pivot.pp.toFixed(stock.market==="JP"?0:2)),r1:parseFloat(pivot.r1.toFixed(stock.market==="JP"?0:2)),s1:parseFloat(pivot.s1.toFixed(stock.market==="JP"?0:2)),r2:parseFloat(pivot.r2.toFixed(stock.market==="JP"?0:2)),s2:parseFloat(pivot.s2.toFixed(stock.market==="JP"?0:2)),prevHigh:parseFloat(pivot.prevHigh.toFixed(stock.market==="JP"?0:2)),prevLow:parseFloat(pivot.prevLow.toFixed(stock.market==="JP"?0:2)),prevClose:parseFloat(pivot.prevClose.toFixed(stock.market==="JP"?0:2))}:null,
@@ -3765,6 +3820,7 @@ function StockCard(p){
           <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:2}}>
             {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
             {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
+            {(function(){var mi=momentumInfo(s.momentum);return mi&&<span style={bStyle(mi.bg,"1px solid "+mi.color,mi.color)} title={"初動スコア "+mi.score+"/100（対TOPIX累積"+(mi.relSum>=0?"+":"")+mi.relSum+"%）。これから数日で動き出しそうな銘柄を、総合スコアとは別の観点で評価した点数。60点以上が候補"}>🌱初動{mi.score}</span>;})()}
             {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}{(function(){var dn=DAYNIGHT[s.ticker];if(!dn)return null;var pos=dn.day>0;return <span style={bStyle(pos?"#052e16":"#101826","1px solid "+(pos?"#22d3a0":"#2a4060"),pos?"#22d3a0":"#4a7090")} title={"過去1年の値動きの分解（"+dn.days+"日分）: 日中(始値→終値)の累積"+(dn.day>=0?"+":"")+dn.day+"% / 夜間(前日終値→始値)の累積"+(dn.night>=0?"+":"")+dn.night+"%。日中分がプラスなら、持ち越さないデイトレと相性が良い日中型"}>{(pos?"☀️日中+":"🌙日中")+dn.day+"%"}</span>;})()}
           </div>
           {(function(){
@@ -4756,6 +4812,12 @@ function AllStocksPanel(p){
         var av=ad?ad.day:-Infinity,bv=bd?bd.day:-Infinity;
         return bv-av;
       })
+    :sortMode==="momentum"
+    ?stocks.slice().sort(function(a,b){
+        // 初動スコア順。判定不可（米国株・履歴3日未満）は末尾にまとめる
+        var av=a.momentum?a.momentum.score:-1,bv=b.momentum?b.momentum.score:-1;
+        return bv-av;
+      })
     :stocks.slice().sort(function(a,b){return b.score-a.score;});
 
 
@@ -4802,6 +4864,7 @@ function AllStocksPanel(p){
             <span>/{stocks.length}</span>
           </span>
           {ts&&<span style={{fontSize:10,color:"#2a6090",flexShrink:0,whiteSpace:"nowrap"}}>{ts}</span>}
+          <button onClick={function(){setSortMode(sortMode==="momentum"?"score":"momentum");}} title="これから数日で動き出しそうな銘柄（初動スコア）の高い順に並べます。対TOPIX相対の3日累積を主軸に、出来高の立ち上がりとBB収束を加味した点数です。日本株のみ・スキャン履歴が3日分たまると表示されます" style={{marginLeft:"auto",flexShrink:0,background:sortMode==="momentum"?"#22d3a020":"transparent",border:"1px solid "+(sortMode==="momentum"?"#22d3a0":"#1e3050"),borderRadius:6,color:sortMode==="momentum"?"#22d3a0":"#4a6080",padding:"4px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="momentum"?700:400,whiteSpace:"nowrap"}}>🌱初動順{sortMode==="momentum"?"✓":""}</button>
           <button onClick={function(){var next=sortMode==="dayType"?"score":"dayType";setSortMode(next);if(next==="dayType"){fillDayNightFor(stocks,function(d,t){setDnProg(d<t?{d:d,t:t}:null);}).then(function(){setDnProg(null);});}}} title="過去1年で日中（始値→終値）に上がる癖が強い順に並べます。持ち越さないデイトレは日中分しか取れないため、日中型の銘柄ほど相性が良い。日足が未取得の銘柄は自動で取得し、取得できないものは下に並びます" style={{marginLeft:"auto",flexShrink:0,background:sortMode==="dayType"?"#fbbf2420":"transparent",border:"1px solid "+(sortMode==="dayType"?"#fbbf24":"#1e3050"),borderRadius:6,color:sortMode==="dayType"?"#fbbf24":"#4a6080",padding:"4px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:sortMode==="dayType"?700:400,whiteSpace:"nowrap"}}>☀️日中型順{sortMode==="dayType"?"✓":""}</button>
           <button onClick={onScan} style={{flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>
         </div>
