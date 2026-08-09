@@ -2003,7 +2003,15 @@ function calcVerdictAccuracy(){
   var now=Date.now();
   if(VERDICT_ACC_CACHE&&now-VERDICT_ACC_TS<UNIVERSE_STATS_TTL) return VERDICT_ACC_CACHE;
   var nx={},td={};
-  function tally(box,key,win,pct){if(!box[key])box[key]={w:0,t:0,sum:0};box[key].t++;if(win)box[key].w++;box[key].sum+=pct;}
+  // move: priceMoveState の戻り値（1=上昇 / -1=下落 / 0=横ばい / null=計算不可）
+  // 横ばい（±WIN_THRESHOLD_PCT未満）は勝敗の分母に入れず「引き分け」として件数だけ数える
+  // → 他の集計（スコア帯別など）と条件を揃えるための処理
+  function tally(box,key,move,pct){
+    if(move==null) return;
+    if(!box[key])box[key]={w:0,t:0,sum:0,draw:0};
+    if(move===0){box[key].draw++;return;}
+    box[key].t++;if(move>0)box[key].w++;box[key].sum+=pct;
+  }
   try{
     Object.keys(localStorage).forEach(function(k){
       if(k.indexOf("sh_")!==0) return;
@@ -2015,23 +2023,25 @@ function calcVerdictAccuracy(){
           var last=null;
           for(var j=hist.length-1;j>i;j--){if(hist[j].d===c.d&&hist[j].p!=null){last=hist[j];break;}}
           if(!last) continue;
-          tally(td,c.v,last.p>c.p,(last.p-c.p)/c.p*100);
+          tally(td,c.v,priceMoveState(c.p,last.p),(last.p-c.p)/c.p*100);
         }
       }else{
         // 翌営業日版：次の記録の価格と比べる
+        if(!/\.T$/.test(k.slice(3))) return; // 日本株のみ（他集計と条件を揃える）
         for(var m=0;m<hist.length-1;m++){
           var cur=hist[m],nt=hist[m+1];
           if(!cur.v||cur.p==null||nt.p==null) continue;
-          tally(nx,cur.v,nt.p>cur.p,(nt.p-cur.p)/cur.p*100);
+          if(bizDayDiff(cur.d,nt.d,true)!==1) continue; // 記録が飛んだペアは「翌営業日」に含めない
+          tally(nx,cur.v,priceMoveState(cur.p,nt.p),(nt.p-cur.p)/cur.p*100);
         }
       }
     });
   }catch(e){}
   function rows(box){
     return VERDICT_ORDER.map(function(k){
-      var st=box[k]||{w:0,t:0,sum:0};
+      var st=box[k]||{w:0,t:0,sum:0,draw:0};
       return{key:k,label:BADGE[k].label,winRate:st.t?Math.round(st.w/st.t*100):null,
-        avgPct:st.t?st.sum/st.t:null,total:st.t};
+        avgPct:st.t?st.sum/st.t:null,total:st.t,draw:st.draw};
     });
   }
   VERDICT_ACC_CACHE={next:rows(nx),today:rows(td)};VERDICT_ACC_TS=now;
@@ -5853,6 +5863,15 @@ function SignalAccuracyContent(p){
     return inv;
   })();
   function cellColor(wr){return wr==null?"#4a7090":wr>=60?"#22d3a0":wr>=50?"#fbbf24":"#f43f5e";}
+  // 件数セル：勝敗に使った件数（上段）と、横ばいで除外した引き分け件数（下段・小さく）
+  function cntCell(r){
+    return(
+      <div style={{width:46,textAlign:"right"}}>
+        <div style={{color:"#4a7090"}}>{r.total}</div>
+        {r.draw>0?<div style={{color:"#2a6090",fontSize:9}}>{"引分"+r.draw}</div>:null}
+      </div>
+    );
+  }
   return(
     <div>
       <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルの予想方向（強気なら上昇/弱気なら下落）が何営業日後に当たったかを表示します。%の下の小さい数字は、そのシグナル通りに動いた場合の平均騰落率です。並び順は勝率ではなく「1日後の平均騰落率（期待値）が高い順」です"}</div>
@@ -5891,17 +5910,17 @@ function SignalAccuracyContent(p){
       )}
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🚦 総合判定 的中率</div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>総合判定が出た後、実際に価格が上がったかを集計。左＝当日の引けまで（デイトレ向け）／右＝翌営業日。この機能を入れた後のスキャンから溜まります</div>
-        {verdictAcc.today.every(function(r){return r.total===0;})&&verdictAcc.next.every(function(r){return r.total===0;})?(
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>総合判定が出た後、実際に価格が上がったかを集計（日本株のみ）。左＝当日の引けまで（デイトレ向け）／右＝翌営業日。値動きが±0.3%未満のほぼ横ばいは勝敗に数えず「引分」として件数だけ表示します</div>
+        {verdictAcc.today.every(function(r){return r.total===0&&r.draw===0;})&&verdictAcc.next.every(function(r){return r.total===0&&r.draw===0;})?(
           <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。スキャンを重ねると溜まっていきます。</div>
         ):(
           <div>
             <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
               <div style={{flex:1}}>判定</div>
               <div style={{width:52,textAlign:"right"}}>当日</div>
-              <div style={{width:40,textAlign:"right"}}>件数</div>
+              <div style={{width:46,textAlign:"right"}}>件数</div>
               <div style={{width:52,textAlign:"right"}}>翌営業日</div>
-              <div style={{width:40,textAlign:"right"}}>件数</div>
+              <div style={{width:46,textAlign:"right"}}>件数</div>
             </div>
             {verdictAcc.today.map(function(r,i){
               var nxr=verdictAcc.next[i];
@@ -5909,9 +5928,9 @@ function SignalAccuracyContent(p){
                 <div key={r.key} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
                   <div style={{flex:1,color:(BADGE[r.key]||{}).text,fontWeight:700}}>{r.label}</div>
                   <div style={{width:52,textAlign:"right",color:cellColor(r.winRate),fontWeight:700}}>{r.winRate!=null?r.winRate+"%":"-"}</div>
-                  <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{r.total}</div>
+                  {cntCell(r)}
                   <div style={{width:52,textAlign:"right",color:cellColor(nxr.winRate),fontWeight:700}}>{nxr.winRate!=null?nxr.winRate+"%":"-"}</div>
-                  <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{nxr.total}</div>
+                  {cntCell(nxr)}
                 </div>
               );
             })}
