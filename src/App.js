@@ -6198,6 +6198,652 @@ function MarketHours(){
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// 🌅 寄り付きギャップ予想
+// 前日終値に対して翌朝の始値が上か下か・何%かを予想し、実際の始値と照合して
+// 的中率を貯める仕組み。既存の0〜100点スコア（calcScore内のsc）とsignals配列には
+// 一切関与しない完全に独立したスコアとして持つ（sh_*の的中率データとの連続性を
+// 壊さないため）。対象はお気に入り登録銘柄（fav_tickers）の日本株のみ。
+//
+// 材料は3つ:
+//   (a) 地合い（api/premarket.js）× その銘柄のTOPIXに対するベータ
+//   (b) 過去のギャップ実績分布（ばらつきが大きい銘柄ほど確信度を下げる）
+//   (c) 前日大引けの強さ（高値引け/安値引けで予想ギャップを加減算）
+//
+// 日足の始値・終値は立花証券API経由では取得できない（/ranking-dataは当日の
+// 現在値・前日終値のみで履歴も始値も無い）ため、既存のYahoo日足（api/daily.js →
+// fetchDaily）をそのまま使う。新規のサーバーレス関数は api/premarket.js の1本のみ。
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── 調整可能な定数（重み・しきい値・日数はすべてここにまとめる）─────────────
+var PM_API="https://daytrade-simulator.vercel.app/api/premarket";
+var PM_BENCH_TICKER="1306.T";        // ベータの基準（TOPIX連動ETF。指数そのものより日足が安定して取れる）
+var PM_BETA_DAYS=60;                 // ベータ算出に使う営業日数
+var PM_GAP_DAYS=60;                  // ギャップ実績分布の集計日数
+var PM_MIN_SAMPLES=20;               // ベータ・分布の計算に必要な最低サンプル数
+var PM_BETA_MIN=0.2,PM_BETA_MAX=2.5; // ベータの丸め範囲（外れ値で予想が暴れないように）
+var PM_CLOSE_STRONG=0.8;             // 前日終値が日中レンジのこの位置以上なら「高値引け」
+var PM_CLOSE_WEAK=0.2;               // この位置以下なら「安値引け」
+var PM_CLOSE_ADJ=0.15;               // 高値引け/安値引けで予想ギャップに加減算する%
+var PM_CONF_BASE=70;                 // 確信度の基準値(%)
+var PM_CONF_SD_PENALTY=18;           // ギャップの標準偏差1%につき確信度から引く点
+var PM_CONF_DIR=12;                  // 予想方向が過去の偏りと一致/不一致の時の増減（最大点）
+var PM_CONF_R2_BASE=0.3;             // ベータの当てはまり(r²)がこの値なら確信度の増減なし
+var PM_CONF_R2_GAIN=20;              // r²がPM_CONF_R2_BASEから1離れるごとの増減点
+var PM_CONF_MIN=5,PM_CONF_MAX=95;    // 確信度の下限・上限(%)
+var PM_DIR_DEADBAND=0.05;            // 予想ギャップがこの幅未満なら方向判定の対象外にする(%)
+var PM_HIST_MAX=90;                  // pm_<ticker> に残す件数
+var PM_STATS_TTL=15*60*1000;         // 的中率集計のキャッシュ(15分)
+var PM_OPEN_MIN=9*60;                // 9:00 JST（これ以降は「答え合わせ」表示に自動で切り替える）
+var PM_BIAS_TTL=3*60*1000;           // 地合いの端末側キャッシュ(3分・サーバー側と同じ長さ)
+var PM_TODAY_TTL=5*60*1000;          // 答え合わせ用の当日日足キャッシュ(5分)
+var PM_FETCH_CONCURRENCY=4;          // 日足まとめ取得の同時実行数（Yahooに負担をかけない）
+
+// ── 時刻・日付まわり ──────────────────────────────────────────────────
+function pmSign(v){return v>0?"+":"";}                       // 表示用の符号（マイナスはtoFixedが付ける）
+function pmIsJP(t){return /\.T$/.test(String(t||""));}       // 日本株のみ対象（米国株は対象外）
+function pmNowJstMin(){
+  var jst=new Date(Date.now()+9*3600000);
+  return jst.getUTCHours()*60+jst.getUTCMinutes();
+}
+function pmIsAfterOpen(){return pmNowJstMin()>=PM_OPEN_MIN;} // 9:00以降か
+// 予想の対象日。9:00より前ならその日、9:00以降なら翌営業日ぶんの予想になる。
+// （土日は次の月曜へ送る。祝日は判定できないので、その日の記録は答え合わせされずに残る）
+function pmTargetDate(){
+  var ms=Date.now()+9*3600000;
+  if(pmIsAfterOpen())ms+=24*3600000;
+  var d=new Date(ms);
+  while(d.getUTCDay()===0||d.getUTCDay()===6)d=new Date(d.getTime()+24*3600000);
+  return d.toISOString().slice(0,10);
+}
+
+// ── (a) ベータ算出 ────────────────────────────────────────────────────
+// 日足から「日付 → 前日比%」の対応表を作る
+function pmDailyReturns(d){
+  var map={};
+  if(!d||!d.closes||!d.dates)return map;
+  for(var i=1;i<d.closes.length;i++){
+    var pc=d.closes[i-1],c=d.closes[i];
+    if(!(pc>0&&c>0))continue;
+    map[d.dates[i]]=(c-pc)/pc*100;
+  }
+  return map;
+}
+// 過去PM_BETA_DAYS営業日ぶんの日次騰落率で、TOPIXに対する感応度を単回帰で求める。
+// 傾き＝Σ(x-x̄)(y-ȳ) / Σ(x-x̄)²、当てはまりの良さr²＝相関係数の2乗。
+function pmCalcBeta(stockDaily,benchDaily){
+  var sm=pmDailyReturns(stockDaily),bm=pmDailyReturns(benchDaily);
+  var days=Object.keys(bm).sort().slice(-PM_BETA_DAYS);
+  var xs=[],ys=[],i;
+  for(i=0;i<days.length;i++){
+    var y=sm[days[i]];
+    if(y==null)continue;
+    xs.push(bm[days[i]]);ys.push(y);
+  }
+  var n=xs.length;
+  if(n<PM_MIN_SAMPLES)return null;
+  var mx=0,my=0;
+  for(i=0;i<n;i++){mx+=xs[i];my+=ys[i];}
+  mx/=n;my/=n;
+  var sxy=0,sxx=0,syy=0;
+  for(i=0;i<n;i++){var dx=xs[i]-mx,dy=ys[i]-my;sxy+=dx*dy;sxx+=dx*dx;syy+=dy*dy;}
+  if(!(sxx>0)||!(syy>0))return null;
+  var raw=sxy/sxx;
+  return {
+    beta:Math.max(PM_BETA_MIN,Math.min(PM_BETA_MAX,raw)),
+    rawBeta:raw,
+    r2:(sxy*sxy)/(sxx*syy),
+    n:n
+  };
+}
+
+// ── (b) ギャップ実績分布 ──────────────────────────────────────────────
+// 過去PM_GAP_DAYS営業日の (始値 ÷ 前日終値 - 1) を集計し、平均・標準偏差・上ギャップ率を出す
+function pmGapStats(d){
+  if(!d||!d.closes||!d.opens)return null;
+  var arr=[],i;
+  for(i=1;i<d.closes.length;i++){
+    var o=d.opens[i],pc=d.closes[i-1];
+    if(!(o>0&&pc>0))continue;
+    arr.push((o/pc-1)*100);
+  }
+  arr=arr.slice(-PM_GAP_DAYS);
+  var n=arr.length;
+  if(n<PM_MIN_SAMPLES)return null;
+  var mean=0,up=0;
+  for(i=0;i<n;i++){mean+=arr[i];if(arr[i]>0)up++;}
+  mean/=n;
+  var v=0;
+  for(i=0;i<n;i++)v+=(arr[i]-mean)*(arr[i]-mean);
+  return {mean:mean,sd:Math.sqrt(v/n),upRate:up/n,n:n};
+}
+
+// ── (c) 前日大引けの強さ ──────────────────────────────────────────────
+// 予想対象日より前の最後の日足（＝前営業日）の位置を返す
+function pmPrevBarIndex(d,targetDate){
+  if(!d||!d.dates)return -1;
+  for(var i=d.dates.length-1;i>=0;i--){if(d.dates[i]<targetDate)return i;}
+  return -1;
+}
+// 前日終値が前日の日中レンジのどの位置にあったか（0=安値引け 〜 1=高値引け）
+function pmCloseStrength(d,idx){
+  if(!d||idx<0||!d.highs||!d.lows)return null;
+  var h=d.highs[idx],l=d.lows[idx],c=d.closes[idx];
+  if(!(h>l))return null;
+  return (c-l)/(h-l);
+}
+
+// ── 最終的な予想（(a)(b)(c)をまとめる）───────────────────────────────
+// 戻り値: { expectedGapPct, confidence, reasons[], ... }
+function pmPredictGap(ticker,daily,benchDaily,marketBias,targetDate){
+  if(!daily||marketBias==null)return null;
+  var beta=pmCalcBeta(daily,benchDaily);
+  var gap=pmGapStats(daily);
+  if(!beta||!gap)return null;
+
+  var idx=pmPrevBarIndex(daily,targetDate);
+  var pos=pmCloseStrength(daily,idx);
+  var reasons=[];
+
+  // (a) 予想ギャップ ＝ 地合い（marketBias）× ベータ
+  var exp=marketBias*beta.beta;
+  reasons.push({label:"ベータ",val:"×"+beta.beta.toFixed(2)+"（地合い"+pmSign(marketBias)+marketBias.toFixed(2)+"%）",state:exp>0?1:(exp<0?-1:0)});
+
+  // (c) 前日大引けの強さで加減算
+  if(pos!=null){
+    if(pos>=PM_CLOSE_STRONG){
+      exp+=PM_CLOSE_ADJ;
+      reasons.push({label:"高値引け",val:"レンジ上位"+Math.round(pos*100)+"%で引け",state:1});
+    }else if(pos<=PM_CLOSE_WEAK){
+      exp-=PM_CLOSE_ADJ;
+      reasons.push({label:"安値引け",val:"レンジ下位"+Math.round(pos*100)+"%で引け",state:-1});
+    }else{
+      reasons.push({label:"引け位置",val:"レンジ中位"+Math.round(pos*100)+"%",state:0});
+    }
+  }
+
+  // (b) ギャップ実績分布から確信度を出す。ばらつき（標準偏差）が大きいほど下げる
+  var conf=PM_CONF_BASE-gap.sd*PM_CONF_SD_PENALTY;
+  // 過去の上下の偏り（上ギャップ率が0.5からどれだけ離れているか）と予想方向が
+  // 一致していれば上げ、逆行していれば下げる
+  var dirStrength=Math.abs(gap.upRate-0.5)*2;
+  if(Math.abs(exp)>=PM_DIR_DEADBAND)conf+=((exp>0)===(gap.upRate>=0.5)?1:-1)*PM_CONF_DIR*dirStrength;
+  // 地合いとの連動性が弱い銘柄（r²が低い）は「地合い×ベータ」自体が当てにならない
+  conf+=(beta.r2-PM_CONF_R2_BASE)*PM_CONF_R2_GAIN;
+  // 日足のサンプルが規定日数に満たない場合は比例して割り引く
+  conf*=Math.min(1,gap.n/PM_GAP_DAYS);
+  conf=Math.max(PM_CONF_MIN,Math.min(PM_CONF_MAX,Math.round(conf)));
+
+  reasons.push({label:"ギャップ分布",val:"平均"+pmSign(gap.mean)+gap.mean.toFixed(2)+"% / 標準偏差"+gap.sd.toFixed(2)+"% / 上ギャップ"+Math.round(gap.upRate*100)+"%",state:0});
+  reasons.push({label:"連動性",val:"r²"+beta.r2.toFixed(2)+"（"+beta.n+"日）",state:beta.r2>=PM_CONF_R2_BASE?1:0});
+  if(gap.n<PM_GAP_DAYS)reasons.push({label:"サンプル",val:"日足"+gap.n+"日分のみ（参考値）",state:0});
+
+  return {
+    ticker:ticker,
+    expectedGapPct:Math.round(exp*100)/100,
+    confidence:conf,
+    reasons:reasons,
+    beta:beta.beta,
+    r2:beta.r2,
+    gap:gap,
+    closePos:pos,
+    prevClose:idx>=0?daily.closes[idx]:null,
+    prevDate:idx>=0?daily.dates[idx]:null
+  };
+}
+
+// ── 答え合わせの記録（localStorage: pm_<ticker>）───────────────────────
+// 1件の形式: { d:"YYYY-MM-DD", exp:予想ギャップ%, conf:確信度, act:実際のギャップ%, prevClose:前日終値 }
+var PM_STATS_CACHE=null,PM_STATS_TS=0;
+function pmHistKey(t){return "pm_"+t;}
+function pmLoadHist(t){try{return JSON.parse(localStorage.getItem(pmHistKey(t))||"[]");}catch(e){return[];}}
+function pmSaveHist(t,list){
+  try{
+    localStorage.setItem(pmHistKey(t),JSON.stringify(list.slice(-PM_HIST_MAX))); // 直近90件だけ残す
+    PM_STATS_CACHE=null;                                                          // 集計キャッシュを捨てる
+  }catch(e){}
+}
+function pmFindRec(list,dateStr){
+  for(var i=0;i<list.length;i++){if(list[i].d===dateStr)return list[i];}
+  return null;
+}
+// 予想時点で exp/conf を記録（同じ日に何度開いても1件にまとまる）
+function pmRecordPrediction(ticker,dateStr,exp,conf,prevClose){
+  var list=pmLoadHist(ticker),rec=pmFindRec(list,dateStr);
+  if(rec){
+    if(rec.act!=null)return;   // 答え合わせ済みの記録は上書きしない
+    rec.exp=exp;rec.conf=conf;rec.prevClose=prevClose;
+  }else{
+    list.push({d:dateStr,exp:exp,conf:conf,act:null,prevClose:prevClose});
+    list.sort(function(a,b){return a.d<b.d?-1:(a.d>b.d?1:0);});
+  }
+  pmSaveHist(ticker,list);
+}
+// 9:00以降に始値が取れた時点で act を埋める（予想を記録していない日は対象外）
+function pmRecordActual(ticker,dateStr,actPct){
+  var list=pmLoadHist(ticker),rec=pmFindRec(list,dateStr);
+  if(!rec||rec.act!=null)return false;
+  rec.act=actPct;
+  pmSaveHist(ticker,list);
+  return true;
+}
+
+// ── 的中率の集計（calcSignalAccuracy系と同じ作り）─────────────────────
+// 戻り値: {total, dirRate（方向一致率%）, avgErr（平均誤差%）, byTicker[]}
+function calcPremarketAccuracy(tickers){
+  var total=0,dirTotal=0,dirHit=0,sumErr=0,sumConf=0,byTicker=[];
+  (tickers||[]).forEach(function(ticker){
+    var hist=pmLoadHist(ticker).filter(function(r){return r&&r.act!=null&&r.exp!=null;});
+    if(!hist.length)return;
+    var t=0,dt=0,dh=0,se=0;
+    hist.forEach(function(r){
+      t++;se+=Math.abs(r.exp-r.act);sumConf+=r.conf||0;
+      // 予想がほぼゼロの日は「どちらに賭けたか」が無いので方向判定から外す
+      if(Math.abs(r.exp)>=PM_DIR_DEADBAND){dt++;if((r.exp>0)===(r.act>0))dh++;}
+    });
+    total+=t;dirTotal+=dt;dirHit+=dh;sumErr+=se;
+    byTicker.push({ticker:ticker,total:t,dirRate:dt>0?Math.round(dh/dt*100):null,avgErr:Math.round(se/t*100)/100});
+  });
+  return {
+    total:total,
+    dirTotal:dirTotal,
+    dirRate:dirTotal>0?Math.round(dirHit/dirTotal*100):null,
+    avgErr:total>0?Math.round(sumErr/total*100)/100:null,
+    avgConf:total>0?Math.round(sumConf/total):null,
+    byTicker:byTicker.sort(function(a,b){return(b.dirRate||0)-(a.dirRate||0);})
+  };
+}
+// お気に入り登録銘柄全体で集計（15分キャッシュ）
+function calcFavPremarketAccuracy(){
+  var now=Date.now();
+  if(PM_STATS_CACHE&&now-PM_STATS_TS<PM_STATS_TTL)return PM_STATS_CACHE;
+  var favList=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]");}catch(e){return[];}})();
+  PM_STATS_CACHE=calcPremarketAccuracy(favList.filter(pmIsJP));
+  PM_STATS_TS=now;
+  return PM_STATS_CACHE;
+}
+
+// ── データ取得 ────────────────────────────────────────────────────────
+// 地合い（api/premarket.js）。取得に失敗したら直前の結果をそのまま使い続ける
+var PM_BIAS_CACHE=null,PM_BIAS_TS=0;
+async function pmFetchMarketBias(force){
+  var now=Date.now();
+  if(!force&&PM_BIAS_CACHE&&now-PM_BIAS_TS<PM_BIAS_TTL)return PM_BIAS_CACHE;
+  try{
+    var res=await fetch(PM_API,{signal:AbortSignal.timeout(20000)});
+    if(!res.ok)throw new Error("premarket "+res.status);
+    var json=await res.json();
+    if(json.error)throw new Error(json.error);
+    PM_BIAS_CACHE=json;PM_BIAS_TS=now;
+    return json;
+  }catch(e){
+    return PM_BIAS_CACHE||{marketBias:null,indicators:[],missing:[],error:e.message||"取得に失敗しました"};
+  }
+}
+
+// 答え合わせ用に「当日を含む直近5日ぶんの日足」を取り直す。
+// fetchDailyのキャッシュ(30分)は寄り付き前のデータを掴んだままのことがあるため、
+// 始値の確認だけは別枠・短いキャッシュで取得する（_tはCDNキャッシュ避けの時刻バケット）
+var PM_TODAY_CACHE={};
+async function pmFetchRecentDaily(ticker,force){
+  var now=Date.now(),c=PM_TODAY_CACHE[ticker];
+  if(!force&&c&&now-c.ts<PM_TODAY_TTL)return c.data;
+  try{
+    var bucket=Math.floor(now/PM_TODAY_TTL);
+    var res=await fetch(DAILY_API+"?ticker="+encodeURIComponent(ticker)+"&interval=1d&range=5d&_t="+bucket,{signal:AbortSignal.timeout(10000),cache:"no-store"});
+    if(!res.ok)throw new Error("daily "+res.status);
+    var json=await res.json();
+    if(!json||!json.closes||!json.closes.length)return null;
+    var data={closes:json.closes,dates:json.dates||[],opens:json.opens||[],highs:json.highs||[],lows:json.lows||[]};
+    PM_TODAY_CACHE[ticker]={ts:now,data:data};
+    return data;
+  }catch(e){return null;}
+}
+// 実際のギャップ%（対象日の始値 ÷ 前営業日終値 - 1）。まだ寄っていなければnull
+function pmActualGap(recent,dateStr){
+  if(!recent||!recent.dates)return null;
+  var i=recent.dates.indexOf(dateStr);
+  if(i<1)return null;
+  var o=recent.opens[i],pc=recent.closes[i-1];
+  if(!(o>0&&pc>0))return null;
+  return {actPct:(o/pc-1)*100,open:o,prevClose:pc};
+}
+// 同時実行数を絞って順に処理する（Yahooへの一斉アクセスを避ける）
+async function pmMapLimit(items,limit,worker){
+  var out=new Array(items.length),idx=0;
+  async function run(){
+    while(idx<items.length){var i=idx++;out[i]=await worker(items[i]);}
+  }
+  var runners=[];
+  for(var k=0;k<Math.min(limit,items.length);k++)runners.push(run());
+  await Promise.all(runners);
+  return out;
+}
+
+// お気に入り日本株ぶんの予想をまとめて作り、予想内容をlocalStorageに記録する
+async function pmBuildPredictions(favTickers,force){
+  var tickers=(favTickers||[]).filter(pmIsJP);
+  var targetDate=pmTargetDate();
+  var market=await pmFetchMarketBias(force);
+  var bias=market?market.marketBias:null;
+  var benchDaily=await fetchDaily(PM_BENCH_TICKER); // ベータの基準となるTOPIX連動ETFの日足
+
+  var rows=await pmMapLimit(tickers,PM_FETCH_CONCURRENCY,async function(ticker){
+    var daily=await fetchDaily(ticker);
+    var pred=pmPredictGap(ticker,daily,benchDaily,bias,targetDate);
+    if(pred)pmRecordPrediction(ticker,targetDate,pred.expectedGapPct,pred.confidence,pred.prevClose);
+    return {ticker:ticker,name:jpNameOf(ticker,ticker.replace(".T","")),pred:pred};
+  });
+
+  // 予想ギャップ%の降順（計算できなかった銘柄は末尾へ）
+  rows.sort(function(a,b){
+    if(!a.pred&&!b.pred)return 0;
+    if(!a.pred)return 1;
+    if(!b.pred)return -1;
+    return b.pred.expectedGapPct-a.pred.expectedGapPct;
+  });
+  return {targetDate:targetDate,market:market,bias:bias,benchOk:!!benchDaily,rows:rows};
+}
+
+// 9:00以降：実際の始値を取り直して答え合わせし、actを埋める
+async function pmBuildResults(favTickers,force){
+  var tickers=(favTickers||[]).filter(pmIsJP);
+  var today=fcTodayJST(); // 既存のJST日付ヘルパーを再利用
+  var rows=await pmMapLimit(tickers,PM_FETCH_CONCURRENCY,async function(ticker){
+    var rec=pmFindRec(pmLoadHist(ticker),today);
+    var recent=await pmFetchRecentDaily(ticker,force);
+    var act=pmActualGap(recent,today);
+    var actPct=act?Math.round(act.actPct*100)/100:null;
+    if(actPct!=null)pmRecordActual(ticker,today,actPct);
+    return {
+      ticker:ticker,
+      name:jpNameOf(ticker,ticker.replace(".T","")),
+      exp:rec?rec.exp:null,
+      conf:rec?rec.conf:null,
+      act:actPct!=null?actPct:(rec?rec.act:null),
+      open:act?act.open:null,
+      prevClose:act?act.prevClose:(rec?rec.prevClose:null)
+    };
+  });
+  // 実際のギャップ%の降順（まだ寄っていない銘柄は末尾へ）
+  rows.sort(function(a,b){
+    if(a.act==null&&b.act==null)return 0;
+    if(a.act==null)return 1;
+    if(b.act==null)return -1;
+    return b.act-a.act;
+  });
+  return {date:today,rows:rows};
+}
+
+// ── 🌅 寄り予想タブ ───────────────────────────────────────────────────
+function PremarketPanel(p){
+  var favKey=(p.favs||[]).filter(pmIsJP).join(",");
+  var loadS=useState(false);var loading=loadS[0],setLoading=loadS[1];
+  var dataS=useState(null);var data=dataS[0],setData=dataS[1];        // 予想（中段・上段）
+  var resS=useState(null);var results=resS[0],setResults=resS[1];      // 答え合わせ（中段）
+  var statsS=useState(null);var stats=statsS[0],setStats=statsS[1];    // 的中率（下段）
+  var errS=useState("");var err=errS[0],setErr=errS[1];
+  var updS=useState("");var lastUpd=updS[0],setLastUpd=updS[1];
+  var afterS=useState(pmIsAfterOpen());var afterOpen=afterS[0],setAfterOpen=afterS[1];
+
+  // 9:00をまたいだら自動で「答え合わせ」表示へ切り替える（1分ごとに確認）
+  useEffect(function(){
+    var t=setInterval(function(){setAfterOpen(pmIsAfterOpen());},60000);
+    return function(){clearInterval(t);};
+  },[]);
+
+  // お気に入りが変わった時・9:00をまたいだ時に読み込み直す
+  useEffect(function(){
+    var alive=true;
+    var list=favKey?favKey.split(","):[];
+    if(!list.length){setData(null);setResults(null);setStats(calcFavPremarketAccuracy());return;}
+    setLoading(true);setErr("");
+    (async function(){
+      try{
+        var d=await pmBuildPredictions(list,false);
+        if(!alive)return;
+        setData(d);
+        if(afterOpen){
+          var r=await pmBuildResults(list,false);
+          if(!alive)return;
+          setResults(r);
+        }else setResults(null);
+        setStats(calcFavPremarketAccuracy());
+        setLastUpd(new Date().toLocaleTimeString("ja-JP"));
+      }catch(e){if(alive)setErr(e.message||"取得に失敗しました");}
+      if(alive)setLoading(false);
+    })();
+    return function(){alive=false;};
+  },[favKey,afterOpen]);
+
+  async function refresh(){
+    var list=favKey?favKey.split(","):[];
+    if(!list.length)return;
+    setLoading(true);setErr("");
+    try{
+      var d=await pmBuildPredictions(list,true);
+      setData(d);
+      if(pmIsAfterOpen()){
+        var r=await pmBuildResults(list,true);
+        setResults(r);
+      }else setResults(null);
+      setStats(calcFavPremarketAccuracy());
+      setLastUpd(new Date().toLocaleTimeString("ja-JP"));
+    }catch(e){setErr(e.message||"取得に失敗しました");}
+    setLoading(false);
+  }
+
+  var market=data&&data.market?data.market:null;
+  var bias=data?data.bias:null;
+  var biasCol=bias==null?"#4a7090":(bias>0?"#22d3a0":(bias<0?"#f87171":"#4a7090"));
+  var cardStyle={background:"#050e1c",border:"1px solid #0f2040",borderRadius:10,overflow:"hidden",marginBottom:10};
+  var headStyle={background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8};
+  function pctCol(v){return v==null?"#4a7090":(v>0?"#22d3a0":(v<0?"#f87171":"#4a7090"));}
+  function fmtPm(v){return v==null?"—":pmSign(v)+v.toFixed(2)+"%";}
+
+  return(
+    <div>
+      {/* ── 上段：今朝の地合いサマリー ───────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={headStyle}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>🌅 今朝の地合い</div>
+            <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>
+              {data?("予想対象日: "+data.targetDate):"読み込み中..."}{lastUpd?" ・ 更新 "+lastUpd:""}
+            </div>
+          </div>
+          <button onClick={refresh} disabled={loading}
+            style={{background:loading?"#0a1828":"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:loading?"not-allowed":"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>
+            {loading?"取得中...":"🔄 更新"}
+          </button>
+        </div>
+        <div style={{padding:"12px 14px"}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:10}}>
+            <span style={{fontSize:11,color:"#4a7090"}}>総合（想定ギャップ）</span>
+            <span style={{fontSize:24,fontWeight:700,color:biasCol,fontFamily:"monospace"}}>{fmtPm(bias)}</span>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {(market&&market.indicators?market.indicators:[]).map(function(x){
+              return(
+                <div key={x.key} style={{background:"#071428",border:"1px solid #0f2040",borderRadius:6,padding:"5px 8px",minWidth:88}}>
+                  <div style={{fontSize:10,color:"#4a7090"}}>{x.label}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:pctCol(x.changePct),fontFamily:"monospace"}}>{fmtPm(x.changePct)}</div>
+                  <div style={{fontSize:9,color:"#2a6090",fontFamily:"monospace"}}>寄与 {fmtPm(x.contribution)}</div>
+                </div>
+              );
+            })}
+            {market&&(!market.indicators||!market.indicators.length)&&
+              <div style={{fontSize:12,color:"#f87171"}}>地合いの指標が取得できませんでした{market.error?"（"+market.error+"）":""}</div>}
+          </div>
+          {market&&market.missing&&market.missing.length>0&&
+            <div style={{fontSize:10,color:"#4a7090",marginTop:8}}>取得できず除外: {market.missing.map(function(m){return m.label;}).join(" / ")}</div>}
+        </div>
+      </div>
+
+      {err&&<div style={{background:"#3a0a0a",border:"1px solid #f43f5e",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#fca5a5",marginBottom:10}}>{err}</div>}
+      {data&&!data.benchOk&&
+        <div style={{background:"#1c1400",border:"1px solid #fbbf24",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#fbbf24",marginBottom:10}}>
+          ベータの基準（{PM_BENCH_TICKER}）の日足が取得できないため、予想を算出できません
+        </div>}
+
+      {/* ── 中段：予想一覧 / 9:00以降は答え合わせ ─────────────────── */}
+      <div style={cardStyle}>
+        <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}>
+          <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>
+            {afterOpen?"✅ 予想 vs 実際の始値":"📋 お気に入りの寄り予想"}
+          </div>
+          <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>
+            {afterOpen
+              ? "9:00を過ぎたため答え合わせを表示中（実際の始値が取れた銘柄から順に記録されます）"
+              : "お気に入り登録した日本株のみ・予想ギャップ%の降順"}
+          </div>
+        </div>
+
+        {!favKey?(
+          <div style={{padding:"20px 14px",fontSize:13,color:"#4a7090",textAlign:"center"}}>お気に入りに日本株が登録されていません</div>
+        ):loading&&!data?(
+          <div style={{padding:"24px 14px",fontSize:13,color:"#4a90c0",textAlign:"center"}}>日足とベータを計算中...</div>
+        ):afterOpen?(
+          /* 答え合わせ表示 */
+          <div>
+            {(results&&results.rows?results.rows:[]).map(function(r){
+              var diff=(r.exp!=null&&r.act!=null)?r.act-r.exp:null;
+              var hit=(r.exp!=null&&r.act!=null&&Math.abs(r.exp)>=PM_DIR_DEADBAND)?((r.exp>0)===(r.act>0)):null;
+              return(
+                <div key={r.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"10px 14px",borderBottom:"1px solid #0a1828"}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:14,fontWeight:700,color:"#d8eeff"}}>
+                      {r.ticker.replace(".T","")} <span style={{fontSize:11,color:"#4a7090",fontWeight:400}}>{r.name}</span>
+                    </div>
+                    <div style={{fontSize:10,color:"#2a6090",marginTop:2,fontFamily:"monospace"}}>
+                      {r.prevClose?("前日終値 "+r.prevClose):""}{r.open?" → 始値 "+r.open:""}
+                    </div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:10,whiteSpace:"nowrap"}}>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:9,color:"#4a7090"}}>予想</div>
+                      <div style={{fontSize:12,fontWeight:700,color:pctCol(r.exp),fontFamily:"monospace"}}>{fmtPm(r.exp)}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:9,color:"#4a7090"}}>実際</div>
+                      <div style={{fontSize:14,fontWeight:700,color:pctCol(r.act),fontFamily:"monospace"}}>{r.act==null?"待機中":fmtPm(r.act)}</div>
+                    </div>
+                    <div style={{textAlign:"right",minWidth:52}}>
+                      <div style={{fontSize:9,color:"#4a7090"}}>誤差</div>
+                      <div style={{fontSize:11,color:"#7ab0d8",fontFamily:"monospace"}}>{diff==null?"—":(Math.abs(diff).toFixed(2)+"%")}</div>
+                    </div>
+                    <span style={hit==null?bStyle("#0a1828","#1e3050","#4a7090"):(hit?bStyle("#04241a","#22d3a0","#22d3a0"):bStyle("#3a0a0a","#f43f5e","#f87171"))}>
+                      {hit==null?"—":(hit?"方向◯":"方向✕")}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ):(
+          /* 予想一覧 */
+          <div>
+            {(data&&data.rows?data.rows:[]).map(function(r){
+              var pred=r.pred;
+              return(
+                <div key={r.ticker} style={{padding:"10px 14px",borderBottom:"1px solid #0a1828"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:700,color:"#d8eeff"}}>
+                        {r.ticker.replace(".T","")} <span style={{fontSize:11,color:"#4a7090",fontWeight:400}}>{r.name}</span>
+                      </div>
+                      {pred&&pred.prevClose&&
+                        <div style={{fontSize:10,color:"#2a6090",marginTop:2,fontFamily:"monospace"}}>前日終値 {pred.prevClose}（{pred.prevDate}）</div>}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:12,whiteSpace:"nowrap"}}>
+                      <div style={{textAlign:"right"}}>
+                        <div style={{fontSize:9,color:"#4a7090"}}>予想ギャップ</div>
+                        <div style={{fontSize:16,fontWeight:700,color:pctCol(pred?pred.expectedGapPct:null),fontFamily:"monospace"}}>
+                          {pred?fmtPm(pred.expectedGapPct):"—"}
+                        </div>
+                      </div>
+                      <div style={{textAlign:"right",minWidth:44}}>
+                        <div style={{fontSize:9,color:"#4a7090"}}>確信度</div>
+                        <div style={{fontSize:13,fontWeight:700,color:pred?(pred.confidence>=60?"#22d3a0":(pred.confidence>=40?"#fbbf24":"#4a7090")):"#4a7090",fontFamily:"monospace"}}>
+                          {pred?pred.confidence+"%":"—"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {pred?(
+                    <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6}}>
+                      {pred.reasons.map(function(rs,i){
+                        var st=rs.state;
+                        var sty=st>0?bStyle("#04241a","#22d3a0","#22d3a0"):(st<0?bStyle("#3a0a0a","#f43f5e","#f87171"):bStyle("#0a1828","#1e3050","#7ab0d8"));
+                        return <span key={i} style={sty}>{rs.label}: {rs.val}</span>;
+                      })}
+                    </div>
+                  ):(
+                    <div style={{fontSize:11,color:"#4a7090",marginTop:4}}>
+                      日足のサンプルが足りないか、地合いが取得できないため算出できません
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── 下段：過去の的中率サマリー ────────────────────────────── */}
+      <div style={cardStyle}>
+        <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}>
+          <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>📊 寄り予想の的中率</div>
+          <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>お気に入り銘柄の記録（pm_*）を集計。既存のスコア的中率とは別枠で貯まります</div>
+        </div>
+        {!stats||!stats.total?(
+          <div style={{padding:"20px 14px",fontSize:13,color:"#4a7090",textAlign:"center"}}>
+            まだ答え合わせ済みの記録がありません（寄り付き前に予想を作り、9:00以降にこのタブを開くと貯まります）
+          </div>
+        ):(
+          <div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,padding:"12px 14px"}}>
+              <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:6,padding:"6px 10px",minWidth:92}}>
+                <div style={{fontSize:10,color:"#4a7090"}}>方向一致率</div>
+                <div style={{fontSize:18,fontWeight:700,color:stats.dirRate>=50?"#22d3a0":"#f87171",fontFamily:"monospace"}}>
+                  {stats.dirRate==null?"—":stats.dirRate+"%"}
+                </div>
+                <div style={{fontSize:9,color:"#2a6090"}}>判定 {stats.dirTotal}件</div>
+              </div>
+              <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:6,padding:"6px 10px",minWidth:92}}>
+                <div style={{fontSize:10,color:"#4a7090"}}>平均誤差</div>
+                <div style={{fontSize:18,fontWeight:700,color:"#7ab0d8",fontFamily:"monospace"}}>{stats.avgErr==null?"—":stats.avgErr+"%"}</div>
+                <div style={{fontSize:9,color:"#2a6090"}}>予想と実際の差</div>
+              </div>
+              <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:6,padding:"6px 10px",minWidth:92}}>
+                <div style={{fontSize:10,color:"#4a7090"}}>件数</div>
+                <div style={{fontSize:18,fontWeight:700,color:"#d8eeff",fontFamily:"monospace"}}>{stats.total}</div>
+                <div style={{fontSize:9,color:"#2a6090"}}>平均確信度 {stats.avgConf==null?"—":stats.avgConf+"%"}</div>
+              </div>
+            </div>
+            <div style={{borderTop:"1px solid #0a1828"}}>
+              {stats.byTicker.map(function(b){
+                return(
+                  <div key={b.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 14px",borderBottom:"1px solid #0a1828"}}>
+                    <div style={{fontSize:12,color:"#d8eeff"}}>
+                      {b.ticker.replace(".T","")} <span style={{fontSize:10,color:"#4a7090"}}>{jpNameOf(b.ticker,"")}</span>
+                    </div>
+                    <div style={{display:"flex",gap:10,fontSize:11,fontFamily:"monospace",color:"#7ab0d8"}}>
+                      <span style={{color:b.dirRate==null?"#4a7090":(b.dirRate>=50?"#22d3a0":"#f87171")}}>方向 {b.dirRate==null?"—":b.dirRate+"%"}</span>
+                      <span>誤差 {b.avgErr}%</span>
+                      <span style={{color:"#2a6090"}}>{b.total}件</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // タブアイコン1個分（PCサイドバー・スマホ横並びの両方から使う共通部品）
 function TabIconBtn(p){
   var active=p.active;
@@ -6633,8 +7279,8 @@ export default function App(){
     if(!syncLoaded)return;
     recordFavForecasts(favs);
   },[syncLoaded,favs]);
-  var TABS=[["fav","⭐"],["trade","🎯"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"],["guide","📘"]];
-  var TAB_LABELS={"fav":"メイン","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期","guide":"使い方"};
+  var TABS=[["fav","⭐"],["trade","🎯"],["premarket","🌅"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"],["guide","📘"]];
+  var TAB_LABELS={"fav":"メイン","trade":"トレード","premarket":"寄り予想","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期","guide":"使い方"};
 
   var sectorPickerModal=sectorPickerOpen&&createPortal(
     <div onClick={function(e){if(e.target===e.currentTarget)setSectorPickerOpen(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -6803,6 +7449,7 @@ export default function App(){
         <div style={{marginLeft:isMobile?0:50,padding:isMobile?"6px 6px 100px":"10px 10px 120px"}}>
                     {activeTab==="fav"&&<FavPanel onBulkSector={function(){setBulkOpen(true);}} loading={loading} progress={progress} ts={ts} onScan={function(){setRescanMenuOpen(true);}} stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} personalTrades={personalTrades}/>}
           {activeTab==="trade"&&<TradePanel stocks={stocks} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler} onForceComplete={forceCompleteHandler} onRefreshTrades={refreshTradePrices} tradeRefreshing={tradeRefreshing}/>}
+          {activeTab==="premarket"&&<PremarketPanel favs={favs}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading} favs={favs} toggleFav={toggleFav}/>}
           {activeTab==="news"&&<NewsPanel/>}
