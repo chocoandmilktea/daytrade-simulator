@@ -550,6 +550,33 @@ async function fetchYahooSafe(ticker){
   }
 }
 
+// ── スキャン処理全体の自動リトライ ────────────────────────────────────────
+// 個々の取得（fetchYahoo・fetchRanking等）は内部で2回まで試すが、それでも
+// スキャン処理そのものが例外で落ちることがある（AI業種選定の失敗、通信断など）。
+// その場合に画面へ「❌エラー」を出して終わるのではなく、少し待って最初から
+// やり直す。混雑・一時的な通信不良が原因のことが多く、待ってから試すと成功する
+// ケースが大半のため、待ち時間は2秒→4秒と伸ばしていく。
+var SCAN_MAX_RETRY=2;          // 初回のあと最大2回リトライ（合計3回試行）
+var SCAN_RETRY_BASE_WAIT=2000; // 1回目のリトライ前に待つ時間(ms)。以降は倍々
+// fn(attempt) を成功するまで実行する。全て失敗した場合は最後のエラーを投げる。
+// onRetry(次の試行回, 最大リトライ回数, 発生したエラー, 待ち時間ms) で画面表示を更新する
+async function runScanWithRetry(fn,onRetry){
+  var lastErr=null;
+  for(var attempt=0;attempt<=SCAN_MAX_RETRY;attempt++){
+    try{return await fn(attempt);}
+    catch(err){
+      lastErr=err;
+      if(attempt>=SCAN_MAX_RETRY)break;
+      var wait=SCAN_RETRY_BASE_WAIT*Math.pow(2,attempt);
+      console.warn("[scan] "+(attempt+1)+"回目失敗、"+(wait/1000)+"秒後に再試行します: "+err.message);
+      if(onRetry)onRetry(attempt+1,SCAN_MAX_RETRY,err,wait);
+      await new Promise(function(r){setTimeout(r,wait);});
+    }
+  }
+  console.error("[scan] "+(SCAN_MAX_RETRY+1)+"回試行しても失敗: "+(lastErr&&lastErr.message));
+  throw lastErr;
+}
+
 function genSim(ticker,errMsg){
   var h=0;for(var i=0;i<ticker.length;i++)h=(Math.imul(31,h)+ticker.charCodeAt(i))|0;
   var s=Math.abs(h);function rng(){s=(s*1664525+1013904223)&0x7fffffff;return s/0x7fffffff;}
@@ -6285,57 +6312,63 @@ export default function App(){
 
   var scan=useCallback(async function(manualSectors,skipAI){
     setLoading(true);
-    CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止）
-    setProgress({done:0,total:0,msg:skipAI?"前回データなし・通常ランキング取得中...":(manualSectors&&manualSectors.length?"指定業種の銘柄取得中...":"AI業種選定中...")});
     try{
-      // 立花証券メンテナンス時間帯（3:00〜8:30）でも、サーバー側（Redis）に前回成功データが
-      // あればそれを使えるため、以前のように問い合わせ自体をスキップすることはしない
-      var uResult=await buildStockUniverse(manualSectors,skipAI);
-      var universe=uResult.stocks.slice();
-      var jpCount=universe.length;
-      var sectorLabel=uResult.sectors&&uResult.sectors.length?uResult.sectors.map(function(s){return s.name;}).join("/"):"通常ランキング";
-      // メンテナンス時間帯かつ0件（＝保存データも無かった）の場合だけ、その旨を伝える
-      var maintenance=isTachibanaMaintenance();
-      // メンテナンス時間外なのに0件＝2回試しても通信が失敗したということなので、はっきり警告を出す
-      var rankingFailed=(!maintenance&&jpCount===0);
-      var progressMsg=(maintenance&&jpCount===0)
-        ?"⏰ 立花証券システムメンテナンス中(3:00〜8:30)。保存データも無いためお気に入り銘柄のみ表示します"
-        :rankingFailed
-        ?"⚠️ ランキング取得に失敗しました（通信エラー）。お気に入り銘柄のみ表示しています。再スキャンをお試しください"
-        :("JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始...");
-      setProgress({done:0,total:0,msg:progressMsg});
-      await new Promise(function(r){setTimeout(r,rankingFailed?2500:800);}); // 警告時は気づけるよう長めに表示
-      // 次回「前回の業種を表示」で使えるよう、実際に読み込んだ業種を保存
-      if(uResult.sectors&&uResult.sectors.length){
-        try{localStorage.setItem("last_sectors",JSON.stringify(uResult.sectors.map(function(s){return s.name;})));}catch(e){}
-      }
-      var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
-      var uTickers=universe.map(function(s){return s.ticker;});
-      favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
-      // トレード登録中（待機中・進行中）の銘柄も、カード表示のため必ずuniverseに含める
-      loadTrades("personal").forEach(function(t){
-        if(t.status==="done")return;
-        if(!universe.some(function(u){return u.ticker===t.ticker;})){
-          var isJP=t.ticker.endsWith(".T"),code=t.ticker.replace(".T","");
-          universe.push({ticker:t.ticker,name:t.name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
+      // エラーで落ちても自動でやり直す（通信の一時的な不調が原因のことが多いため）
+      await runScanWithRetry(async function(attempt){
+        CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止。リトライ時も同様）
+        var retryPrefix=attempt>0?"🔄 再試行中("+attempt+"/"+SCAN_MAX_RETRY+") ":"";
+        setProgress({done:0,total:0,msg:retryPrefix+(skipAI?"前回データなし・通常ランキング取得中...":(manualSectors&&manualSectors.length?"指定業種の銘柄取得中...":"AI業種選定中..."))});
+        // 立花証券メンテナンス時間帯（3:00〜8:30）でも、サーバー側（Redis）に前回成功データが
+        // あればそれを使えるため、以前のように問い合わせ自体をスキップすることはしない
+        var uResult=await buildStockUniverse(manualSectors,skipAI);
+        var universe=uResult.stocks.slice();
+        var jpCount=universe.length;
+        var sectorLabel=uResult.sectors&&uResult.sectors.length?uResult.sectors.map(function(s){return s.name;}).join("/"):"通常ランキング";
+        // メンテナンス時間帯かつ0件（＝保存データも無かった）の場合だけ、その旨を伝える
+        var maintenance=isTachibanaMaintenance();
+        // メンテナンス時間外なのに0件＝2回試しても通信が失敗したということなので、はっきり警告を出す
+        var rankingFailed=(!maintenance&&jpCount===0);
+        var progressMsg=(maintenance&&jpCount===0)
+          ?"⏰ 立花証券システムメンテナンス中(3:00〜8:30)。保存データも無いためお気に入り銘柄のみ表示します"
+          :rankingFailed
+          ?"⚠️ ランキング取得に失敗しました（通信エラー）。お気に入り銘柄のみ表示しています。再スキャンをお試しください"
+          :("JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始...");
+        setProgress({done:0,total:0,msg:progressMsg});
+        await new Promise(function(r){setTimeout(r,rankingFailed?2500:800);}); // 警告時は気づけるよう長めに表示
+        // 次回「前回の業種を表示」で使えるよう、実際に読み込んだ業種を保存
+        if(uResult.sectors&&uResult.sectors.length){
+          try{localStorage.setItem("last_sectors",JSON.stringify(uResult.sectors.map(function(s){return s.name;})));}catch(e){}
         }
+        var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
+        var uTickers=universe.map(function(s){return s.ticker;});
+        favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
+        // トレード登録中（待機中・進行中）の銘柄も、カード表示のため必ずuniverseに含める
+        loadTrades("personal").forEach(function(t){
+          if(t.status==="done")return;
+          if(!universe.some(function(u){return u.ticker===t.ticker;})){
+            var isJP=t.ticker.endsWith(".T"),code=t.ticker.replace(".T","");
+            universe.push({ticker:t.ticker,name:t.name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
+          }
+        });
+        await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
+        setProgress({done:0,total:universe.length,msg:null});
+        // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
+        // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
+        var results=[];
+        await Promise.all(universe.map(async function(stock){
+          var pd=await fetchYahooSafe(stock.ticker);
+          try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+          setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+        }));
+        results.sort(function(x,y){return y.score-x.score;});
+        setStocks(results);
+        setTs(new Date().toLocaleTimeString("ja-JP"));
+        startDayNightFill(results); // 表示後に☀️日中型を裏で取得
+      },function(next,max,err,wait){
+        setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
       });
-      await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
-      setProgress({done:0,total:universe.length,msg:null});
-      // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
-      // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
-      var results=[];
-      await Promise.all(universe.map(async function(stock){
-        var pd=await fetchYahooSafe(stock.ticker);
-        try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
-        setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
-      }));
-      results.sort(function(x,y){return y.score-x.score;});
-      setStocks(results);
-      setTs(new Date().toLocaleTimeString("ja-JP"));
-      startDayNightFill(results); // 表示後に☀️日中型を裏で取得
     }catch(err){
-      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
+      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message+"（"+(SCAN_MAX_RETRY+1)+"回試行しました）"});
     }finally{
       setLoading(false);
     }
@@ -6343,33 +6376,39 @@ export default function App(){
   // ⭐お気に入り＋トレード登録中の銘柄だけを分析（AI業種選定・ランキング取得なしで高速）
   var scanFavsOnly=useCallback(async function(){
     setLoading(true);
-    CACHE={};
-    setProgress({done:0,total:0,msg:"⭐お気に入り銘柄を取得中..."});
     try{
-      var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
-      var universe=[];
-      function push(ticker,name){
-        if(!ticker||universe.some(function(u){return u.ticker===ticker;}))return;
-        var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");
-        universe.push({ticker:ticker,name:name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
-      }
-      favList.forEach(function(t){push(t);});
-      loadTrades("personal").forEach(function(t){if(t.status!=="done")push(t.ticker,t.name);});
-      if(universe.length===0){setProgress({done:0,total:0,msg:"⚠️ お気に入り銘柄が登録されていません"});return;}
-      await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
-      setProgress({done:0,total:universe.length,msg:null});
-      var results=[];
-      await Promise.all(universe.map(async function(stock){
-        var pd=await fetchYahooSafe(stock.ticker);
-        try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
-        setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
-      }));
-      results.sort(function(x,y){return y.score-x.score;});
-      setStocks(results);
-      setTs(new Date().toLocaleTimeString("ja-JP"));
-      startDayNightFill(results); // 表示後に☀️日中型を裏で取得
+      await runScanWithRetry(async function(attempt){
+        CACHE={};
+        var retryPrefix=attempt>0?"🔄 再試行中("+attempt+"/"+SCAN_MAX_RETRY+") ":"";
+        setProgress({done:0,total:0,msg:retryPrefix+"⭐お気に入り銘柄を取得中..."});
+        var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
+        var universe=[];
+        function push(ticker,name){
+          if(!ticker||universe.some(function(u){return u.ticker===ticker;}))return;
+          var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");
+          universe.push({ticker:ticker,name:name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
+        }
+        favList.forEach(function(t){push(t);});
+        loadTrades("personal").forEach(function(t){if(t.status!=="done")push(t.ticker,t.name);});
+        // 登録が無いのは「エラー」ではないのでリトライせずそのまま終了する
+        if(universe.length===0){setProgress({done:0,total:0,msg:"⚠️ お気に入り銘柄が登録されていません"});return;}
+        await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
+        setProgress({done:0,total:universe.length,msg:null});
+        var results=[];
+        await Promise.all(universe.map(async function(stock){
+          var pd=await fetchYahooSafe(stock.ticker);
+          try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+          setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+        }));
+        results.sort(function(x,y){return y.score-x.score;});
+        setStocks(results);
+        setTs(new Date().toLocaleTimeString("ja-JP"));
+        startDayNightFill(results); // 表示後に☀️日中型を裏で取得
+      },function(next,max,err,wait){
+        setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
+      });
     }catch(err){
-      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
+      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message+"（"+(SCAN_MAX_RETRY+1)+"回試行しました）"});
     }finally{setLoading(false);}
   },[vix,startDayNightFill]);
   function startFavsOnly(){setStartMode("favs");scanFavsOnly();}
@@ -6390,23 +6429,27 @@ export default function App(){
   // 「今の銘柄でリロード」：業種の再選定は行わず、現在表示中の銘柄だけ最新データで再分析
   var reloadCurrentUniverse=useCallback(async function(){
     setLoading(true);
-    CACHE={};
     var universe=stocks.map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol};});
-    setProgress({done:0,total:universe.length,msg:null});
     try{
-      // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
-      // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
-      var results=[];
-      await Promise.all(universe.map(async function(stock){
-        var pd=await fetchYahooSafe(stock.ticker);
-        try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
-        setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
-      }));
-      results.sort(function(x,y){return y.score-x.score;});
-      setStocks(results);
-      setTs(new Date().toLocaleTimeString("ja-JP"));
+      await runScanWithRetry(async function(attempt){
+        CACHE={};
+        setProgress({done:0,total:universe.length,msg:attempt>0?"🔄 再試行中("+attempt+"/"+SCAN_MAX_RETRY+")...":null});
+        // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
+        // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
+        var results=[];
+        await Promise.all(universe.map(async function(stock){
+          var pd=await fetchYahooSafe(stock.ticker);
+          try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+          setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+        }));
+        results.sort(function(x,y){return y.score-x.score;});
+        setStocks(results);
+        setTs(new Date().toLocaleTimeString("ja-JP"));
+      },function(next,max,err,wait){
+        setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
+      });
     }catch(err){
-      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
+      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message+"（"+(SCAN_MAX_RETRY+1)+"回試行しました）"});
     }finally{
       setLoading(false);
     }
