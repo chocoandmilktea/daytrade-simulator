@@ -550,6 +550,33 @@ async function fetchYahooSafe(ticker){
   }
 }
 
+// ── スキャン処理全体の自動リトライ ────────────────────────────────────────
+// 個々の取得（fetchYahoo・fetchRanking等）は内部で2回まで試すが、それでも
+// スキャン処理そのものが例外で落ちることがある（AI業種選定の失敗、通信断など）。
+// その場合に画面へ「❌エラー」を出して終わるのではなく、少し待って最初から
+// やり直す。混雑・一時的な通信不良が原因のことが多く、待ってから試すと成功する
+// ケースが大半のため、待ち時間は2秒→4秒と伸ばしていく。
+var SCAN_MAX_RETRY=2;          // 初回のあと最大2回リトライ（合計3回試行）
+var SCAN_RETRY_BASE_WAIT=2000; // 1回目のリトライ前に待つ時間(ms)。以降は倍々
+// fn(attempt) を成功するまで実行する。全て失敗した場合は最後のエラーを投げる。
+// onRetry(次の試行回, 最大リトライ回数, 発生したエラー, 待ち時間ms) で画面表示を更新する
+async function runScanWithRetry(fn,onRetry){
+  var lastErr=null;
+  for(var attempt=0;attempt<=SCAN_MAX_RETRY;attempt++){
+    try{return await fn(attempt);}
+    catch(err){
+      lastErr=err;
+      if(attempt>=SCAN_MAX_RETRY)break;
+      var wait=SCAN_RETRY_BASE_WAIT*Math.pow(2,attempt);
+      console.warn("[scan] "+(attempt+1)+"回目失敗、"+(wait/1000)+"秒後に再試行します: "+err.message);
+      if(onRetry)onRetry(attempt+1,SCAN_MAX_RETRY,err,wait);
+      await new Promise(function(r){setTimeout(r,wait);});
+    }
+  }
+  console.error("[scan] "+(SCAN_MAX_RETRY+1)+"回試行しても失敗: "+(lastErr&&lastErr.message));
+  throw lastErr;
+}
+
 function genSim(ticker,errMsg){
   var h=0;for(var i=0;i<ticker.length;i++)h=(Math.imul(31,h)+ticker.charCodeAt(i))|0;
   var s=Math.abs(h);function rng(){s=(s*1664525+1013904223)&0x7fffffff;return s/0x7fffffff;}
@@ -561,6 +588,18 @@ function genSim(ticker,errMsg){
 // ── トレードシミュレーター（仮想売買の記録・検証）───────────────────────────
 function fmtMoney(v,isJP){return isJP?"¥"+Math.round(v).toLocaleString():"$"+v.toFixed(2);}
 function fmtPnl(v,isJP){var sign=v>=0?"+":"";return isJP?sign+"¥"+Math.round(v).toLocaleString():sign+"$"+v.toFixed(2);}
+// ── トレード手法（銘柄カードのバッジと同じ区分）─────────────────────────────
+// analyzeStockのvolType（値動きの荒さ）がそのまま手法バッジになる。トレード登録時に
+// styleAtAddとして記録し、📊的中率パネルの「手法別 成績」で集計する
+var TRADE_STYLES=[
+  {key:"short",label:"⚡スキャル",color:"#f43f5e"},
+  {key:"mid",label:"📈デイトレ",color:"#fbbf24"},
+  {key:"stable",label:"🌊スイング",color:"#22d3a0"}
+];
+function tradeStyleInfo(key){
+  for(var i=0;i<TRADE_STYLES.length;i++){if(TRADE_STYLES[i].key===key)return TRADE_STYLES[i];}
+  return null;
+}
 
 // 保有上限日数：active(進行中)のままこの日数を超えたら自動で強制決済する（利確・損切り未到達の場合）
 // activeトレードの開始時刻(startAtISO)から見て、その銘柄の市場(JP/US)の
@@ -701,6 +740,7 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection)
     signalAtAdd:s.timing||null, // 登録時点のアプリ判定（BUY/WATCH/SKIP）＝後から検証するための記録
     weightAdjustAtAdd:weightAdjustAtAdd, // 登録時点の実績反映調整の点数（検証パネル用）
     scoreAtAdd:s.score!=null?s.score:null, // 登録時点のスコア
+    styleAtAdd:s.tradeType||null, // 登録時点の手法バッジ（short=スキャル/mid=デイトレ/stable=スイング）
     sigKeysAtAdd:sigKeysAtAdd, // 登録時点で点灯していたシグナル一覧
     forecastAtAdd:forecastAtAdd, // 登録時点の🔮翌営業日予想（期待変化率・上昇確率）
     lastPrice:curPrice,
@@ -1697,6 +1737,30 @@ function calcTradeSignalStats(){
     return{signal:k,winRate:Math.round(s.w/s.t*100),avgPct:s.sumPct/s.t,total:s.t};
   }).sort(function(a,b){return b.winRate-a.winRate;});
 }
+// ── 手法別（⚡スキャル/📈デイトレ/🌊スイング）成績 ────────────────────────
+// 手法は登録時に記録したstyleAtAddを優先。まだ記録の無い過去のトレードは、
+// その銘柄の現在のバッジ（tradeType）で補完する
+function tradeStyleOf(t,stocks){
+  if(t.styleAtAdd) return t.styleAtAdd;
+  var st=(stocks||[]).find(function(x){return x.ticker===t.ticker;});
+  return(st&&st.tradeType)||null;
+}
+// 完了トレードを手法別に集計。R系（平均R・PF）は既存のcalcRStatsをバケットごとに呼ぶ
+function calcTradeStyleStats(stocks){
+  var done=loadTrades("personal").filter(function(t){return t.status==="done";});
+  return TRADE_STYLES.map(function(st){
+    var rows=done.filter(function(t){return tradeStyleOf(t,stocks)===st.key;});
+    var pctRows=rows.filter(function(t){return t.pnlPercent!=null;});
+    var wins=rows.filter(function(t){return(t.pnl||0)>0;});
+    return{
+      key:st.key,label:st.label,color:st.color,total:rows.length,
+      winRate:rows.length?Math.round(wins.length/rows.length*100):null,
+      avgPct:pctRows.length?pctRows.reduce(function(a,t){return a+t.pnlPercent;},0)/pctRows.length:null,
+      totalPnl:rows.reduce(function(a,t){return a+(t.pnl||0);},0),
+      r:calcRStats(rows)
+    };
+  });
+}
 // ── 勝敗しきい値（WIN_THRESHOLD_PCT）の検証：スコア60点以上の記録を対象に、
 // しきい値を変えた場合の的中率と件数を並べて比較する（0.3%が適切かの判断材料）──
 function calcThresholdCheck(){
@@ -2536,10 +2600,9 @@ function analyzeStock(stock,pd,vixVal){
 
   // トレードタイプ表示ラベル：BB収束lookback選択で使ったvolType（yearRange/avgBarChange/absChangeは
   // 冒頭で算出済み・足種変更の影響を受けないabsChange/yearRangeとavgBarChangeを流用するため再計算不要
-  var tradeType=volType,tradeLabel,tradeColor;
-  if(tradeType==="short"){tradeLabel="⚡スキャル";tradeColor="#f43f5e";}
-  else if(tradeType==="mid"){tradeLabel="📈デイトレ";tradeColor="#fbbf24";}
-  else{tradeLabel="🌊スイング";tradeColor="#22d3a0";}
+  // ラベル・色はTRADE_STYLES（手法別集計と共通の定義）から引く
+  var tradeType=volType,tsInfo=tradeStyleInfo(tradeType)||TRADE_STYLES[2];
+  var tradeLabel=tsInfo.label,tradeColor=tsInfo.color;
 
   var winRateRaw=Math.min(88,Math.max(15,sc*0.72));
   // 実績winRateは後でactualWinRateが揃ってから上書き（表示用は暫定値）
@@ -4500,6 +4563,16 @@ function StockDetailPanel(p){
           return(v>=0?"+":"")+"$"+Math.abs(v).toFixed(2)+(jpy?"  (¥"+jpy.toLocaleString()+")":"");
         }
         var inpSim={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px 8px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+        // 目標％・損切り％は0.1刻みで指定できる（+1.5%のような細かい設定に対応）。
+        // 小数計算の誤差桁（3.0000000000000004等）が表示に出ないよう、確定時に必ず0.1単位へ丸める
+        function roundPct(v){return Math.round(v*10)/10;}
+        function fmtPct(v){return String(roundPct(v));}
+        // 入力欄の確定処理（blur・Enterで共通）。範囲外・数値でない場合は直前の確定値に戻す
+        function commitPct(text,min,max,cur,setNum,setText){
+          var v=roundPct(parseFloat(text));
+          if(!isNaN(v)&&v>=min&&v<=max){setNum(v);setText(fmtPct(v));}
+          else{setText(fmtPct(cur));}
+        }
         var scenarios=[{label:"損切りライン",pct:simStop,color:"#f43f5e"},{label:"-5%",pct:-5,color:"#fb923c"},{label:"+5%",pct:5,color:"#22d3a0"},{label:"+10%",pct:10,color:"#22d3a0"},{label:"+20%",pct:20,color:"#22d3a0"},{label:"目標価格",pct:simTarget,color:"#fbbf24"}];
         return(
           <div onClick={function(e){if(e.target===e.currentTarget)setShowSim(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
@@ -4509,7 +4582,7 @@ function StockDetailPanel(p){
                 <button onClick={function(){setShowSim(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-                <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>買値</div><input style={inpSim} type="number" value={simBuy} onChange={function(e){setSimBuy(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseFloat(simBuy);if(!isNaN(v)&&v>0){setSimBuy(String(v));}else{setSimBuy("");}e.target.blur();}}}/></div>
+                <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>買値</div><input style={inpSim} type="number" step={isJP?1:0.01} value={simBuy} onChange={function(e){setSimBuy(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseFloat(simBuy);if(!isNaN(v)&&v>0){setSimBuy(String(v));}else{setSimBuy("");}e.target.blur();}}}/></div>
                 <div><div style={{fontSize:13,color:"#2a6090",marginBottom:3}}>株数</div><input style={inpSim} type="number" value={simShares} onChange={function(e){setSimShares(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter"){e.preventDefault();var v=parseInt(simShares);if(!isNaN(v)&&v>0){setSimShares(String(v));}else{setSimShares("");}e.target.blur();}}}/></div>
               </div>
               {bp>0&&sh>0&&(
@@ -4519,22 +4592,22 @@ function StockDetailPanel(p){
                     <div style={{fontSize:13,color:"#fbbf24",marginBottom:3}}>{fmtP(bp*(1+simTarget/100))}</div>
                     <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
                       <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>目標</span>
-                      <input type="number" value={simTargetInput} onChange={function(e){setSimTargetInput(e.target.value);}} onBlur={function(){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simTargetInput);if(!isNaN(v)&&v>=1&&v<=200){setSimTarget(v);setSimTargetInput(String(v));}else{setSimTargetInput(String(simTarget));}e.target.blur();}}} style={{width:60,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:16,fontFamily:"monospace",textAlign:"center"}}/>
+                      <input type="number" step={0.1} value={simTargetInput} onChange={function(e){setSimTargetInput(e.target.value);}} onBlur={function(){commitPct(simTargetInput,1,200,simTarget,setSimTarget,setSimTargetInput);}} onKeyDown={function(e){if(e.key==="Enter"){commitPct(simTargetInput,1,200,simTarget,setSimTarget,setSimTargetInput);e.target.blur();}}} style={{width:60,background:"#040c18",border:"1px solid #fbbf24",borderRadius:4,color:"#fbbf24",padding:"2px 6px",fontSize:16,fontFamily:"monospace",textAlign:"center"}}/>
                       <span style={{fontSize:13,color:"#fbbf24"}}>%</span>
-                      <input type="range" min={1} max={200} value={simTarget} onChange={function(e){var v=parseInt(e.target.value);setSimTarget(v);setSimTargetInput(String(v));}} style={{flex:1,accentColor:"#fbbf24"}}/>
+                      <input type="range" min={1} max={200} step={0.1} value={simTarget} onChange={function(e){var v=roundPct(parseFloat(e.target.value));setSimTarget(v);setSimTargetInput(fmtPct(v));}} style={{flex:1,accentColor:"#fbbf24"}}/>
                     </div>
                   </div>
                   <div style={{marginBottom:8}}>
                     <div style={{fontSize:13,color:"#f43f5e",marginBottom:3}}>{fmtP(bp*(1+simStop/100))}</div>
                     <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
                       <span style={{fontSize:13,color:"#4a7090",flexShrink:0}}>損切り</span>
-                      <input type="number" value={simStopInput} onChange={function(e){setSimStopInput(e.target.value);}} onBlur={function(){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}}} onKeyDown={function(e){if(e.key==="Enter"){var v=parseInt(simStopInput);if(!isNaN(v)&&v>=-50&&v<=-1){setSimStop(v);setSimStopInput(String(v));}else{setSimStopInput(String(simStop));}e.target.blur();}}} style={{width:60,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:16,fontFamily:"monospace",textAlign:"center"}}/>
+                      <input type="number" step={0.1} value={simStopInput} onChange={function(e){setSimStopInput(e.target.value);}} onBlur={function(){commitPct(simStopInput,-50,-0.1,simStop,setSimStop,setSimStopInput);}} onKeyDown={function(e){if(e.key==="Enter"){commitPct(simStopInput,-50,-0.1,simStop,setSimStop,setSimStopInput);e.target.blur();}}} style={{width:60,background:"#040c18",border:"1px solid #f43f5e",borderRadius:4,color:"#f43f5e",padding:"2px 6px",fontSize:16,fontFamily:"monospace",textAlign:"center"}}/>
                       <span style={{fontSize:13,color:"#f43f5e"}}>%</span>
-                      <input type="range" min={-50} max={-1} value={simStop} onChange={function(e){var v=parseInt(e.target.value);setSimStop(v);setSimStopInput(String(v));}} style={{flex:1,accentColor:"#f43f5e"}}/>
+                      <input type="range" min={-50} max={-0.1} step={0.1} value={simStop} onChange={function(e){var v=roundPct(parseFloat(e.target.value));setSimStop(v);setSimStopInput(fmtPct(v));}} style={{flex:1,accentColor:"#f43f5e"}}/>
                     </div>
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){var pnl=(bp*(1+sc.pct/100)-bp)*sh;return(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"5px 8px"}}><div><span style={{fontSize:14,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:13,color:"#4a7090",marginLeft:4}}>{sc.pct>=0?"+":""}{sc.pct}%</span></div><span style={{fontSize:15,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span></div>);})}
+                    {scenarios.sort(function(a,b){return a.pct-b.pct;}).map(function(sc,i){var pnl=(bp*(1+sc.pct/100)-bp)*sh;return(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#071428",borderRadius:6,padding:"5px 8px"}}><div><span style={{fontSize:14,color:sc.color,fontWeight:700}}>{sc.label}</span><span style={{fontSize:13,color:"#4a7090",marginLeft:4}}>{sc.pct>=0?"+":""}{fmtPct(sc.pct)}%</span></div><span style={{fontSize:15,fontWeight:800,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnL(pnl)}</span></div>);})}
                   </div>
                 </div>
               )}
@@ -4675,9 +4748,48 @@ function FavPanel(p){
   var addGroupS=useState(0);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
   var showAccS=useState(false);var showAcc=showAccS[0],setShowAcc=showAccS[1];
   var isAll=groupFilter===-1;
+  // 銘柄名マスタ（コード→会社名）。会社名でも検索できるようにするため保持する。
+  // 端末に24時間キャッシュされているので、通常は通信せずそのまま使える
+  var nameMapS=useState(function(){return loadCachedNameMap();});var nameMap=nameMapS[0],setNameMap=nameMapS[1];
+  var hitsOpenS=useState(false);var hitsOpen=hitsOpenS[0],setHitsOpen=hitsOpenS[1];
+  useEffect(function(){
+    var alive=true;
+    fetchJPNameMap().then(function(m){if(alive&&m)setNameMap(m);}).catch(function(){});
+    return function(){alive=false;};
+  },[]);
 
-  async function addByTicker(){
-    var raw=searchTicker.trim().toUpperCase();if(!raw)return;
+  // 入力に一致する銘柄の候補（コードの前方一致・会社名の部分一致）。
+  // ①スキャンで読込済みの銘柄（スコアや手法バッジも一緒に出せる）を優先し、
+  // ②続けてキャッシュ済みの銘柄名マスタ（未読込の銘柄もここから探せる）を並べる
+  var searchHits=(function(){
+    var q=searchTicker.trim();
+    if(!q) return[];
+    var qU=q.toUpperCase(),LIMIT=20;
+    var byCode=[],byName=[],seen={};
+    stocks.forEach(function(s){
+      var code=s.ticker.replace(".T","");
+      var nm=String(s.name||"");
+      var hit={ticker:s.ticker,code:code,name:nm,stock:s};
+      if(code.toUpperCase().indexOf(qU)===0){seen[s.ticker]=true;byCode.push(hit);}
+      else if(nm.toUpperCase().indexOf(qU)>=0){seen[s.ticker]=true;byName.push(hit);}
+    });
+    if(nameMap){
+      Object.keys(nameMap).forEach(function(code){
+        if(byCode.length+byName.length>=LIMIT*3) return; // 明らかに多すぎる場合は打ち切り
+        var tk=code+".T";
+        if(seen[tk]) return;
+        var nm=String(nameMap[code]||"");
+        var hit={ticker:tk,code:code,name:nm,stock:null};
+        if(code.toUpperCase().indexOf(qU)===0){seen[tk]=true;byCode.push(hit);}
+        else if(nm.toUpperCase().indexOf(qU)>=0){seen[tk]=true;byName.push(hit);}
+      });
+    }
+    return byCode.concat(byName).slice(0,LIMIT);
+  })();
+
+  // tickerを指定するとその銘柄を、省略すると入力欄の内容を追加する
+  async function addByTicker(tickerArg){
+    var raw=String(tickerArg!=null?tickerArg:searchTicker).trim().toUpperCase();if(!raw)return;
     // 日本株判定：数字4桁(7203)に加え、数字3桁＋英数字1桁の新形式コード(285A等)にも対応
     var ticker=(/^\d{3}[0-9A-Z]$/.test(raw)?raw+".T":raw);
     if(favs.indexOf(ticker)>=0){setSearchStatus("already");return;}
@@ -4777,12 +4889,12 @@ function FavPanel(p){
           </span>
           {ts&&<span style={{fontSize:10,color:"#2a6090",flexShrink:0,whiteSpace:"nowrap"}}>{ts}</span>}
           {divider}
-          <input style={{background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"4px 6px",fontSize:16,fontFamily:"monospace",flexShrink:0,width:88}} value={searchTicker} placeholder="7203" onChange={function(e){setSearchTicker(e.target.value);}} onKeyDown={function(e){if(e.key==="Enter")addByTicker();}}/>
+          <input style={{background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"4px 6px",fontSize:16,fontFamily:"monospace",flexShrink:0,width:120}} value={searchTicker} placeholder="7203 / トヨタ" onChange={function(e){setSearchTicker(e.target.value);setHitsOpen(true);}} onFocus={function(){setHitsOpen(true);}} onKeyDown={function(e){if(e.key==="Enter"){setHitsOpen(false);addByTicker();}else if(e.key==="Escape"){setHitsOpen(false);}}}/>
           <select value={addGroup} onChange={function(e){setAddGroup(Number(e.target.value));}} title="追加先のグループ" style={{background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:"#fbbf24",padding:"0 2px",fontSize:12,fontFamily:"monospace",flexShrink:0,width:74}}>
             <option value={0}>全体</option>
             {[1,2,3,4].map(function(n){return <option key={n} value={n}>{groupNames[n]}</option>;})}
           </select>
-          <button onClick={addByTicker} style={{flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>追加</button>
+          <button onClick={function(){setHitsOpen(false);addByTicker();}} style={{flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>追加</button>
           {divider}
           {pcGap}
           {gBtn(-1,"📋全銘柄")}
@@ -4798,7 +4910,28 @@ function FavPanel(p){
           {p.onScan&&<button onClick={p.onScan} style={{flexShrink:0,marginLeft:isMobile?0:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>}
         </div>
         {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:4}}>{statusMsg}</div>}
-        {showAcc&&createPortal(<SignalAccuracyModal onClose={function(){setShowAcc(false);}}/>,document.body)}
+        {/* 検索候補：クリックでその銘柄を追加。ツールバーは横スクロールするため、内側ではなくこの位置に出す */}
+        {hitsOpen&&searchHits.length>0&&(
+          <div style={{marginTop:4,background:"#071428",border:"1px solid #1e4070",borderRadius:8,maxHeight:260,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+            {searchHits.map(function(h){
+              var already=favs.indexOf(h.ticker)>=0;
+              return(
+                <div key={h.ticker} onClick={function(){setHitsOpen(false);addByTicker(h.ticker);}} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderBottom:"1px solid #0a1830",cursor:"pointer"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:"#7dd3fc",fontFamily:"monospace",width:54,flexShrink:0}}>{h.code}</span>
+                  <span style={{flex:1,minWidth:0,fontSize:12,color:"#b8cce0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.name}</span>
+                  {h.stock&&h.stock.tradeLabel&&<span style={{fontSize:10,fontWeight:700,color:h.stock.tradeColor,flexShrink:0}}>{h.stock.tradeLabel}</span>}
+                  {h.stock&&h.stock.score!=null&&<span style={{fontSize:11,fontWeight:700,color:scoreColor(h.stock.score),flexShrink:0}}>{h.stock.score}</span>}
+                  <span style={{fontSize:11,color:already?"#fbbf24":"#2a4060",flexShrink:0}}>{already?"⭐":"＋"}</span>
+                </div>
+              );
+            })}
+            <div style={{display:"flex",alignItems:"center",gap:8,fontSize:10,color:"#2a6090",padding:"5px 10px"}}>
+              <span style={{flex:1,minWidth:0}}>コード・会社名で検索できます（読込済みの銘柄を上に表示）</span>
+              <span onClick={function(){setHitsOpen(false);}} style={{color:"#4a7090",cursor:"pointer",flexShrink:0}}>✕ 閉じる</span>
+            </div>
+          </div>
+        )}
+        {showAcc&&createPortal(<SignalAccuracyModal onClose={function(){setShowAcc(false);}} stocks={stocks}/>,document.body)}
       </div>
       <div style={{overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch",paddingTop:8,paddingLeft:10,paddingRight:10,paddingBottom:120}}>
         <MarketBar/>
@@ -4901,7 +5034,7 @@ function TradePanel(p){
         {showAccuracy&&(
           <div style={{flex:1,width:isMobile?"100%":undefined,position:isMobile?"static":"sticky",top:0,background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:16,maxHeight:isMobile?undefined:"calc(100vh - 200px)",overflowY:isMobile?"visible":"auto",WebkitOverflowScrolling:"touch"}}>
             <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff",marginBottom:10}}>📊 シグナル的中率（全トレード銘柄）</div>
-            <SignalAccuracyContent tickers={tradeTickers} label="全トレード"/>
+            <SignalAccuracyContent tickers={tradeTickers} label="全トレード" stocks={stocks}/>
           </div>
         )}
       </div>
@@ -4959,8 +5092,10 @@ function TradeDetailModal(p){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
     if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return;
     if(se<=b){alert("売り価格（利確）は買い価格より高い値を入力してください");return;}
-    var sp=parseFloat(stopVal);
-    if(isNaN(sp)||sp<=0||sp>=b){alert("損切り価格は必須です。買い価格より低い値を入力してください（R集計に必要）");return;}
+    // 損切りは任意。空欄ならnull（＝損切りなし）として保存する。
+    // 入力がある場合だけ「買い価格より低い正の数」かを確認する
+    var sp=String(stopVal).trim()===""?null:parseFloat(stopVal);
+    if(sp!=null&&(isNaN(sp)||sp<=0||sp>=b)){alert("損切り価格は買い価格より低い値を入力してください（空欄のままにすると損切りなしで保存します）");return;}
     var updates={buyPrice:b,sellPrice:se,shares:sh,stopPrice:sp};
     if(t.status==="waiting")updates.buyDirection=buyDir; // 待機中のみ手動指定を反映
     p.onEditTrade(kind,t.id,updates);
@@ -4992,7 +5127,7 @@ function TradeDetailModal(p){
               <div><div style={{fontSize:10,color:"#f43f5e",marginBottom:2}}>売り（利確）</div><input type="number" value={sellVal} onChange={function(e){setSellVal(e.target.value);}} style={editInp}/></div>
               <div><div style={{fontSize:10,color:"#4a7090",marginBottom:2}}>株数</div><input type="number" value={sharesVal} onChange={function(e){setSharesVal(e.target.value);}} style={editInp}/></div>
             </div>
-            <div><div style={{fontSize:10,color:"#fbbf24",marginBottom:2}}>損切り（必須）</div><input type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} style={editInp} placeholder="買い価格より低い値"/></div>
+            <div><div style={{fontSize:10,color:"#fbbf24",marginBottom:2}}>損切り（任意）</div><input type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} style={editInp} placeholder="空欄可／買い価格より低い値"/></div>
             {t.status==="waiting"&&(
               <div>
                 <div style={{fontSize:10,color:"#4a7090",marginBottom:2}}>買い方向</div>
@@ -5538,6 +5673,9 @@ function SignalAccuracyContent(p){
       .slice(0,12);
   })();
   var tradeSig=calcTradeSignalStats();
+  // 手法別成績（stocksが渡されていれば、手法未記録の過去トレードも現在のバッジで補完できる）
+  var styleStats=calcTradeStyleStats(p&&p.stocks);
+  var styleTotal=styleStats.reduce(function(a,r){return a+r.total;},0);
   var thrCheck=calcThresholdCheck();
   // 地合い別：両方の地合いで5件以上あるシグナルを、差が大きい順に最大12件
   var regimeRows=(function(){
@@ -5794,6 +5932,37 @@ function SignalAccuracyContent(p){
         )}
       </div>
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🎯 手法別 成績（銘柄バッジで分類）</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>完了したトレードを、銘柄カードの⚡スキャル／📈デイトレ／🌊スイングのバッジごとに集計。どの値動きの銘柄で勝てているかが見えてきます</div>
+        {styleTotal===0?(
+          <div style={{fontSize:12,color:"#4a7090",textAlign:"center",padding:"10px 0"}}>📥 データ蓄積中。トレードが完了すると手法ごとの成績が表示されます</div>
+        ):(
+          <div>
+            <div style={{display:"flex",fontSize:10,color:"#2a6090",padding:"4px 6px",borderBottom:"1px solid #0f2040"}}>
+              <div style={{flex:1,minWidth:0}}>手法</div>
+              <div style={{width:30,flexShrink:0,textAlign:"right"}}>件数</div>
+              <div style={{width:40,flexShrink:0,textAlign:"right"}}>勝率</div>
+              <div style={{width:48,flexShrink:0,textAlign:"right"}}>平均</div>
+              <div style={{width:62,flexShrink:0,textAlign:"right"}}>合計損益</div>
+              <div style={{width:46,flexShrink:0,textAlign:"right"}}>平均R</div>
+            </div>
+            {styleStats.map(function(r,i){
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",fontSize:12,padding:"6px 6px",borderBottom:"1px solid #0a1830"}}>
+                  <div style={{flex:1,minWidth:0,color:r.color,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.label}</div>
+                  <div style={{width:30,flexShrink:0,textAlign:"right",color:"#4a7090"}}>{r.total}</div>
+                  <div style={{width:40,flexShrink:0,textAlign:"right",color:cellColor(r.winRate),fontWeight:700}}>{r.winRate!=null?r.winRate+"%":"-"}</div>
+                  <div style={{width:48,flexShrink:0,textAlign:"right",color:r.avgPct==null?"#4a7090":r.avgPct>=0?"#22d3a0":"#f43f5e",fontWeight:700}}>{r.avgPct!=null?(r.avgPct>=0?"+":"")+r.avgPct.toFixed(1)+"%":"-"}</div>
+                  <div style={{width:62,flexShrink:0,textAlign:"right",color:r.total===0?"#4a7090":r.totalPnl>=0?"#22d3a0":"#f43f5e",fontWeight:700}}>{r.total?fmtPnl(r.totalPnl,true):"-"}</div>
+                  <div style={{width:46,flexShrink:0,textAlign:"right",color:r.r.n?(r.r.avgR>=0?"#22d3a0":"#f43f5e"):"#4a7090"}}>{r.r.n?(r.r.avgR>=0?"+":"")+r.r.avgR.toFixed(2)+"R":"-"}</div>
+                </div>
+              );
+            })}
+            <div style={{fontSize:10,color:"#2a6090",marginTop:6}}>※手法は登録時のバッジを記録します。それ以前のトレードは銘柄の現在のバッジで分類しています。平均Rは損切りを設定したトレードのみが対象です</div>
+          </div>
+        )}
+      </div>
+      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>💰 実トレード×シグナル（自分の成績）</div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>完了したトレードの損益と、登録時に点灯していたシグナルの関係。「自分が実際に勝てているシグナル」が見えてきます</div>
         {tradeSig.filter(function(r){return r.total>=3;}).length===0?(
@@ -5861,7 +6030,7 @@ function SignalAccuracyModal(p){
           <div style={{fontSize:16,fontWeight:800,color:"#e0f0ff"}}>📊 シグナル的中率</div>
           <button onClick={onClose} style={{background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",padding:"4px 12px",fontSize:14,cursor:"pointer",fontFamily:"monospace"}}>✕</button>
         </div>
-        <SignalAccuracyContent tickers={p.tickers} label={p.label}/>
+        <SignalAccuracyContent tickers={p.tickers} label={p.label} stocks={p.stocks}/>
       </div>
     </div>
   );
@@ -5877,7 +6046,7 @@ function GuidePanel(){
         "「📋全銘柄」＝今回スキャンした全銘柄を表示。「⭐全体」＝お気に入り登録銘柄をすべて表示",
         "★/☆ボタンでお気に入りの登録・解除",
         "グループ1〜4に分類可能（グループ名は選択中に表示される✎アイコンで編集）",
-        "検索欄にティッカーコード（例：AAPL、7203）を入力すると新規銘柄を追加登録できる（隣のプルダウンで登録先グループも指定可）",
+        "検索欄にティッカーコード（例：AAPL、7203）か会社名（例：トヨタ）を入力すると候補が並び、タップでそのまま追加登録できる（隣のプルダウンで登録先グループも指定可）",
         "並び順：既定は「📋全銘柄＝スキャン順／⭐お気に入り＝登録順（新しい順）」。🌱初動順・🏆スコア順を押すと切り替わり、同じボタンをもう一度押すと既定に戻る",
         "「🏭業種まとめ登録」ボタン：業種を1つ選ぶと、その業種の出来高上位50銘柄を選んだグループへ一括登録（取得できた件数が50未満の場合はその分だけ登録）。登録した銘柄の株価は自動で取得され、そのままお気に入り一覧に並ぶ（取得中は「銘柄データを取得中... 12/50」と表示）",
         "同じ画面の下部にある「🗑 一括解除」で、保存先（全体・グループ1〜4）ごとにまとめてお気に入りから外せる",
@@ -5922,7 +6091,7 @@ function GuidePanel(){
     ]},
     {key:"trade",icon:"🎯",label:"トレード",sections:[
       {title:null,items:[
-        "銘柄カードの🎯ボタンからトレード登録（買い価格・売り価格＝利確ライン・株数を入力。損切り価格は必須）",
+        "銘柄カードの🎯ボタンからトレード登録（買い価格・売り価格＝利確ライン・株数を入力。損切り価格は登録時のみ必須。後から✏️編集で空欄にすると損切りなしにできます／その場合はR集計の対象外）",
         "価格が指定値に到達すると自動で「待機中→進行中→完了」に遷移（判定は🔄価格更新ボタンで反映）",
         "完了したトレードの合計損益・勝率を集計表示",
         "「📊的中率」で登録した銘柄のシグナル的中率を確認",
@@ -6285,57 +6454,63 @@ export default function App(){
 
   var scan=useCallback(async function(manualSectors,skipAI){
     setLoading(true);
-    CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止）
-    setProgress({done:0,total:0,msg:skipAI?"前回データなし・通常ランキング取得中...":(manualSectors&&manualSectors.length?"指定業種の銘柄取得中...":"AI業種選定中...")});
     try{
-      // 立花証券メンテナンス時間帯（3:00〜8:30）でも、サーバー側（Redis）に前回成功データが
-      // あればそれを使えるため、以前のように問い合わせ自体をスキップすることはしない
-      var uResult=await buildStockUniverse(manualSectors,skipAI);
-      var universe=uResult.stocks.slice();
-      var jpCount=universe.length;
-      var sectorLabel=uResult.sectors&&uResult.sectors.length?uResult.sectors.map(function(s){return s.name;}).join("/"):"通常ランキング";
-      // メンテナンス時間帯かつ0件（＝保存データも無かった）の場合だけ、その旨を伝える
-      var maintenance=isTachibanaMaintenance();
-      // メンテナンス時間外なのに0件＝2回試しても通信が失敗したということなので、はっきり警告を出す
-      var rankingFailed=(!maintenance&&jpCount===0);
-      var progressMsg=(maintenance&&jpCount===0)
-        ?"⏰ 立花証券システムメンテナンス中(3:00〜8:30)。保存データも無いためお気に入り銘柄のみ表示します"
-        :rankingFailed
-        ?"⚠️ ランキング取得に失敗しました（通信エラー）。お気に入り銘柄のみ表示しています。再スキャンをお試しください"
-        :("JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始...");
-      setProgress({done:0,total:0,msg:progressMsg});
-      await new Promise(function(r){setTimeout(r,rankingFailed?2500:800);}); // 警告時は気づけるよう長めに表示
-      // 次回「前回の業種を表示」で使えるよう、実際に読み込んだ業種を保存
-      if(uResult.sectors&&uResult.sectors.length){
-        try{localStorage.setItem("last_sectors",JSON.stringify(uResult.sectors.map(function(s){return s.name;})));}catch(e){}
-      }
-      var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
-      var uTickers=universe.map(function(s){return s.ticker;});
-      favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
-      // トレード登録中（待機中・進行中）の銘柄も、カード表示のため必ずuniverseに含める
-      loadTrades("personal").forEach(function(t){
-        if(t.status==="done")return;
-        if(!universe.some(function(u){return u.ticker===t.ticker;})){
-          var isJP=t.ticker.endsWith(".T"),code=t.ticker.replace(".T","");
-          universe.push({ticker:t.ticker,name:t.name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
+      // エラーで落ちても自動でやり直す（通信の一時的な不調が原因のことが多いため）
+      await runScanWithRetry(async function(attempt){
+        CACHE={}; // 再スキャン時は必ず最新データを取得（古いキャッシュ流用を防止。リトライ時も同様）
+        var retryPrefix=attempt>0?"🔄 再試行中("+attempt+"/"+SCAN_MAX_RETRY+") ":"";
+        setProgress({done:0,total:0,msg:retryPrefix+(skipAI?"前回データなし・通常ランキング取得中...":(manualSectors&&manualSectors.length?"指定業種の銘柄取得中...":"AI業種選定中..."))});
+        // 立花証券メンテナンス時間帯（3:00〜8:30）でも、サーバー側（Redis）に前回成功データが
+        // あればそれを使えるため、以前のように問い合わせ自体をスキップすることはしない
+        var uResult=await buildStockUniverse(manualSectors,skipAI);
+        var universe=uResult.stocks.slice();
+        var jpCount=universe.length;
+        var sectorLabel=uResult.sectors&&uResult.sectors.length?uResult.sectors.map(function(s){return s.name;}).join("/"):"通常ランキング";
+        // メンテナンス時間帯かつ0件（＝保存データも無かった）の場合だけ、その旨を伝える
+        var maintenance=isTachibanaMaintenance();
+        // メンテナンス時間外なのに0件＝2回試しても通信が失敗したということなので、はっきり警告を出す
+        var rankingFailed=(!maintenance&&jpCount===0);
+        var progressMsg=(maintenance&&jpCount===0)
+          ?"⏰ 立花証券システムメンテナンス中(3:00〜8:30)。保存データも無いためお気に入り銘柄のみ表示します"
+          :rankingFailed
+          ?"⚠️ ランキング取得に失敗しました（通信エラー）。お気に入り銘柄のみ表示しています。再スキャンをお試しください"
+          :("JP:"+jpCount+"銘柄（"+sectorLabel+"）取得完了 分析開始...");
+        setProgress({done:0,total:0,msg:progressMsg});
+        await new Promise(function(r){setTimeout(r,rankingFailed?2500:800);}); // 警告時は気づけるよう長めに表示
+        // 次回「前回の業種を表示」で使えるよう、実際に読み込んだ業種を保存
+        if(uResult.sectors&&uResult.sectors.length){
+          try{localStorage.setItem("last_sectors",JSON.stringify(uResult.sectors.map(function(s){return s.name;})));}catch(e){}
         }
+        var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
+        var uTickers=universe.map(function(s){return s.ticker;});
+        favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
+        // トレード登録中（待機中・進行中）の銘柄も、カード表示のため必ずuniverseに含める
+        loadTrades("personal").forEach(function(t){
+          if(t.status==="done")return;
+          if(!universe.some(function(u){return u.ticker===t.ticker;})){
+            var isJP=t.ticker.endsWith(".T"),code=t.ticker.replace(".T","");
+            universe.push({ticker:t.ticker,name:t.name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
+          }
+        });
+        await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
+        setProgress({done:0,total:universe.length,msg:null});
+        // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
+        // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
+        var results=[];
+        await Promise.all(universe.map(async function(stock){
+          var pd=await fetchYahooSafe(stock.ticker);
+          try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+          setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+        }));
+        results.sort(function(x,y){return y.score-x.score;});
+        setStocks(results);
+        setTs(new Date().toLocaleTimeString("ja-JP"));
+        startDayNightFill(results); // 表示後に☀️日中型を裏で取得
+      },function(next,max,err,wait){
+        setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
       });
-      await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
-      setProgress({done:0,total:universe.length,msg:null});
-      // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
-      // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
-      var results=[];
-      await Promise.all(universe.map(async function(stock){
-        var pd=await fetchYahooSafe(stock.ticker);
-        try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
-        setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
-      }));
-      results.sort(function(x,y){return y.score-x.score;});
-      setStocks(results);
-      setTs(new Date().toLocaleTimeString("ja-JP"));
-      startDayNightFill(results); // 表示後に☀️日中型を裏で取得
     }catch(err){
-      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
+      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message+"（"+(SCAN_MAX_RETRY+1)+"回試行しました）"});
     }finally{
       setLoading(false);
     }
@@ -6343,33 +6518,39 @@ export default function App(){
   // ⭐お気に入り＋トレード登録中の銘柄だけを分析（AI業種選定・ランキング取得なしで高速）
   var scanFavsOnly=useCallback(async function(){
     setLoading(true);
-    CACHE={};
-    setProgress({done:0,total:0,msg:"⭐お気に入り銘柄を取得中..."});
     try{
-      var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
-      var universe=[];
-      function push(ticker,name){
-        if(!ticker||universe.some(function(u){return u.ticker===ticker;}))return;
-        var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");
-        universe.push({ticker:ticker,name:name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
-      }
-      favList.forEach(function(t){push(t);});
-      loadTrades("personal").forEach(function(t){if(t.status!=="done")push(t.ticker,t.name);});
-      if(universe.length===0){setProgress({done:0,total:0,msg:"⚠️ お気に入り銘柄が登録されていません"});return;}
-      await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
-      setProgress({done:0,total:universe.length,msg:null});
-      var results=[];
-      await Promise.all(universe.map(async function(stock){
-        var pd=await fetchYahooSafe(stock.ticker);
-        try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
-        setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
-      }));
-      results.sort(function(x,y){return y.score-x.score;});
-      setStocks(results);
-      setTs(new Date().toLocaleTimeString("ja-JP"));
-      startDayNightFill(results); // 表示後に☀️日中型を裏で取得
+      await runScanWithRetry(async function(attempt){
+        CACHE={};
+        var retryPrefix=attempt>0?"🔄 再試行中("+attempt+"/"+SCAN_MAX_RETRY+") ":"";
+        setProgress({done:0,total:0,msg:retryPrefix+"⭐お気に入り銘柄を取得中..."});
+        var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
+        var universe=[];
+        function push(ticker,name){
+          if(!ticker||universe.some(function(u){return u.ticker===ticker;}))return;
+          var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");
+          universe.push({ticker:ticker,name:name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
+        }
+        favList.forEach(function(t){push(t);});
+        loadTrades("personal").forEach(function(t){if(t.status!=="done")push(t.ticker,t.name);});
+        // 登録が無いのは「エラー」ではないのでリトライせずそのまま終了する
+        if(universe.length===0){setProgress({done:0,total:0,msg:"⚠️ お気に入り銘柄が登録されていません"});return;}
+        await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
+        setProgress({done:0,total:universe.length,msg:null});
+        var results=[];
+        await Promise.all(universe.map(async function(stock){
+          var pd=await fetchYahooSafe(stock.ticker);
+          try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+          setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+        }));
+        results.sort(function(x,y){return y.score-x.score;});
+        setStocks(results);
+        setTs(new Date().toLocaleTimeString("ja-JP"));
+        startDayNightFill(results); // 表示後に☀️日中型を裏で取得
+      },function(next,max,err,wait){
+        setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
+      });
     }catch(err){
-      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
+      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message+"（"+(SCAN_MAX_RETRY+1)+"回試行しました）"});
     }finally{setLoading(false);}
   },[vix,startDayNightFill]);
   function startFavsOnly(){setStartMode("favs");scanFavsOnly();}
@@ -6390,23 +6571,27 @@ export default function App(){
   // 「今の銘柄でリロード」：業種の再選定は行わず、現在表示中の銘柄だけ最新データで再分析
   var reloadCurrentUniverse=useCallback(async function(){
     setLoading(true);
-    CACHE={};
     var universe=stocks.map(function(s){return{ticker:s.ticker,name:s.name,market:s.market,tvSymbol:s.tvSymbol};});
-    setProgress({done:0,total:universe.length,msg:null});
     try{
-      // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
-      // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
-      var results=[];
-      await Promise.all(universe.map(async function(stock){
-        var pd=await fetchYahooSafe(stock.ticker);
-        try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
-        setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
-      }));
-      results.sort(function(x,y){return y.score-x.score;});
-      setStocks(results);
-      setTs(new Date().toLocaleTimeString("ja-JP"));
+      await runScanWithRetry(async function(attempt){
+        CACHE={};
+        setProgress({done:0,total:universe.length,msg:attempt>0?"🔄 再試行中("+attempt+"/"+SCAN_MAX_RETRY+")...":null});
+        // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
+        // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
+        var results=[];
+        await Promise.all(universe.map(async function(stock){
+          var pd=await fetchYahooSafe(stock.ticker);
+          try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
+          setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
+        }));
+        results.sort(function(x,y){return y.score-x.score;});
+        setStocks(results);
+        setTs(new Date().toLocaleTimeString("ja-JP"));
+      },function(next,max,err,wait){
+        setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
+      });
     }catch(err){
-      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message});
+      setProgress({done:0,total:0,msg:"❌ エラー: "+err.message+"（"+(SCAN_MAX_RETRY+1)+"回試行しました）"});
     }finally{
       setLoading(false);
     }
