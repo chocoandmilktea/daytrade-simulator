@@ -22,6 +22,16 @@ function toLocalDates(timestamps, gmtoffset) {
   });
 }
 
+// ── 1銘柄分の株価データ取得（HTTPを介さずに直接呼べる形）──────────────────
+// サーバー側スキャン（api/_scan.js）から import して使うため、
+// 「データの取得・組み立て」と「HTTPレスポンスの返却」を分けてある。
+// 戻り値はこのAPIが返すJSONそのもの（内容は従来と完全に同一）。
+// 失敗時は例外を投げるので、呼び出し側でtry/catchすること。
+export async function fetchStockPayload(ticker) {
+  if (ticker.endsWith(".T")) return fetchJPPayload(ticker);
+  return fetchUSPayload(ticker);
+}
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -31,108 +41,108 @@ export default async function handler(req, res) {
   const { ticker } = req.query;
   if (!ticker) return res.status(400).json({ error: "ticker is required" });
 
-  if (ticker.endsWith(".T")) return handleJP(ticker, res);
-  return handleUS(ticker, res);
-}
-
-// ── JP: Yahoo Finance 15分足 / 30日（USと同じ取得方法に統一）─────────────
-async function handleJP(ticker, res) {
   try {
-    const code4 = ticker.replace(".T", "");
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=15m&range=30d`;
-
-    // Yahoo Finance（分足）・決算発表予定日・TOPIX・PER/PBR等は互いに依存関係が無いため並列取得する
-    // （以前は上から順番に待っていたため、その分だけ余計に時間がかかっていた）
-    const [yahooResult, earningsResult, topixResult, detailResult] = await Promise.allSettled([
-      fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "Accept": "application/json",
-        },
-        signal: AbortSignal.timeout(9000),
-      }).then(function(r) {
-        if (!r.ok) throw new Error(`Yahoo Finance returned ${r.status}`);
-        return r.json();
-      }),
-      fetchJPEarningsMap(),
-      fetchTopixChange(),
-      fetchTachibanaIssueDetail(code4),
-    ]);
-
-    if (yahooResult.status === "rejected") throw yahooResult.reason;
-    const data = yahooResult.value;
-
-    const result = data?.chart?.result?.[0];
-    if (!result) throw new Error("no JP minute data");
-
-    const closes  = result.indicators?.quote?.[0]?.close  || [];
-    const highs   = result.indicators?.quote?.[0]?.high   || [];
-    const lows    = result.indicators?.quote?.[0]?.low    || [];
-    const volumes = result.indicators?.quote?.[0]?.volume || [];
-    const opens   = result.indicators?.quote?.[0]?.open   || [];
-    const meta = result.meta || {};
-    // アプリ側の「本日分」特定に必須の日付配列（東京市場: UTC+9h=32400秒）
-    const dates = toLocalDates(result.timestamp, meta.gmtoffset != null ? meta.gmtoffset : 32400);
-
-    const currentPrice = meta.regularMarketPrice || 0;
-    const previousClose = meta.chartPreviousClose || meta.regularMarketPreviousClose || 0;
-    // 公式の前営業日終値。個別株の終値は15:30のクロージング・オークション(大引け)で
-    // 決まるため、15分足の最終バーの終値とは1%近くズレることがある。
-    // chartPreviousCloseは「取得範囲(30日)の直前の終値」で全くの別物なので混ぜない。
-    const officialPrevClose =
-      meta.regularMarketPreviousClose != null ? meta.regularMarketPreviousClose
-      : (meta.previousClose != null ? meta.previousClose : null);
-
-    // 決算発表予定日（東証公式Excelをキャッシュして照合。対象外ならnull）
-    let earningsDate = null;
-    if (earningsResult.status === "fulfilled") {
-      earningsDate = earningsResult.value[code4] || null;
-    } else {
-      console.log("[jpx-earnings] 取得エラー:", earningsResult.reason?.message);
-    }
-
-    // 対TOPIX相対強弱用：直近のTOPIX騰落率（全銘柄共通の値なので1時間キャッシュ）
-    const topixChange = topixResult.status === "fulfilled" ? topixResult.value : null;
-
-    // PER/PBR/EPS/BPS/配当利回り（立花証券API経由。取得・1時間キャッシュはtachibana-server側）
-    // 権利落ち日も立花証券の実績値をそのまま使用（従来は決算期末日からの概算値だった）
-    let per = null, pbr = null, eps = null, bps = null, dividendYield = null, exRightsDate = null;
-    if (detailResult.status === "fulfilled") {
-      const detail = detailResult.value;
-      per = detail.per;
-      pbr = detail.pbr;
-      eps = detail.eps;
-      bps = detail.bps;
-      dividendYield = detail.dividendYield;
-      exRightsDate = detail.exRightsDate;
-    }
-    if (pbr && (!isFinite(pbr) || pbr <= 0 || pbr > 1000)) pbr = null;
-    if (per && (!isFinite(per) || per <= 0 || per > 10000)) per = null;
-
-    return res.status(200).json({
-      chart: {
-        result: [{
-          meta: {
-            regularMarketPrice: currentPrice,
-            chartPreviousClose: previousClose,
-            regularMarketPreviousClose: officialPrevClose,
-            dataInterval: "15m",
-            dataRange: "30d",
-          },
-          indicators: {
-            quote: [{ close: closes, high: highs, low: lows, volume: volumes, open: opens, date: dates }],
-          },
-          per: per, pbr: pbr, eps: eps, bps: bps, dividendYield: dividendYield,
-          analystTarget: null, sector: null,
-          earningsDate: earningsDate,
-          exRightsDate: exRightsDate,
-          topixChange: topixChange,
-        }],
-      },
-    });
+    const payload = await fetchStockPayload(ticker);
+    return res.status(200).json(payload);
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
+}
+
+// ── JP: Yahoo Finance 15分足 / 30日（USと同じ取得方法に統一）─────────────
+async function fetchJPPayload(ticker) {
+  const code4 = ticker.replace(".T", "");
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=15m&range=30d`;
+
+  // Yahoo Finance（分足）・決算発表予定日・TOPIX・PER/PBR等は互いに依存関係が無いため並列取得する
+  // （以前は上から順番に待っていたため、その分だけ余計に時間がかかっていた）
+  const [yahooResult, earningsResult, topixResult, detailResult] = await Promise.allSettled([
+    fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+      },
+      signal: AbortSignal.timeout(9000),
+    }).then(function(r) {
+      if (!r.ok) throw new Error(`Yahoo Finance returned ${r.status}`);
+      return r.json();
+    }),
+    fetchJPEarningsMap(),
+    fetchTopixChange(),
+    fetchTachibanaIssueDetail(code4),
+  ]);
+
+  if (yahooResult.status === "rejected") throw yahooResult.reason;
+  const data = yahooResult.value;
+
+  const result = data?.chart?.result?.[0];
+  if (!result) throw new Error("no JP minute data");
+
+  const closes  = result.indicators?.quote?.[0]?.close  || [];
+  const highs   = result.indicators?.quote?.[0]?.high   || [];
+  const lows    = result.indicators?.quote?.[0]?.low    || [];
+  const volumes = result.indicators?.quote?.[0]?.volume || [];
+  const opens   = result.indicators?.quote?.[0]?.open   || [];
+  const meta = result.meta || {};
+  // アプリ側の「本日分」特定に必須の日付配列（東京市場: UTC+9h=32400秒）
+  const dates = toLocalDates(result.timestamp, meta.gmtoffset != null ? meta.gmtoffset : 32400);
+
+  const currentPrice = meta.regularMarketPrice || 0;
+  const previousClose = meta.chartPreviousClose || meta.regularMarketPreviousClose || 0;
+  // 公式の前営業日終値。個別株の終値は15:30のクロージング・オークション(大引け)で
+  // 決まるため、15分足の最終バーの終値とは1%近くズレることがある。
+  // chartPreviousCloseは「取得範囲(30日)の直前の終値」で全くの別物なので混ぜない。
+  const officialPrevClose =
+    meta.regularMarketPreviousClose != null ? meta.regularMarketPreviousClose
+    : (meta.previousClose != null ? meta.previousClose : null);
+
+  // 決算発表予定日（東証公式Excelをキャッシュして照合。対象外ならnull）
+  let earningsDate = null;
+  if (earningsResult.status === "fulfilled") {
+    earningsDate = earningsResult.value[code4] || null;
+  } else {
+    console.log("[jpx-earnings] 取得エラー:", earningsResult.reason?.message);
+  }
+
+  // 対TOPIX相対強弱用：直近のTOPIX騰落率（全銘柄共通の値なので1時間キャッシュ）
+  const topixChange = topixResult.status === "fulfilled" ? topixResult.value : null;
+
+  // PER/PBR/EPS/BPS/配当利回り（立花証券API経由。取得・1時間キャッシュはtachibana-server側）
+  // 権利落ち日も立花証券の実績値をそのまま使用（従来は決算期末日からの概算値だった）
+  let per = null, pbr = null, eps = null, bps = null, dividendYield = null, exRightsDate = null;
+  if (detailResult.status === "fulfilled") {
+    const detail = detailResult.value;
+    per = detail.per;
+    pbr = detail.pbr;
+    eps = detail.eps;
+    bps = detail.bps;
+    dividendYield = detail.dividendYield;
+    exRightsDate = detail.exRightsDate;
+  }
+  if (pbr && (!isFinite(pbr) || pbr <= 0 || pbr > 1000)) pbr = null;
+  if (per && (!isFinite(per) || per <= 0 || per > 10000)) per = null;
+
+  return {
+    chart: {
+      result: [{
+        meta: {
+          regularMarketPrice: currentPrice,
+          chartPreviousClose: previousClose,
+          regularMarketPreviousClose: officialPrevClose,
+          dataInterval: "15m",
+          dataRange: "30d",
+        },
+        indicators: {
+          quote: [{ close: closes, high: highs, low: lows, volume: volumes, open: opens, date: dates }],
+        },
+        per: per, pbr: pbr, eps: eps, bps: bps, dividendYield: dividendYield,
+        analystTarget: null, sector: null,
+        earningsDate: earningsDate,
+        exRightsDate: exRightsDate,
+        topixChange: topixChange,
+      }],
+    },
+  };
 }
 
 // ── 決算発表予定日キャッシュ ──────────────────────────────────────────
@@ -369,53 +379,49 @@ async function fetchTachibanaIssueDetail(code4) {
 // 以前はここで米国株のPER/PBR・アナリスト目標株価・決算日も追加取得していたが、
 // 米国株を扱わなくなったため削除した（指数の取得には不要な項目で、
 // 追加の外部アクセス2回分が丸ごと減るため、市況バーの表示も速くなる）。
-async function handleUS(ticker, res) {
+async function fetchUSPayload(ticker) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=15m&range=30d`;
 
-  try {
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json",
-      },
-      signal: AbortSignal.timeout(9000),
-    });
-    if (!response.ok) throw new Error(`Yahoo Finance returned ${response.status}`);
-    const data = await response.json();
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Accept": "application/json",
+    },
+    signal: AbortSignal.timeout(9000),
+  });
+  if (!response.ok) throw new Error(`Yahoo Finance returned ${response.status}`);
+  const data = await response.json();
 
-    const result = data?.chart?.result?.[0];
-    if (result) {
-      const closes = result.indicators?.quote?.[0]?.close || [];
-      const meta = result.meta || {};
-      const validCloses = closes.filter(v => v != null && !isNaN(v));
-      // 前日終値はYahoo公式のmeta値を最優先（正確な前営業日の終値）。
-      // 15分足配列からの推定値（末尾から2番目のバー＝数分前の価格）は
-      // meta値が取得できない場合の最終手段としてのみ使う。
-      const previousClose =
-        meta.chartPreviousClose || meta.regularMarketPreviousClose
-        || (validCloses.length >= 2 ? validCloses[validCloses.length - 2] : null)
-        || 0;
-      result.meta.chartPreviousClose = previousClose;
-      // 公式の前営業日終値はアプリ側が最優先で使うため、上書きせず明示的に残す
-      result.meta.regularMarketPreviousClose =
-        meta.regularMarketPreviousClose != null ? meta.regularMarketPreviousClose
-        : (meta.previousClose != null ? meta.previousClose : null);
-      result.meta.dataInterval = "15m";
-      result.meta.dataRange = "30d";
-      // 指数もアプリ側(MarketBar)が日付ベースで前日終値を実測するため、日付配列を付与する
-      // （各取引所のローカル日付。gmtoffsetはYahooのmetaにほぼ必ず入っている）
-      const q0 = result.indicators?.quote?.[0];
-      if (q0) q0.date = toLocalDates(result.timestamp, meta.gmtoffset);
-      // アプリ側（fetchYahoo）はこれらの項目を参照するため、常にnullで揃えておく
-      result.per = null;
-      result.pbr = null;
-      result.analystTarget = null;
-      result.sector = null;
-      result.earningsDate = null;
-    }
-
-    return res.status(200).json(data);
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
+  const result = data?.chart?.result?.[0];
+  if (result) {
+    const closes = result.indicators?.quote?.[0]?.close || [];
+    const meta = result.meta || {};
+    const validCloses = closes.filter(v => v != null && !isNaN(v));
+    // 前日終値はYahoo公式のmeta値を最優先（正確な前営業日の終値）。
+    // 15分足配列からの推定値（末尾から2番目のバー＝数分前の価格）は
+    // meta値が取得できない場合の最終手段としてのみ使う。
+    const previousClose =
+      meta.chartPreviousClose || meta.regularMarketPreviousClose
+      || (validCloses.length >= 2 ? validCloses[validCloses.length - 2] : null)
+      || 0;
+    result.meta.chartPreviousClose = previousClose;
+    // 公式の前営業日終値はアプリ側が最優先で使うため、上書きせず明示的に残す
+    result.meta.regularMarketPreviousClose =
+      meta.regularMarketPreviousClose != null ? meta.regularMarketPreviousClose
+      : (meta.previousClose != null ? meta.previousClose : null);
+    result.meta.dataInterval = "15m";
+    result.meta.dataRange = "30d";
+    // 指数もアプリ側(MarketBar)が日付ベースで前日終値を実測するため、日付配列を付与する
+    // （各取引所のローカル日付。gmtoffsetはYahooのmetaにほぼ必ず入っている）
+    const q0 = result.indicators?.quote?.[0];
+    if (q0) q0.date = toLocalDates(result.timestamp, meta.gmtoffset);
+    // アプリ側（fetchYahoo）はこれらの項目を参照するため、常にnullで揃えておく
+    result.per = null;
+    result.pbr = null;
+    result.analystTarget = null;
+    result.sector = null;
+    result.earningsDate = null;
   }
+
+  return data;
 }
