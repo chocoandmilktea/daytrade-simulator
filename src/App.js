@@ -3911,7 +3911,7 @@ function FavPanel(p){
     // カードは描画済みなのでdata-tickerで引ける（useEffectはDOM反映後に走る）
     var el=document.querySelector('[data-ticker="'+hit.ticker+'"]');
     if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
-  },[searchTicker]); // eslint-disable-line react-hooks/exhaustive-deps
+  },[searchTicker]); // 依存は検索文字列だけ（入力のたびに1回だけ走らせる）
 
   function isFavRef(t){return favs.indexOf(t)>=0;}
 
