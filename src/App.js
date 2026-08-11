@@ -2824,8 +2824,9 @@ function StockCard(p){
 
   var cardBorder=isSelected?"#60a5fa":borderColor;
 
+  // data-ticker：検索窓から該当カードへスクロールする際の目印
   return(
-    <div style={{background:isSelected?"#071e38":"#050e1c",border:"none",borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer",minWidth:0}}
+    <div data-ticker={s.ticker} style={{background:isSelected?"#071e38":"#050e1c",border:"none",borderRadius:10,padding:"10px",display:"flex",flexDirection:"column",gap:7,cursor:"pointer",minWidth:0}}
       onClick={function(){if(p.setSelectedStock)p.setSelectedStock(s);}}>
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{flex:1,minWidth:0}}>
@@ -3793,9 +3794,9 @@ function FavPanel(p){
 
   // groupFilter: -1=📋全銘柄 / 0=⭐全体 / 1〜4=グループ。タブを移動しても保持される
   var groupFilterS=usePersistedState("fav_group_filter",0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1];
-  // sortMode: "reg"=既定順（お気に入り=登録順・全銘柄=スキャン順）/ "score"=スコア順 / "momentum"=初動順
+  // sortMode: "reg"=既定順（お気に入り=登録順・全銘柄=スキャン順）/ "score"=スコア順 / "momentum"=初動順 / "trade"=トレード順
   var sortModeS=usePersistedState("fav_sort_mode","reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1];
-  var mode=(sortMode==="score"||sortMode==="momentum")?sortMode:"reg"; // 旧"dayType"の保存値は既定順に読み替え
+  var mode=(sortMode==="score"||sortMode==="momentum"||sortMode==="trade")?sortMode:"reg"; // 旧"dayType"の保存値は既定順に読み替え
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
   var addGroupS=useState(0);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
@@ -3865,6 +3866,16 @@ function FavPanel(p){
   var baseList=isAll?stocks.slice()
     :groupFilter===0?favStocks
     :favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
+  // 手法バッジのグループ順位（スキャル→デイトレ→スイング）。tradeTypeが無い古いデータでも
+  // 並べられるよう、ラベル（⚡スキャル等）の文言でも判定する。判定不能はいちばん下に送る
+  function tradeRank(s){
+    var t=s.tradeType||"";
+    var lbl=s.tradeLabel||"";
+    if(t==="short"||lbl.indexOf("スキャル")>=0) return 0;
+    if(t==="mid"  ||lbl.indexOf("デイトレ")>=0) return 1;
+    if(t==="long" ||t==="stable"||lbl.indexOf("スイング")>=0) return 2; // このアプリのキーは"stable"
+    return 3;
+  }
   var displayStocks=mode==="score"
     ?baseList.slice().sort(function(a,b){return(b.score||0)-(a.score||0);})
     :mode==="momentum"
@@ -3873,7 +3884,34 @@ function FavPanel(p){
         var av=a.momentum?a.momentum.score:-1,bv=b.momentum?b.momentum.score:-1;
         return bv-av;
       })
+    :mode==="trade"
+    ?baseList.slice().sort(function(a,b){
+        // トレード順：手法グループ昇順→同じグループ内はスコアの高い順
+        var d=tradeRank(a)-tradeRank(b);
+        return d!==0?d:(b.score||0)-(a.score||0);
+      })
     :baseList;
+
+  // ── 検索窓のページ内検索（表示中の銘柄へジャンプ）─────────────────────
+  // 検索窓は「新規追加」と「表示中銘柄への絞り込みジャンプ」を兼ねる。入力のたびに
+  // 表示中リスト（並び替え後）の先頭ヒットを選択＆スクロールする。通信は一切行わない
+  var pageMissS=useState(false);var pageMiss=pageMissS[0],setPageMiss=pageMissS[1];
+  useEffect(function(){
+    var raw=searchTicker.trim();
+    if(!raw){setPageMiss(false);return;} // 空入力なら選択状態はそのまま維持する
+    var q=raw.toUpperCase(),rawL=raw.toLowerCase(),hit=null;
+    for(var i=0;i<displayStocks.length;i++){
+      var s=displayStocks[i];
+      var code=s.ticker.replace(".T","").toUpperCase();
+      if(code.indexOf(q)>=0||String(s.name||"").toLowerCase().indexOf(rawL)>=0){hit=s;break;}
+    }
+    setPageMiss(!hit);
+    if(!hit) return;
+    if(p.setSelectedStock) p.setSelectedStock(hit); // PCは右パネル・スマホは既存の全画面モーダルに出る
+    // カードは描画済みなのでdata-tickerで引ける（useEffectはDOM反映後に走る）
+    var el=document.querySelector('[data-ticker="'+hit.ticker+'"]');
+    if(el) el.scrollIntoView({behavior:"smooth",block:"center"});
+  },[searchTicker]); // 依存は検索文字列だけ（入力のたびに1回だけ走らせる）
 
   function isFavRef(t){return favs.indexOf(t)>=0;}
 
@@ -3901,6 +3939,7 @@ function FavPanel(p){
 
   // ── 上部バーの部品（横スクロール1行に並べるため全てflexShrink:0）──────────
   var TIP_SCORE="アプリのスコア（0〜100点）が高い順に並べます。もう一度押すと既定の並びに戻ります";
+  var TIP_TRADE="スキャル→デイトレ→スイングの順に並べ、各グループ内はスコアの高い順に表示します";
   var TIP_MOM="これから数日で動き出しそうな銘柄（初動スコア）の高い順に並べます。対TOPIX相対の3日累積を主軸に、出来高の立ち上がりとBB収束を加味した点数です。日本株のみ・スキャン履歴が3日分たまると表示されます";
   function sBtn(m,label,title,color){
     var active=mode===m;
@@ -3957,12 +3996,16 @@ function FavPanel(p){
           {pcGap}
           {sBtn("momentum","🌱初動順",TIP_MOM,"#22d3a0")}
           {sBtn("score","🏆スコア順",TIP_SCORE,"#fbbf24")}
+          {/* トレード順。スコア順(#fbbf24)と見分けが付くよう色は紫(#a78bfa)にした */}
+          {sBtn("trade","🎯トレード順",TIP_TRADE,"#a78bfa")}
           {p.onBulkSector&&<button onClick={p.onBulkSector} style={{flexShrink:0,background:"transparent",border:"1px solid #0ea5e955",borderRadius:6,color:"#7dd3fc",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>🏭業種まとめ登録</button>}
           {pcGap}
           <button onClick={function(){setShowAcc(true);}} style={{flexShrink:0,background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>📊的中率</button>
           {p.onScan&&<button onClick={p.onScan} style={{flexShrink:0,marginLeft:isMobile?0:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>}
         </div>
         {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:4}}>{statusMsg}</div>}
+        {/* 表示中の銘柄に見つからない場合の案内。追加成功などのステータスとは重ねず、どちらか一方だけ出す */}
+        {!statusMsg&&pageMiss&&<div style={{fontSize:11,color:"#4a7090",marginTop:4}}>表示中の銘柄に該当なし（追加ボタンで新規登録できます）</div>}
         {/* 検索候補：クリックでその銘柄を追加。ツールバーは横スクロールするため、内側ではなくこの位置に出す */}
         {hitsOpen&&searchHits.length>0&&(
           <div style={{marginTop:4,background:"#071428",border:"1px solid #1e4070",borderRadius:8,maxHeight:260,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
