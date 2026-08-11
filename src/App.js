@@ -4203,7 +4203,7 @@ function FavPanel(p){
   var isMobile=useIsMobile();
   var extraH=isMobile?MOBILE_TABBAR_H:0; // スマホ用タブバー分の高さを差し引く
 
-  // groupFilter: -1=📋全銘柄 / 0=⭐全体 / 1〜4=グループ。タブを移動しても保持される
+  // groupFilter: -1=📋全銘柄 / 0=未分類 / 1〜4=グループ。タブを移動しても保持される
   var groupFilterS=usePersistedState("fav_group_filter",0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1];
   // sortMode: "reg"=既定順（お気に入り=登録順・全銘柄=スキャン順）/ "score"=スコア順 / "momentum"=初動順 / "trade"=トレード順
   var sortModeS=usePersistedState("fav_sort_mode","reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1];
@@ -4274,8 +4274,8 @@ function FavPanel(p){
 
   // ── 表示対象の銘柄リスト ───────────────────────────────────────────
   var favStocks=favs.slice().reverse().map(function(t){return stocks.find(function(s){return s.ticker===t;});}).filter(Boolean);
+  // 0（未分類）もグループ1〜4と同じ扱い。グループ未設定の銘柄だけを表示する
   var baseList=isAll?stocks.slice()
-    :groupFilter===0?favStocks
     :favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
   // 手法バッジのグループ順位（スキャル→デイトレ→スイング）。tradeTypeが無い古いデータでも
   // 並べられるよう、ラベル（⚡スキャル等）の文言でも判定する。判定不能はいちばん下に送る
@@ -4360,7 +4360,7 @@ function FavPanel(p){
     var active=groupFilter===val;
     var color=val===-1?"#0ea5e9":"#fbbf24";
     // グループ1〜5には★と同じ色の●を先頭に付けて、どの色がどのグループか分かるようにする
-    var dot=val>=1?<span style={{color:GROUP_COLORS[val]||GROUP_COLORS[0],marginRight:2}}>●</span>:null;
+    var dot=val>=0?<span style={{color:GROUP_COLORS[val]||GROUP_COLORS[0],marginRight:2}}>●</span>:null;
     return(<button key={val} onClick={function(){setGroupFilter(val);}} style={{flexShrink:0,background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400,whiteSpace:"nowrap"}}>{dot}{label}</button>);
   }
   function editGroupName(num){
@@ -4403,7 +4403,7 @@ function FavPanel(p){
           {divider}
           {pcGap}
           {gBtn(-1,"📋全銘柄")}
-          {gBtn(0,"⭐全体")}
+          {gBtn(0,"未分類")}
           {[1,2,3,4].map(function(n){return <span key={n} style={{flexShrink:0,display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
           {divider}
           {pcGap}
@@ -5586,13 +5586,13 @@ function GuidePanel(){
       {title:"📋 一覧の使い方",items:[
         "銘柄カードをタップ → 詳細シグナル表示",
         "上部バーは横スクロールします（件数／銘柄検索／グループ／🌱初動順／🏆スコア順／🏭業種まとめ登録／📊的中率／再スキャン。PC版では再スキャンが右端に並びます）",
-        "「📋全銘柄」＝今回スキャンした全銘柄を表示。「⭐全体」＝お気に入り登録銘柄をすべて表示",
+        "「📋全銘柄」＝今回スキャンした全銘柄を表示。「●未分類」＝お気に入りのうちグループに入れていない銘柄を表示（グループ1〜4と同じ絞り込み。先頭の●は★の色と対応）",
         "★/☆ボタンでお気に入りの登録・解除",
         "グループ1〜4に分類可能（グループ名は選択中に表示される✎アイコンで編集）",
         "検索欄にティッカーコード（例：AAPL、7203）か会社名（例：トヨタ）を入力すると候補が並び、タップでそのまま追加登録できる（隣のプルダウンで登録先グループも指定可）",
         "並び順：既定は「📋全銘柄＝スキャン順／⭐お気に入り＝登録順（新しい順）」。🌱初動順・🏆スコア順を押すと切り替わり、同じボタンをもう一度押すと既定に戻る",
         "「🏭業種まとめ登録」ボタン：業種を1つ選ぶと、その業種の出来高上位50銘柄を選んだグループへ一括登録（取得できた件数が50未満の場合はその分だけ登録）。登録した銘柄の株価は自動で取得され、そのままお気に入り一覧に並ぶ（取得中は「銘柄データを取得中... 12/50」と表示）",
-        "同じ画面の下部にある「🗑 一括解除」で、保存先（未分類・グループ1〜4）ごとにまとめてお気に入りから外せる（保存先の「未分類」＝どのグループにも入れていない銘柄。上部バーの「⭐全体」は絞り込み用で、グループを問わず全お気に入りを表示する意味）",
+        "同じ画面の下部にある「🗑 一括解除」で、保存先（未分類・グループ1〜4）ごとにまとめてお気に入りから外せる",
         "「📊的中率」ボタンでお気に入り銘柄のシグナル的中率を確認"
       ]},
       {title:"📊 データ取得の方法",items:["米国株：Yahoo Finance・15分足（直近30日）","日本株：Yahoo Finance・15分足（直近30日）","1分足チャート：Yahoo Finance・1分足（直近5営業日／15〜20分程度の遅延あり）","現在値・板情報のリアルタイム表示：立花証券e支店API（WebSocket中継）","日本株ランキング：立花証券API（出来高上位＋値上がり率上位のハイブリッド）","米国株ランキング：Yahoo Finance 出来高上位50","TOPIX・PER/PBR・配当利回り：立花証券API","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
