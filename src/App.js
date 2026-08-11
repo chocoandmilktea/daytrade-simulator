@@ -704,10 +704,16 @@ function hasActiveTrade(ticker,trades){
   }
   return false;
 }
-// ★ボタンの見た目：進行中トレードがあれば赤、無ければ従来通りお気に入り色分け
+// お気に入りグループごとの★の色。0=未分類 / 1〜5=グループ1〜5
+var GROUP_COLORS=["#fbbf24","#22d3a0","#0ea5e9","#a78bfa","#f97316","#ec4899"];
+// ★の色分けに使う最新のグループ情報。StockCard等へprops追加せずに参照するため、
+// App側の useEffect で favGroups の最新値をここへ書き写している
+var FAV_GROUP_CACHE={};
+// ★ボタンの見た目：進行中トレードがあれば赤、無ければお気に入りのグループ色
 function starStyle(ticker,isFav,trades){
   if(hasActiveTrade(ticker,trades)) return {symbol:"★",color:"#f43f5e"};
-  return isFav(ticker)?{symbol:"★",color:"#fbbf24"}:{symbol:"☆",color:"#2a4060"};
+  if(!isFav(ticker)) return {symbol:"☆",color:"#2a4060"};
+  return {symbol:"★",color:GROUP_COLORS[FAV_GROUP_CACHE[ticker]||0]||GROUP_COLORS[0]};
 }
 function removeTradeRecord(kind,id){var list=loadTrades(kind).filter(function(t){return t.id!==id;});saveTrades(kind,list);return list;}
 
@@ -2768,7 +2774,7 @@ function TradeAddModal(p){
   );
 }
 
-// ── ⭐ボタンタップ時の保存先選択モーダル：全体(未分類)／グループ1〜5／削除 ─────
+// ── ⭐ボタンタップ時の保存先選択モーダル：未分類／グループ1〜5／削除 ─────
 function FavPickerModal(p){
   var ticker=p.ticker,favs=p.favs,favGroups=p.favGroups,groupNames=p.groupNames,onSelect=p.onSelect,onRemove=p.onRemove,onClose=p.onClose;
   var isMember=favs.indexOf(ticker)>=0;
@@ -2785,7 +2791,7 @@ function FavPickerModal(p){
     <div onClick={function(e){if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.6)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"flex-end",padding:16,paddingRight:"56vw"}}>
       <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:10,padding:16,width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:8,color:"#b8cce0"}}>
         <div style={{fontSize:13,fontWeight:800,color:"#e0f0ff",marginBottom:4}}>⭐ {ticker.replace(".T","")} の保存先</div>
-        {optBtn(0,"全体（未分類）")}
+        {optBtn(0,"未分類")}
         {[1,2,3,4].map(function(n){return optBtn(n,groupNames[n]);})}
         {isMember&&<button onClick={onRemove} style={{padding:"12px 10px",background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:8,color:"#f43f5e",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"monospace",marginTop:4}}>🗑 お気に入り削除</button>}
         <button onClick={onClose} style={{padding:"8px 0",background:"transparent",border:"1px solid #2a4060",borderRadius:8,color:"#4a7090",fontSize:12,cursor:"pointer",fontFamily:"monospace"}}>キャンセル</button>
@@ -3948,7 +3954,9 @@ function FavPanel(p){
   function gBtn(val,label){
     var active=groupFilter===val;
     var color=val===-1?"#0ea5e9":"#fbbf24";
-    return(<button key={val} onClick={function(){setGroupFilter(val);}} style={{flexShrink:0,background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400,whiteSpace:"nowrap"}}>{label}</button>);
+    // グループ1〜5には★と同じ色の●を先頭に付けて、どの色がどのグループか分かるようにする
+    var dot=val>=1?<span style={{color:GROUP_COLORS[val]||GROUP_COLORS[0],marginRight:2}}>●</span>:null;
+    return(<button key={val} onClick={function(){setGroupFilter(val);}} style={{flexShrink:0,background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400,whiteSpace:"nowrap"}}>{dot}{label}</button>);
   }
   function editGroupName(num){
     var name=prompt("グループ名を入力",groupNames[num]);
@@ -3983,7 +3991,7 @@ function FavPanel(p){
           {divider}
           <input style={{background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"4px 6px",fontSize:16,fontFamily:"monospace",flexShrink:0,width:120}} value={searchTicker} placeholder="7203 / トヨタ" onChange={function(e){setSearchTicker(e.target.value);setHitsOpen(true);}} onFocus={function(){setHitsOpen(true);}} onKeyDown={function(e){if(e.key==="Enter"){setHitsOpen(false);addByTicker();}else if(e.key==="Escape"){setHitsOpen(false);}}}/>
           <select value={addGroup} onChange={function(e){setAddGroup(Number(e.target.value));}} title="追加先のグループ" style={{background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:"#fbbf24",padding:"0 2px",fontSize:12,fontFamily:"monospace",flexShrink:0,width:74}}>
-            <option value={0}>全体</option>
+            <option value={0}>未分類</option>
             {[1,2,3,4].map(function(n){return <option key={n} value={n}>{groupNames[n]}</option>;})}
           </select>
           <button onClick={function(){setHitsOpen(false);addByTicker();}} style={{flexShrink:0,background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>追加</button>
@@ -5145,7 +5153,7 @@ function GuidePanel(){
         "検索欄にティッカーコード（例：AAPL、7203）か会社名（例：トヨタ）を入力すると候補が並び、タップでそのまま追加登録できる（隣のプルダウンで登録先グループも指定可）",
         "並び順：既定は「📋全銘柄＝スキャン順／⭐お気に入り＝登録順（新しい順）」。🌱初動順・🏆スコア順を押すと切り替わり、同じボタンをもう一度押すと既定に戻る",
         "「🏭業種まとめ登録」ボタン：業種を1つ選ぶと、その業種の出来高上位50銘柄を選んだグループへ一括登録（取得できた件数が50未満の場合はその分だけ登録）。登録した銘柄の株価は自動で取得され、そのままお気に入り一覧に並ぶ（取得中は「銘柄データを取得中... 12/50」と表示）",
-        "同じ画面の下部にある「🗑 一括解除」で、保存先（全体・グループ1〜4）ごとにまとめてお気に入りから外せる",
+        "同じ画面の下部にある「🗑 一括解除」で、保存先（未分類・グループ1〜4）ごとにまとめてお気に入りから外せる（保存先の「未分類」＝どのグループにも入れていない銘柄。上部バーの「⭐全体」は絞り込み用で、グループを問わず全お気に入りを表示する意味）",
         "「📊的中率」ボタンでお気に入り銘柄のシグナル的中率を確認"
       ]},
       {title:"📊 データ取得の方法",items:["米国株：Yahoo Finance・15分足（直近30日）","日本株：Yahoo Finance・15分足（直近30日）","1分足チャート：Yahoo Finance・1分足（直近5営業日／15〜20分程度の遅延あり）","現在値・板情報のリアルタイム表示：立花証券e支店API（WebSocket中継）","日本株ランキング：立花証券API（出来高上位＋値上がり率上位のハイブリッド）","米国株ランキング：Yahoo Finance 出来高上位50","TOPIX・PER/PBR・配当利回り：立花証券API","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
@@ -6083,6 +6091,10 @@ export default function App(){
   var DEFAULT_GROUP_NAMES={1:"グループ1",2:"グループ2",3:"グループ3",4:"グループ4",5:"グループ5"};
   var fgS=useState(function(){try{var v=localStorage.getItem("fav_groups");return v?JSON.parse(v):{};}catch(e){return{};}});var favGroups=fgS[0],setFavGroups=fgS[1];
   var gnS=useState(function(){try{var v=localStorage.getItem("group_names");return v?Object.assign({},DEFAULT_GROUP_NAMES,JSON.parse(v)):Object.assign({},DEFAULT_GROUP_NAMES);}catch(e){return Object.assign({},DEFAULT_GROUP_NAMES);}});var groupNames=gnS[0],setGroupNames=gnS[1];
+  // ★の色分け用に最新のグループ情報を共有する（starStyle が参照する）。
+  // useEffect だけだと「グループ変更直後の1回の描画」が古い色のままになるため、描画時にも書き写す
+  FAV_GROUP_CACHE=favGroups;
+  useEffect(function(){FAV_GROUP_CACHE=favGroups;},[favGroups]);
   var NOTIFY_API="https://daytrade-simulator.vercel.app/api/notify";
   // 起動時のサーバー読み込みが終わるまでtrueにならない。falseの間は保存を止めて、
   // 「読み込み前の古いデータで上書きしてしまう」事故を防ぐ
@@ -6100,7 +6112,7 @@ export default function App(){
     })}).catch(function(){});
   }
   var favPickerS=useState(null);var favPickerTicker=favPickerS[0],setFavPickerTicker=favPickerS[1];
-  // groupNum: 0=全体(未分類) / 1〜5=グループ / null=お気に入り削除
+  // groupNum: 0=未分類 / 1〜5=グループ / null=お気に入り削除
   function applyFav(ticker,groupNum){setFavs(function(prev){
     var isMember=prev.indexOf(ticker)>=0;
     if(groupNum===null){
@@ -6135,9 +6147,9 @@ export default function App(){
   // ── 🏭 業種まとめ登録：出来高上位50銘柄を一括でお気に入りに入れる／保存先ごとに一括解除 ──
   var bulkOpenS=useState(false);var bulkOpen=bulkOpenS[0],setBulkOpen=bulkOpenS[1];
   var bulkSecS=useState(null);var bulkSector=bulkSecS[0],setBulkSector=bulkSecS[1];   // 選んだ業種名（1つだけ）
-  var bulkGrpS=useState(0);var bulkGroup=bulkGrpS[0],setBulkGroup=bulkGrpS[1];        // 保存先 0=全体 / 1〜4=グループ
+  var bulkGrpS=useState(0);var bulkGroup=bulkGrpS[0],setBulkGroup=bulkGrpS[1];        // 保存先 0=未分類 / 1〜4=グループ
   var bulkMsgS=useState("");var bulkMsg=bulkMsgS[0],setBulkMsg=bulkMsgS[1];           // 処理中・結果のメッセージ
-  function groupLabel(n){return n===0?"全体（未分類）":groupNames[n];}
+  function groupLabel(n){return n===0?"未分類":groupNames[n];}
   // 複数銘柄をまとめて登録（保存とサーバー同期は最後に1回だけ＝通信を節約）
   function applyFavBulk(tickers,groupNum){
     var next=favs.slice(),nextGroups=Object.assign({},favGroups);
@@ -6544,7 +6556,7 @@ export default function App(){
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
           {[0,1,2,3,4].map(function(n){
             var active=bulkGroup===n;
-            return <button key={n} onClick={function(){setBulkGroup(n);}} style={{background:active?"#fbbf2420":"transparent",border:"1px solid "+(active?"#fbbf24":"#1e3050"),borderRadius:6,color:active?"#fbbf24":"#4a6080",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{n===0?"全体":groupNames[n]}（{groupCount(n)}）</button>;
+            return <button key={n} onClick={function(){setBulkGroup(n);}} style={{background:active?"#fbbf2420":"transparent",border:"1px solid "+(active?"#fbbf24":"#1e3050"),borderRadius:6,color:active?"#fbbf24":"#4a6080",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400}}>{n===0?"未分類":groupNames[n]}（{groupCount(n)}）</button>;
           })}
         </div>
         {bulkMsg&&<div style={{fontSize:11,color:"#0ea5e9",marginBottom:8}}>{bulkMsg}</div>}
@@ -6555,7 +6567,7 @@ export default function App(){
           <div style={{fontSize:11,color:"#2a6090",marginBottom:4}}>保存先ごとに一括解除（登録した銘柄をまとめて外す）</div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {[0,1,2,3,4].map(function(n){
-              return <button key={n} onClick={function(){bulkRemoveGroup(n);}} style={{background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:6,color:"#f43f5e",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>🗑 {n===0?"全体":groupNames[n]}（{groupCount(n)}）</button>;
+              return <button key={n} onClick={function(){bulkRemoveGroup(n);}} style={{background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:6,color:"#f43f5e",padding:"4px 10px",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}>🗑 {n===0?"未分類":groupNames[n]}（{groupCount(n)}）</button>;
             })}
           </div>
         </div>
