@@ -4388,7 +4388,17 @@ function StockDetailPanel(p){
   // ※念のためクリップボードにも同時コピー（アプリが開かなかった時の保険）
   function openInClaude(){
     var dmap={};dmap[s.ticker]=daily; // 詳細画面では日足取得済み→本物の52週をプロンプトに載せる
-    var text=buildVolumeRankingPrompt([s],1,false,dmap);
+    // 立花証券のリアルタイム値が届いている時は、画面表示（● LIVE）と食い違わないよう
+    // sのコピーに現在値・前日比を上書きしてから渡す（s本体は書き換えない）
+    var ps=s;
+    if(liveTick&&liveTick.price!=null){
+      ps=Object.assign({},s,{
+        price:fmtMoney(liveTick.price,s.market==="JP"), // 表示形式（通貨記号付き文字列）はs.priceと揃える
+        rawPrice:liveTick.price,
+        change:liveTick.changePct!=null?liveTick.changePct.toFixed(2):s.change
+      });
+    }
+    var text=buildVolumeRankingPrompt([ps],1,false,dmap);
     if(text.length>13000) text=text.slice(0,13000);
     if(navigator.clipboard) navigator.clipboard.writeText(text).catch(function(){});
     window.location.href="claude://claude.ai/new?q="+encodeURIComponent(text);
