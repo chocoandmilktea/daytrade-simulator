@@ -6233,11 +6233,18 @@ var PM_CONF_R2_GAIN=20;              // r²がPM_CONF_R2_BASEから1離れるご
 var PM_CONF_MIN=5,PM_CONF_MAX=95;    // 確信度の下限・上限(%)
 var PM_DIR_DEADBAND=0.05;            // 予想ギャップがこの幅未満なら方向判定の対象外にする(%)
 var PM_HIST_MAX=90;                  // pm_<ticker> に残す件数
+                                     // ※「件数」の上限なので、srcが2種類（beta/quote）になると
+                                     // 　保持できる日数は実質半分（45営業日）になる。
+                                     // 　Phase 2でquoteを併走させる時点で引き上げを検討すること
 var PM_STATS_TTL=15*60*1000;         // 的中率集計のキャッシュ(15分)
 var PM_OPEN_MIN=9*60;                // 9:00 JST（これ以降は「答え合わせ」表示に自動で切り替える）
 var PM_BIAS_TTL=3*60*1000;           // 地合いの端末側キャッシュ(3分・サーバー側と同じ長さ)
 var PM_TODAY_TTL=5*60*1000;          // 答え合わせ用の当日日足キャッシュ(5分)
 var PM_FETCH_CONCURRENCY=4;          // 日足まとめ取得の同時実行数（Yahooに負担をかけない）
+// 予想の出どころ。今はベータ推定のみ。Phase 2で寄り前気配ベースに切り替えたら "quote" を記録する
+var PM_SRC_BETA="beta";
+var PM_SRC_LABELS={beta:"ベータ推定",quote:"寄り前気配"};
+var PM_SRC_PRIORITY=["quote","beta"];// 同じ日に複数srcの予想がある時、画面に出す優先順
 
 // ── 時刻・日付まわり ──────────────────────────────────────────────────
 function pmSign(v){return v>0?"+":"";}                       // 表示用の符号（マイナスはtoFixedが付ける）
@@ -6393,65 +6400,120 @@ function pmPredictGap(ticker,daily,benchDaily,marketBias,targetDate){
 }
 
 // ── 答え合わせの記録（localStorage: pm_<ticker>）───────────────────────
-// 1件の形式: { d:"YYYY-MM-DD", exp:予想ギャップ%, conf:確信度, act:実際のギャップ%, prevClose:前日終値 }
+// 1件の形式: { d:"YYYY-MM-DD", exp:予想ギャップ%, conf:確信度, act:実際のギャップ%, prevClose:前日終値, src:"beta" }
+// srcは予想の出どころ。同じ日・同じ銘柄でもsrcが違えば別レコードとして並存させ、
+// 同じ実績(act)に対して手法どうしを同条件で比較できるようにしている。
 var PM_STATS_CACHE=null,PM_STATS_TS=0;
 function pmHistKey(t){return "pm_"+t;}
-function pmLoadHist(t){try{return JSON.parse(localStorage.getItem(pmHistKey(t))||"[]");}catch(e){return[];}}
+function pmLoadHist(t){
+  try{
+    var list=JSON.parse(localStorage.getItem(pmHistKey(t))||"[]");
+    // src導入前に貯めた記録はベータ推定なので、読み込み時に補う（次の保存で書き戻る）
+    for(var i=0;i<list.length;i++){if(list[i]&&list[i].src==null)list[i].src=PM_SRC_BETA;}
+    return list;
+  }catch(e){return[];}
+}
 function pmSaveHist(t,list){
   try{
     localStorage.setItem(pmHistKey(t),JSON.stringify(list.slice(-PM_HIST_MAX))); // 直近90件だけ残す
     PM_STATS_CACHE=null;                                                          // 集計キャッシュを捨てる
   }catch(e){}
 }
-function pmFindRec(list,dateStr){
-  for(var i=0;i<list.length;i++){if(list[i].d===dateStr)return list[i];}
+// 日付とsrcの両方が一致する1件を探す（同じ日でもsrcが違えば別レコード）
+function pmFindRec(list,dateStr,src){
+  for(var i=0;i<list.length;i++){if(list[i].d===dateStr&&list[i].src===src)return list[i];}
   return null;
 }
-// 予想時点で exp/conf を記録（同じ日に何度開いても1件にまとまる）
-function pmRecordPrediction(ticker,dateStr,exp,conf,prevClose){
-  var list=pmLoadHist(ticker),rec=pmFindRec(list,dateStr);
+// 同じ日に複数srcの予想がある時、PM_SRC_PRIORITYの順で1件だけ選ぶ（画面の重複を防ぐため）
+function pmPickRec(list,dateStr){
+  for(var i=0;i<PM_SRC_PRIORITY.length;i++){
+    var hit=pmFindRec(list,dateStr,PM_SRC_PRIORITY[i]);
+    if(hit)return hit;
+  }
+  // 未知のsrcしか無い場合はその日の先頭を返す
+  for(var k=0;k<list.length;k++){if(list[k].d===dateStr)return list[k];}
+  return null;
+}
+// 予想時点で exp/conf を記録（同じ日・同じsrcで何度開いても1件にまとまる）
+function pmRecordPrediction(ticker,dateStr,exp,conf,prevClose,src){
+  src=src||PM_SRC_BETA;
+  var list=pmLoadHist(ticker),rec=pmFindRec(list,dateStr,src);
   if(rec){
     if(rec.act!=null)return;   // 答え合わせ済みの記録は上書きしない
     rec.exp=exp;rec.conf=conf;rec.prevClose=prevClose;
   }else{
-    list.push({d:dateStr,exp:exp,conf:conf,act:null,prevClose:prevClose});
-    list.sort(function(a,b){return a.d<b.d?-1:(a.d>b.d?1:0);});
+    list.push({d:dateStr,exp:exp,conf:conf,act:null,prevClose:prevClose,src:src});
+    // 日付の昇順。同じ日はsrc名で並べて順序を固定する
+    list.sort(function(a,b){
+      if(a.d!==b.d)return a.d<b.d?-1:1;
+      var as=a.src||"",bs=b.src||"";
+      return as<bs?-1:(as>bs?1:0);
+    });
   }
   pmSaveHist(ticker,list);
 }
-// 9:00以降に始値が取れた時点で act を埋める（予想を記録していない日は対象外）
+// 9:00以降に始値が取れた時点で act を埋める（予想を記録していない日は対象外）。
+// 実績は手法によらず同じ値なので、その日の全srcのレコードに同じ値を入れる
 function pmRecordActual(ticker,dateStr,actPct){
-  var list=pmLoadHist(ticker),rec=pmFindRec(list,dateStr);
-  if(!rec||rec.act!=null)return false;
-  rec.act=actPct;
+  var list=pmLoadHist(ticker),hit=false;
+  for(var i=0;i<list.length;i++){
+    if(list[i].d===dateStr&&list[i].act==null){list[i].act=actPct;hit=true;}
+  }
+  if(!hit)return false;
   pmSaveHist(ticker,list);
   return true;
 }
 
 // ── 的中率の集計（calcSignalAccuracy系と同じ作り）─────────────────────
-// 戻り値: {total, dirRate（方向一致率%）, avgErr（平均誤差%）, byTicker[]}
-function calcPremarketAccuracy(tickers){
-  var total=0,dirTotal=0,dirHit=0,sumErr=0,sumConf=0,byTicker=[];
-  (tickers||[]).forEach(function(ticker){
-    var hist=pmLoadHist(ticker).filter(function(r){return r&&r.act!=null&&r.exp!=null;});
-    if(!hist.length)return;
-    var t=0,dt=0,dh=0,se=0;
-    hist.forEach(function(r){
-      t++;se+=Math.abs(r.exp-r.act);sumConf+=r.conf||0;
-      // 予想がほぼゼロの日は「どちらに賭けたか」が無いので方向判定から外す
-      if(Math.abs(r.exp)>=PM_DIR_DEADBAND){dt++;if((r.exp>0)===(r.act>0))dh++;}
-    });
-    total+=t;dirTotal+=dt;dirHit+=dh;sumErr+=se;
-    byTicker.push({ticker:ticker,total:t,dirRate:dt>0?Math.round(dh/dt*100):null,avgErr:Math.round(se/t*100)/100});
-  });
+// 全体・銘柄別・src別で同じ積み方をするので、accumulateSignalStats と同じ発想で小さくまとめる
+function pmAccNew(){return {total:0,dirTotal:0,dirHit:0,sumErr:0,sumConf:0};}
+function pmAccAdd(a,r){
+  a.total++;a.sumErr+=Math.abs(r.exp-r.act);a.sumConf+=r.conf||0;
+  // 予想がほぼゼロの日は「どちらに賭けたか」が無いので方向判定から外す
+  if(Math.abs(r.exp)>=PM_DIR_DEADBAND){a.dirTotal++;if((r.exp>0)===(r.act>0))a.dirHit++;}
+}
+function pmAccDone(a){
   return {
-    total:total,
-    dirTotal:dirTotal,
-    dirRate:dirTotal>0?Math.round(dirHit/dirTotal*100):null,
-    avgErr:total>0?Math.round(sumErr/total*100)/100:null,
-    avgConf:total>0?Math.round(sumConf/total):null,
-    byTicker:byTicker.sort(function(a,b){return(b.dirRate||0)-(a.dirRate||0);})
+    total:a.total,
+    dirTotal:a.dirTotal,
+    dirRate:a.dirTotal>0?Math.round(a.dirHit/a.dirTotal*100):null,
+    avgErr:a.total>0?Math.round(a.sumErr/a.total*100)/100:null,
+    avgConf:a.total>0?Math.round(a.sumConf/a.total):null
   };
+}
+// 戻り値: {total, dirRate（方向一致率%）, avgErr（平均誤差%）, byTicker[], bySrc[]}
+// srcFilterを渡すとそのsrcの記録だけを集計する（省略時は全src）。
+// ※ total は予想の「延べ件数」。同じ日・同じ銘柄でもsrcが違えば別に数えるので、
+// 　日数×銘柄数とは一致しない。bySrcの件数を全部足すと total になる。
+function calcPremarketAccuracy(tickers,srcFilter){
+  var all=pmAccNew(),srcAcc={},byTicker=[];
+  (tickers||[]).forEach(function(ticker){
+    var hist=pmLoadHist(ticker).filter(function(r){
+      if(!r||r.act==null||r.exp==null)return false;
+      return srcFilter?r.src===srcFilter:true;
+    });
+    if(!hist.length)return;
+    var one=pmAccNew();
+    hist.forEach(function(r){
+      pmAccAdd(all,r);pmAccAdd(one,r);
+      var s=r.src||PM_SRC_BETA;
+      if(!srcAcc[s])srcAcc[s]=pmAccNew();
+      pmAccAdd(srcAcc[s],r);
+    });
+    var d=pmAccDone(one);
+    byTicker.push({ticker:ticker,total:d.total,dirRate:d.dirRate,avgErr:d.avgErr});
+  });
+  // src別の内訳（件数の多い順）
+  var bySrc=Object.keys(srcAcc).map(function(s){
+    var d=pmAccDone(srcAcc[s]);
+    d.src=s;d.label=PM_SRC_LABELS[s]||s;
+    return d;
+  }).sort(function(a,b){return b.total-a.total;});
+
+  var out=pmAccDone(all);
+  out.byTicker=byTicker.sort(function(a,b){return(b.dirRate||0)-(a.dirRate||0);});
+  out.bySrc=bySrc;
+  return out;
 }
 // お気に入り登録銘柄全体で集計（15分キャッシュ）
 function calcFavPremarketAccuracy(){
@@ -6531,7 +6593,7 @@ async function pmBuildPredictions(favTickers,force){
   var rows=await pmMapLimit(tickers,PM_FETCH_CONCURRENCY,async function(ticker){
     var daily=await fetchDaily(ticker);
     var pred=pmPredictGap(ticker,daily,benchDaily,bias,targetDate);
-    if(pred)pmRecordPrediction(ticker,targetDate,pred.expectedGapPct,pred.confidence,pred.prevClose);
+    if(pred)pmRecordPrediction(ticker,targetDate,pred.expectedGapPct,pred.confidence,pred.prevClose,PM_SRC_BETA);
     return {ticker:ticker,name:jpNameOf(ticker,ticker.replace(".T","")),pred:pred};
   });
 
@@ -6550,14 +6612,17 @@ async function pmBuildResults(favTickers,force){
   var tickers=(favTickers||[]).filter(pmIsJP);
   var today=fcTodayJST(); // 既存のJST日付ヘルパーを再利用
   var rows=await pmMapLimit(tickers,PM_FETCH_CONCURRENCY,async function(ticker){
-    var rec=pmFindRec(pmLoadHist(ticker),today);
+    // 同じ日に複数srcの予想があっても、画面には優先順の1件だけを出す
+    var rec=pmPickRec(pmLoadHist(ticker),today);
     var recent=await pmFetchRecentDaily(ticker,force);
     var act=pmActualGap(recent,today);
     var actPct=act?Math.round(act.actPct*100)/100:null;
+    // 答え合わせは表示に選ばれなかったsrcのレコードにも入る（画面は1行でも集計は全srcぶん貯まる）
     if(actPct!=null)pmRecordActual(ticker,today,actPct);
     return {
       ticker:ticker,
       name:jpNameOf(ticker,ticker.replace(".T","")),
+      src:rec?rec.src:null,
       exp:rec?rec.exp:null,
       conf:rec?rec.conf:null,
       act:actPct!=null?actPct:(rec?rec.act:null),
@@ -6795,6 +6860,7 @@ function PremarketPanel(p){
         <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}>
           <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>📊 寄り予想の的中率</div>
           <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>お気に入り銘柄の記録（pm_*）を集計。既存のスコア的中率とは別枠で貯まります</div>
+          <div style={{fontSize:10,color:"#2a6090",marginTop:2}}>件数は予想の延べ数（同じ日でも出どころが違えば別に数えます）</div>
         </div>
         {!stats||!stats.total?(
           <div style={{padding:"20px 14px",fontSize:13,color:"#4a7090",textAlign:"center"}}>
@@ -6820,6 +6886,21 @@ function PremarketPanel(p){
                 <div style={{fontSize:18,fontWeight:700,color:"#d8eeff",fontFamily:"monospace"}}>{stats.total}</div>
                 <div style={{fontSize:9,color:"#2a6090"}}>平均確信度 {stats.avgConf==null?"—":stats.avgConf+"%"}</div>
               </div>
+            </div>
+            {/* 出どころ（src）ごとの内訳。今はベータ推定だけだが、Phase 2で寄り前気配が増えると行が増える */}
+            <div style={{borderTop:"1px solid #0a1828"}}>
+              {(stats.bySrc||[]).map(function(b){
+                return(
+                  <div key={b.src} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 14px",borderBottom:"1px solid #0a1828"}}>
+                    <div style={{fontSize:12,color:"#a8c4e0"}}>{b.label}</div>
+                    <div style={{display:"flex",gap:10,fontSize:11,fontFamily:"monospace",color:"#7ab0d8"}}>
+                      <span style={{color:b.dirRate==null?"#4a7090":(b.dirRate>=50?"#22d3a0":"#f87171")}}>方向 {b.dirRate==null?"—":b.dirRate+"%"}</span>
+                      <span>誤差 {b.avgErr==null?"—":b.avgErr+"%"}</span>
+                      <span style={{color:"#2a6090"}}>{b.total}件</span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             <div style={{borderTop:"1px solid #0a1828"}}>
               {stats.byTicker.map(function(b){
