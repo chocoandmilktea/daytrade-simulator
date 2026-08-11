@@ -205,6 +205,20 @@ var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
 var DAILY_API="https://daytrade-simulator.vercel.app/api/daily";
 var TACHIBANA_WATCH_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-watch";
 var TACHIBANA_QUOTE_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-quote";
+// ── サーバー側スキャン用の銘柄リスト送信（Phase 2）─────────────────────────
+// 手動スキャンで読み込んだ銘柄をサーバー（Redis）に預けておき、
+// 場中の自動スキャン（Phase 3のスケジューラ）が同じ銘柄を対象にできるようにする。
+// あくまで「おまけ」の処理なので、失敗しても画面の動作には一切影響させない
+var SCAN_UNIVERSE_API="https://daytrade-simulator.vercel.app/api/sync?resource=scan-universe";
+function saveScanUniverse(list){
+  try{
+    var tickers=(list||[]).map(function(s){return typeof s==="string"?s:(s&&s.ticker);})
+      .filter(function(t){return !!t;});
+    if(!tickers.length)return;
+    fetch(SCAN_UNIVERSE_API,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(tickers),signal:AbortSignal.timeout(8000)}).catch(function(){});
+  }catch(e){}
+}
 
 // ── 東証33業種コード（業種名 → 4桁コード）─────────────────────────────
 // ニュースに出てきた業種にコードを添えて表示する用途と、業種まとめ登録の表示に使う
@@ -6019,7 +6033,9 @@ export default function App(){
 
   var userIdS=useState(function(){try{var id=localStorage.getItem("daytrade_uid");if(!id){id="u_"+Math.random().toString(36).slice(2,10);localStorage.setItem("daytrade_uid",id);}return id;}catch(e){return"u_default";}});var userId=userIdS[0],setUserId=userIdS[1];
   var SYNC_API="https://daytrade-simulator.vercel.app/api/sync";
-  function getAllScoreHist(){var result={};try{Object.keys(localStorage).forEach(function(k){if(k.startsWith("sh_"))result[k.slice(3)]=JSON.parse(localStorage.getItem(k)||"[]");});}catch(e){}return result;}
+  // sh_intraday_* は同期対象から除外する。自動スキャン（Phase 2以降）が始まると
+  // 1日あたり数百〜千件単位で増えるため、混ぜると同期ペイロードが肥大化して保存に失敗する
+  function getAllScoreHist(){var result={};try{Object.keys(localStorage).forEach(function(k){if(k.indexOf("sh_")!==0||k.indexOf("sh_intraday_")===0)return;result[k.slice(3)]=JSON.parse(localStorage.getItem(k)||"[]");});}catch(e){}return result;}
   var fvS=useState(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}});var favs=fvS[0],setFavs=fvS[1];
   var DEFAULT_GROUP_NAMES={1:"グループ1",2:"グループ2",3:"グループ3",4:"グループ4",5:"グループ5"};
   var fgS=useState(function(){try{var v=localStorage.getItem("fav_groups");return v?JSON.parse(v):{};}catch(e){return{};}});var favGroups=fgS[0],setFavGroups=fgS[1];
@@ -6271,6 +6287,7 @@ export default function App(){
         results.sort(function(x,y){return y.score-x.score;});
         setStocks(results);
         setTs(new Date().toLocaleTimeString("ja-JP"));
+        saveScanUniverse(universe); // 場中の自動スキャン用に、今回の銘柄リストをサーバーへ預ける
         startDayNightFill(results); // 表示後に☀️日中型を裏で取得
       },function(next,max,err,wait){
         setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});

@@ -28,6 +28,8 @@ const RELAY_SECRET = process.env.TACHIBANA_RELAY_SECRET;
 
 const GZ_PREFIX = 'gz:';
 
+const SCAN_DEFAULT_LIMIT = 5; // scan-run の limit 既定値（1バッチあたりの銘柄数）
+
 // アプリから届いたリクエストボディを、圧縮の有無にかかわらず素のオブジェクトにして返す
 function readBody(req) {
   let body = req.body;
@@ -110,6 +112,98 @@ async function handleTachibanaQuote(req, res) {
   return res.status(405).json({ error: 'method not allowed' });
 }
 
+// ── サーバー側スキャン（Phase 2）の窓口 ──────────────────────────────────
+// 実処理は api/_scan.js。ここは受け口だけ。立花中継と同じく、Vercel Hobbyの
+// 関数12個制限を消費しないよう sync.js に相乗りさせている。
+//
+// _scan.js は api/stock.js（xlsx読み込みを含む）と src/lib/analyze.js を読み込むため、
+// ファイル先頭で静的importすると、スキャンと無関係な呼び出し（デバイス間同期・
+// 立花中継。60秒おきに叩かれる）のコールドスタートまで重くなる。
+// そのため scan-* が呼ばれた時だけ動的importで読み込む。
+
+// ① 銘柄リストの保存・取得（POST: 配列を保存 / GET: 現在のリストを返す）
+async function handleScanUniverse(req, res) {
+  if (req.method === 'POST') {
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (e) { return res.status(400).json({ error: 'invalid json' }); }
+    }
+    // 配列そのままでも {tickers:[...]} でも受け付ける
+    const list = Array.isArray(body) ? body : (body && Array.isArray(body.tickers) ? body.tickers : null);
+    if (!list) return res.status(400).json({ error: 'array required' });
+    try {
+      const { saveUniverse } = await import('./_scan.js');
+      await saveUniverse(list);
+      return res.status(200).json({ ok: true, count: list.length });
+    } catch (e) {
+      return res.status(500).json({ error: 'save failed: ' + e.message });
+    }
+  }
+  if (req.method === 'GET') {
+    try {
+      const { loadUniverse } = await import('./_scan.js');
+      const list = await loadUniverse();
+      return res.status(200).json({ count: list.length, universe: list });
+    } catch (e) {
+      return res.status(500).json({ error: 'load failed: ' + e.message });
+    }
+  }
+  return res.status(405).json({ error: 'method not allowed' });
+}
+
+// ② スキャンの実行（Phase 3のスケジューラ＝Railwayから叩かれる）
+// 外部から自由に実行されると外部APIへの負荷になるため、立花中継と同じ
+// X-Relay-Secret による認証を必須にする
+async function handleScanRun(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' });
+  if (!RELAY_SECRET || req.headers['x-relay-secret'] !== RELAY_SECRET) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  let body = req.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch (e) { return res.status(400).json({ error: 'invalid json' }); }
+  }
+  body = body || {};
+  try {
+    const { runScanBatch } = await import('./_scan.js');
+    const result = await runScanBatch({
+      date: body.date,
+      slot: body.slot,
+      offset: body.offset,
+      limit: body.limit != null ? body.limit : SCAN_DEFAULT_LIMIT,
+    });
+    // universe未登録・slot不正などは処理不能なので400で返す（呼び出し側が止められるように）
+    if (result.error && result.done == null) return res.status(400).json(result);
+    // 取得はできたがRedis保存に失敗した場合は500（呼び出し側がリトライを判断できるように）
+    if (result.error) return res.status(500).json(result);
+    return res.status(200).json(result);
+  } catch (e) {
+    return res.status(500).json({ error: 'scan failed: ' + e.message });
+  }
+}
+
+// ③ 保存された結果の確認（動作確認用。フロントへの取り込みはPhase 4）
+async function handleScanResult(req, res) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ error: 'date required' });
+  try {
+    const { resultKey, SLOT_SESSIONS } = await import('./_scan.js');
+    const slots = Object.keys(SLOT_SESSIONS);
+    const values = await redis.mget(...slots.map(function (slot) { return resultKey(date, slot); }));
+    const out = {};
+    let totalCount = 0;
+    slots.forEach(function (slot, i) {
+      let v = values[i];
+      if (typeof v === 'string') { try { v = JSON.parse(v); } catch (e) { v = null; } }
+      if (Array.isArray(v)) { out[slot] = v; totalCount += v.length; }
+    });
+    return res.status(200).json({ date: date, totalCount: totalCount, slots: out });
+  } catch (e) {
+    return res.status(500).json({ error: 'load failed: ' + e.message });
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -119,6 +213,9 @@ export default async function handler(req, res) {
   const { resource } = req.query;
   if (resource === 'tachibana-watch') return handleTachibanaWatch(req, res);
   if (resource === 'tachibana-quote') return handleTachibanaQuote(req, res);
+  if (resource === 'scan-universe') return handleScanUniverse(req, res);
+  if (resource === 'scan-run') return handleScanRun(req, res);
+  if (resource === 'scan-result') return handleScanResult(req, res);
 
   // ここから下はデバイス間同期処理
   const { userId } = req.query;
