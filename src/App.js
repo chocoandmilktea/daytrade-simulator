@@ -732,8 +732,10 @@ function editTradeRecord(kind,id,updates){
       // 売り価格、損切りで終わったトレードは損切り価格を反映し、それ以外（引け決済・強制完了）は
       // 記録済みの決済価格をそのまま残す。※以前は常に売り価格で上書きしていたため、
       // 損切りで終わったトレードを編集すると損益が「利確した場合の数字」に化けていた
-      if(t.exitReason==="take_profit"&&updates.sellPrice!=null)next.endPrice=updates.sellPrice;
-      else if(t.exitReason==="stop_loss"&&updates.stopPrice!=null)next.endPrice=updates.stopPrice;
+      // endPriceが直接渡された場合（決済理由の手動切替）はそれを優先する
+      if(updates.endPrice==null&&updates.sellPrice!=null){
+        next.endPrice=(next.exitReason==="stop_loss"&&next.stopPrice!=null)?next.stopPrice:updates.sellPrice;
+      }
       var pnlPerShare=next.endPrice-next.startPrice;
       next.pnl=pnlPerShare*(next.shares||1);
       next.pnlPercent=next.startPrice?(pnlPerShare/next.startPrice*100):0;
@@ -4548,6 +4550,25 @@ function TradeDetailModal(p){
             <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
           </div>
         </div>
+
+        {t.status==="done"&&!editing&&(
+          // 決済理由の手動切替（決済価格・損益も連動して再計算される）
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={function(){p.onEditTrade(kind,t.id,{exitReason:"take_profit",endPrice:t.sellPrice});}}
+              style={{flex:1,padding:"6px 2px",fontSize:11,fontWeight:700,borderRadius:5,cursor:"pointer",
+                border:t.exitReason==="take_profit"?"1px solid #22d3a0":"1px solid #1e3050",
+                background:t.exitReason==="take_profit"?"#22d3a020":"transparent",
+                color:t.exitReason==="take_profit"?"#22d3a0":"#4a6080"}}>利確</button>
+            <button onClick={function(){
+                if(t.stopPrice==null){alert("損切り価格が未設定です。✏️から設定してください");return;}
+                p.onEditTrade(kind,t.id,{exitReason:"stop_loss",endPrice:t.stopPrice});
+              }}
+              style={{flex:1,padding:"6px 2px",fontSize:11,fontWeight:700,borderRadius:5,cursor:"pointer",
+                border:t.exitReason==="stop_loss"?"1px solid #f43f5e":"1px solid #1e3050",
+                background:t.exitReason==="stop_loss"?"#f43f5e20":"transparent",
+                color:t.exitReason==="stop_loss"?"#f43f5e":"#4a6080"}}>損切り</button>
+          </div>
+        )}
 
         {editing?(
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
