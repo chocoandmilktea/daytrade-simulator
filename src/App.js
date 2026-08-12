@@ -1847,6 +1847,166 @@ if(typeof window!=="undefined"){
 }
 // ──────────────────────────────────────────────────────────────────────
 
+// ── サーバー自動スキャンの結果を取り込む（Phase 4）─────────────────────────
+// サーバー側が日付・時間帯ごとにRedisへ貯めている結果（api/sync.js?resource=scan-result）を
+// 端末の sh_intraday_<ticker> にマージする。これで手動スキャンをしなくても
+// 「⏰時間帯別 的中率」が自動で溜まっていく。
+// 取り込んだ日付は SCAN_IMPORT_KEY に控え、同じ日を何度も取りに行かない
+// （当日ぶんだけは時間帯が増え続けるため毎回取り直す）。
+var SCAN_RESULT_API="https://daytrade-simulator.vercel.app/api/sync?resource=scan-result";
+var SCAN_IMPORT_KEY="scan_import_state"; // {days:{"YYYY-MM-DD":取り込み件数},last:最終実行時刻}
+var SCAN_IMPORT_DAYS=7;                  // さかのぼって取りに行く日数
+var SCAN_IMPORT_MIN_INTERVAL=5*60*1000;  // 画面復帰での連打防止（5分）
+var INTRADAY_KEEP_DAYS=10;               // sh_intraday_* を残す営業日数（localStorage 5MB対策）
+
+// slot（"1300"などのHHMM）→ 記録時刻。サーバーは時刻(t)を持たないためslotから機械的に作る
+function slotToTime(slot){
+  var s=String(slot);
+  return /^\d{4}$/.test(s)?s.slice(0,2)+":"+s.slice(2):null;
+}
+// 時間帯ラベルの代表時刻（分）。tを持たない古い記録を並べ替えるための代用値
+var SESSION_MIN={"寄り前":8*60+30,"寄り付き":9*60+30,"前場":10*60+45,"後場前半":13*60,"後場後半":14*60+45};
+function entryMinutes(e){
+  var m=hhmmToMin(e&&e.t);
+  if(m!=null) return m;
+  return (e&&SESSION_MIN[e.session]!=null)?SESSION_MIN[e.session]:null;
+}
+function loadScanImportState(){
+  try{
+    var v=JSON.parse(localStorage.getItem(SCAN_IMPORT_KEY)||"{}");
+    if(!v||typeof v!=="object") return{days:{},last:0};
+    if(!v.days||typeof v.days!=="object") v.days={};
+    return v;
+  }catch(e){return{days:{},last:0};}
+}
+function saveScanImportState(st){try{localStorage.setItem(SCAN_IMPORT_KEY,JSON.stringify(st));}catch(e){}}
+
+// 直近INTRADAY_KEEP_DAYS営業日のうち、いちばん古い日付を返す（これより前は削除対象）
+function intradayCutoffDate(){
+  var count=0;
+  for(var i=0;i<90;i++){
+    var info=jstInfo(-i);
+    if(info.dow===0||info.dow===6||JP_HOLIDAYS[info.key]) continue;
+    count++;
+    if(count>=INTRADAY_KEEP_DAYS) return info.key;
+  }
+  return jstInfo(-INTRADAY_KEEP_DAYS*2).key; // 祝日表が切れている場合の保険
+}
+// cutoffより古い日付の記録を捨てる。200銘柄×5回＝1日1000件のペースで増えるため、
+// これが無いと2週間ほどでlocalStorageの上限に達し、保存が黙って失敗し始める
+function pruneIntradayHist(cutoff){
+  var removed=0;
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_intraday_")!==0) return;
+      var hist;try{hist=JSON.parse(localStorage.getItem(k)||"[]");}catch(e){hist=[];}
+      if(!hist.length) return;
+      var kept=hist.filter(function(e){return e&&e.d&&e.d>=cutoff;});
+      if(kept.length===hist.length) return;
+      removed+=hist.length-kept.length;
+      try{
+        if(kept.length) localStorage.setItem(k,JSON.stringify(kept));
+        else localStorage.removeItem(k);
+      }catch(e){}
+    });
+  }catch(e){}
+  return removed;
+}
+// 1日ぶんの結果（slot→行の配列）を sh_intraday_* にマージする。戻り値は取り込んだ件数。
+// 同じ日付(d)・同じ時間帯(session)の記録が既にあれば上書きし、それ以外は追加する
+function mergeScanResultDay(date,slots){
+  var byTicker={},count=0;
+  Object.keys(slots).sort().forEach(function(slot){ // slot（HHMM）順＝時刻の早い順
+    var rows=slots[slot];
+    if(!Array.isArray(rows)) return;
+    rows.forEach(function(r){
+      if(!r||!r.ticker||!r.session) return;
+      (byTicker[r.ticker]=byTicker[r.ticker]||[]).push({slot:slot,row:r});
+      count++;
+    });
+  });
+  Object.keys(byTicker).forEach(function(ticker){
+    var hist=loadIntradayHist(ticker);
+    byTicker[ticker].forEach(function(x){
+      var r=x.row;
+      // 既存の保存形式（キー名・項目名・順序）にそろえる。サーバーは判定キー(v)を持たないためnull。
+      // sigは点灯中（#0以外）だけ残す＝手動スキャンが保存している中身と同じにする
+      var entry={
+        d:date,session:r.session,t:slotToTime(x.slot),s:r.score,p:r.price,
+        sig:(r.sigKeys||[]).filter(function(key){return key.slice(-2)!=="#0";}),
+        v:null
+      };
+      var idx=-1;
+      for(var i=0;i<hist.length;i++){
+        if(hist[i]&&hist[i].d===date&&hist[i].session===r.session){idx=i;break;}
+      }
+      if(idx>=0) hist[idx]=entry; else hist.push(entry);
+    });
+    // 日付順（同じ日は時刻順）に並べ替える。集計側が「その日の最後の記録＝引け」を
+    // 前提にしているため、順序が狂うと的中率が誤る
+    hist.sort(function(a,b){
+      if(a.d!==b.d) return a.d<b.d?-1:1;
+      var ma=entryMinutes(a),mb=entryMinutes(b);
+      if(ma==null||mb==null) return 0; // 時刻も時間帯も分からない記録は元の並びのまま
+      return ma-mb;
+    });
+    try{localStorage.setItem("sh_intraday_"+ticker,JSON.stringify(hist));}catch(e){}
+  });
+  return count;
+}
+var SCAN_IMPORT_BUSY=false; // 二重起動の防止
+// 未取り込みの日付ぶんだけ取得してマージし、最後に古い記録を削除する。
+// 通信に失敗した日は「取り込み済み」にせず次の機会に回す（画面の動作には影響させない）
+function runScanImport(force){
+  if(SCAN_IMPORT_BUSY) return Promise.resolve(false);
+  var st=loadScanImportState(),now=Date.now();
+  if(!force&&st.last&&now-st.last<SCAN_IMPORT_MIN_INTERVAL) return Promise.resolve(false);
+  SCAN_IMPORT_BUSY=true;
+  var today=jstInfo(0).key,targets=[];
+  for(var i=SCAN_IMPORT_DAYS-1;i>=0;i--){ // 古い日から順に取り込む
+    var info=jstInfo(-i);
+    if(info.dow===0||info.dow===6||JP_HOLIDAYS[info.key]) continue; // 休場日は結果が無い
+    if(info.key!==today&&st.days[info.key]!=null) continue;         // 取り込み済み（当日だけ毎回）
+    targets.push(info.key);
+  }
+  var imported=0,chain=Promise.resolve();
+  targets.forEach(function(date){
+    chain=chain.then(function(){
+      return fetch(SCAN_RESULT_API+"&date="+date,{cache:"no-store",signal:AbortSignal.timeout(10000)})
+        .then(function(r){if(!r.ok)throw new Error("http "+r.status);return r.json();})
+        .then(function(json){
+          if(!json||!json.slots) return;
+          st.days[date]=mergeScanResultDay(date,json.slots);
+          imported+=st.days[date];
+        })
+        .catch(function(){}); // 失敗した日は記録しない＝次回また取りに行く
+    });
+  });
+  return chain.then(function(){
+    var cutoff=intradayCutoffDate();
+    pruneIntradayHist(cutoff);
+    Object.keys(st.days).forEach(function(d){if(d<cutoff)delete st.days[d];}); // 表示件数も保持ぶんに合わせる
+    st.last=Date.now();
+    saveScanImportState(st);
+    if(imported>0){
+      // 集計キャッシュを捨て、次の描画で新しい記録が反映されるようにする
+      INTRADAY_ACC_TS=0;INTRADAY_SIG_TS=0;VERDICT_ACC_TS=0;
+      try{window.dispatchEvent(new Event("scanimport"));}catch(e){}
+    }
+    SCAN_IMPORT_BUSY=false;
+    return imported>0;
+  }).catch(function(){SCAN_IMPORT_BUSY=false;return false;});
+}
+// 「⏰時間帯別 的中率」の上に出す取り込み状況（1行）。1件も無ければnull
+function getScanImportStatus(){
+  var st=loadScanImportState(),total=0;
+  var dates=Object.keys(st.days).filter(function(d){return st.days[d]>0;}).sort();
+  dates.forEach(function(d){total+=st.days[d];});
+  if(!dates.length) return null;
+  var p=dates[dates.length-1].split("-");
+  return{latest:parseInt(p[1],10)+"/"+parseInt(p[2],10),total:total};
+}
+
 // 初動スコアの表示色。60点以上＝候補、40〜59＝一応見る、それ未満は非表示
 function momentumInfo(m){
   if(!m||m.score<40) return null;
@@ -4924,7 +5084,15 @@ function SignalAccuracyContent(p){
   var horizons=[{k:"d1",h:"1日後"},{k:"d3",h:"3日後"},{k:"d5",h:"5日後"}];
   var chrAcc=calcChronosAccuracy(),chrV=chronosVerdict(chrAcc);
   var intradayAcc=calcIntradayAccuracy();
+  var scanImp=getScanImportStatus();
   var verdictAcc=calcVerdictAccuracy();
+  // 自動スキャン結果の取り込みが終わったら、その場で数値を描き直す
+  var impS=useState(0);
+  useEffect(function(){
+    function onImported(){impS[1](function(v){return v+1;});}
+    window.addEventListener("scanimport",onImported);
+    return function(){window.removeEventListener("scanimport",onImported);};
+  },[]);
   var regime=getRegimeSignalStats();
   var phase=getTrendPhaseSignalStats();
   // トレンド局面別：初動・過熱の両方で5件以上あるシグナルを、差が大きい順に最大12件
@@ -5129,6 +5297,10 @@ function SignalAccuracyContent(p){
       </div>
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>⏰ 時間帯別 的中率（当日終値との比較）</div>
+        {/* サーバー自動スキャンの取り込み状況（Phase 4） */}
+        <div style={{fontSize:11,color:scanImp?"#22d3a0":"#4a7090",marginBottom:4}}>
+          {scanImp?("自動収集: "+scanImp.latest+"まで取り込み済み（"+scanImp.total.toLocaleString()+"件）"):"自動収集データがまだありません"}
+        </div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>その時間帯にスコア60点以上だった銘柄が、その日の引け（後場後半か引け後の最後のスキャン）までに上がっていたかを集計。始点と1時間以上離れたペアのみ対象です。翌営業日ではなく“当日中”の答え合わせです</div>
         {intradayAcc.every(function(s){return s.total===0;})?(
           <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。1日に複数回スキャンすると溜まっていきます</div>
@@ -6609,6 +6781,15 @@ export default function App(){
       setLoading(false);
     }
   },[stocks,vix]);
+  // ── サーバー自動スキャン結果の取り込み（Phase 4）─────────────────────────
+  // 起動時に1回。以降はタブに戻ってきた時だけ（前回から5分未満なら実行しない）。
+  // 失敗しても何もしない＝画面の動作には影響させない
+  useEffect(function(){
+    runScanImport(true);
+    function onVisible(){if(document.visibilityState==="visible")runScanImport(false);}
+    document.addEventListener("visibilitychange",onVisible);
+    return function(){document.removeEventListener("visibilitychange",onVisible);};
+  },[]);
   useEffect(function(){
     fetch(VERCEL_API+"?ticker="+encodeURIComponent("^VIX")+"&range=5d")
       .then(function(r){return r.json();})
