@@ -6091,6 +6091,22 @@ function PremarketPanel(p){
   var errS=useState("");var err=errS[0],setErr=errS[1];
   var updS=useState("");var lastUpd=updS[0],setLastUpd=updS[1];
   var afterS=useState(pmIsAfterOpen());var afterOpen=afterS[0],setAfterOpen=afterS[1];
+  var pqCopyS=useState(false);var pqCopied=pqCopyS[0],setPqCopied=pqCopyS[1];
+
+  // 気配スナップショット（pq_*）をまとめてクリップボードへ。iPadからでも取り出せるように
+  function copyPqAll(){
+    var obj={};
+    try{
+      for(var i=0;i<localStorage.length;i++){
+        var k=localStorage.key(i);
+        if(!k||k.indexOf("pq_")!==0) continue;
+        obj[k]=JSON.parse(localStorage.getItem(k)||"[]");
+      }
+    }catch(e){}
+    var text=JSON.stringify(obj);
+    if(navigator.clipboard){navigator.clipboard.writeText(text).then(function(){setPqCopied(true);setTimeout(function(){setPqCopied(false);},2000);});}
+    else{prompt("気配スナップショット",text);}
+  }
 
   // 9:00をまたいだら自動で「答え合わせ」表示へ切り替える（1分ごとに確認）
   useEffect(function(){
@@ -6367,8 +6383,11 @@ function PremarketPanel(p){
       {(function(){
         var c=pqCountAll();
         return(
-          <div style={{fontSize:11,color:"#4a7090",padding:"0 4px 4px"}}>
-            気配スナップショット: {c.days}日分 / {c.total}件（Phase 2B の校正用）
+          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:"#4a7090",padding:"0 4px 4px"}}>
+            <span>気配スナップショット: {c.days}日分 / {c.total}件（Phase 2B の校正用）</span>
+            <button onClick={copyPqAll} disabled={c.total===0} style={{marginLeft:"auto",background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:c.total===0?"#2a4560":"#b8cce0",padding:"4px 9px",fontSize:11,fontWeight:700,cursor:c.total===0?"default":"pointer",fontFamily:"monospace",flexShrink:0}}>
+              {pqCopied?"✅ コピーしました":"📋 コピー"}
+            </button>
           </div>
         );
       })()}
