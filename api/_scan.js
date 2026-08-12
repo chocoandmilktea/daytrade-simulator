@@ -174,7 +174,12 @@ export async function runScanBatch(opts) {
   var session = sessionFromSlot(slot);
   if (!session) return { error: "unknown slot: " + slot };
 
-  var universe = await loadUniverse();
+  // 自動スキャンは日本時間の日中に走るため、米国株は市場が閉まっていて前日終値しか
+  // 取れない。統計を汚すうえに実行時間も無駄になるので、日本株（".T"）だけに絞る。
+  var universe = (await loadUniverse()).filter(function (entry) {
+    var s = normalizeStock(entry);
+    return !!(s && s.ticker.endsWith(".T"));
+  });
   if (!universe.length) return { error: "universe empty" };
 
   var total = universe.length;
