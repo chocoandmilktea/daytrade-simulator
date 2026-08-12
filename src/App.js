@@ -6206,8 +6206,23 @@ function PremarketPanel(p){
       }
     }catch(e){}
     var text=JSON.stringify(obj);
-    if(navigator.clipboard){navigator.clipboard.writeText(text).then(function(){setPqCopied(true);setTimeout(function(){setPqCopied(false);},2000);});}
-    else{prompt("気配スナップショット",text);}
+    var done=function(){setPqCopied(true);setTimeout(function(){setPqCopied(false);},2000);};
+    // iPadのSafariなどclipboard APIが拒否される環境があるため、失敗したら旧方式で入れ直す
+    var legacy=function(){
+      try{
+        var ta=document.createElement("textarea");
+        ta.value=text;ta.style.position="fixed";ta.style.top="0";ta.style.opacity="0";
+        document.body.appendChild(ta);ta.focus();ta.select();ta.setSelectionRange(0,text.length);
+        var ok=document.execCommand("copy");
+        document.body.removeChild(ta);
+        if(ok){done();return;}
+      }catch(e){}
+      prompt("気配スナップショット（手動でコピーしてください）",text);
+    };
+    try{
+      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(legacy);
+      else legacy();
+    }catch(e){legacy();}
   }
 
   // 9:00をまたいだら自動で「答え合わせ」表示へ切り替える（1分ごとに確認）
@@ -6267,6 +6282,19 @@ function PremarketPanel(p){
 
   return(
     <div>
+      {/* 寄り前気配スナップショット（pq_*）の貯まり具合と取り出し。件数だけの確認用 */}
+      {(function(){
+        var c=pqCountAll();
+        return(
+          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:"#4a7090",padding:"0 4px 8px"}}>
+            <span>気配スナップショット: {c.days}日分 / {c.total}件（Phase 2B の校正用）</span>
+            <button onClick={copyPqAll} disabled={c.total===0} style={{marginLeft:"auto",background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:c.total===0?"#2a4560":"#b8cce0",padding:"4px 9px",fontSize:11,fontWeight:700,cursor:c.total===0?"default":"pointer",fontFamily:"monospace",flexShrink:0}}>
+              {pqCopied?"✅ コピーしました":"📋 コピー"}
+            </button>
+          </div>
+        );
+      })()}
+
       {/* ── 上段：今朝の地合いサマリー ───────────────────────────── */}
       <div style={cardStyle}>
         <div style={headStyle}>
@@ -6481,18 +6509,6 @@ function PremarketPanel(p){
         )}
       </div>
 
-      {/* 寄り前気配スナップショット（pq_*）の貯まり具合。件数だけの確認用 */}
-      {(function(){
-        var c=pqCountAll();
-        return(
-          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:"#4a7090",padding:"0 4px 4px"}}>
-            <span>気配スナップショット: {c.days}日分 / {c.total}件（Phase 2B の校正用）</span>
-            <button onClick={copyPqAll} disabled={c.total===0} style={{marginLeft:"auto",background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:c.total===0?"#2a4560":"#b8cce0",padding:"4px 9px",fontSize:11,fontWeight:700,cursor:c.total===0?"default":"pointer",fontFamily:"monospace",flexShrink:0}}>
-              {pqCopied?"✅ コピーしました":"📋 コピー"}
-            </button>
-          </div>
-        );
-      })()}
     </div>
   );
 }
