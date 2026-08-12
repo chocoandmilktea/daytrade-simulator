@@ -6194,6 +6194,10 @@ function PremarketPanel(p){
   var updS=useState("");var lastUpd=updS[0],setLastUpd=updS[1];
   var afterS=useState(pmIsAfterOpen());var afterOpen=afterS[0],setAfterOpen=afterS[1];
   var pqCopyS=useState(false);var pqCopied=pqCopyS[0],setPqCopied=pqCopyS[1];
+  // 各カードの開閉。銘柄が多いとスクロールが長くなるため、下段の的中率は既定で閉じておく
+  var opMkS=useState(true);var opMk=opMkS[0],setOpMk=opMkS[1];    // 🌅今朝の地合い
+  var opLsS=useState(true);var opLs=opLsS[0],setOpLs=opLsS[1];    // 予想一覧／答え合わせ
+  var opStS=useState(false);var opSt=opStS[0],setOpSt=opStS[1];   // 📊的中率
 
   // 気配スナップショット（pq_*）をまとめてクリップボードへ。iPadからでも取り出せるように
   function copyPqAll(){
@@ -6298,8 +6302,8 @@ function PremarketPanel(p){
       {/* ── 上段：今朝の地合いサマリー ───────────────────────────── */}
       <div style={cardStyle}>
         <div style={headStyle}>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>🌅 今朝の地合い</div>
+          <div onClick={function(){setOpMk(!opMk);}} style={{minWidth:0,cursor:"pointer"}}>
+            <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{opMk?"▼":"▶"} 🌅 今朝の地合い</div>
             <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>
               {data?("予想対象日: "+data.targetDate):"読み込み中..."}{lastUpd?" ・ 更新 "+lastUpd:""}
             </div>
@@ -6309,7 +6313,7 @@ function PremarketPanel(p){
             {loading?"取得中...":"🔄 更新"}
           </button>
         </div>
-        <div style={{padding:"12px 14px"}}>
+        {opMk&&<div style={{padding:"12px 14px"}}>
           <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:10}}>
             <span style={{fontSize:11,color:"#4a7090"}}>総合（想定ギャップ）</span>
             <span style={{fontSize:24,fontWeight:700,color:biasCol,fontFamily:"monospace"}}>{fmtPm(bias)}</span>
@@ -6329,7 +6333,7 @@ function PremarketPanel(p){
           </div>
           {market&&market.missing&&market.missing.length>0&&
             <div style={{fontSize:10,color:"#4a7090",marginTop:8}}>取得できず除外: {market.missing.map(function(m){return m.label;}).join(" / ")}</div>}
-        </div>
+        </div>}
       </div>
 
       {err&&<div style={{background:"#3a0a0a",border:"1px solid #f43f5e",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#fca5a5",marginBottom:10}}>{err}</div>}
@@ -6340,9 +6344,9 @@ function PremarketPanel(p){
 
       {/* ── 中段：予想一覧 / 9:00以降は答え合わせ ─────────────────── */}
       <div style={cardStyle}>
-        <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}>
+        <div onClick={function(){setOpLs(!opLs);}} style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px",cursor:"pointer"}}>
           <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>
-            {afterOpen?"✅ 予想 vs 実際の始値":"📋 お気に入りの寄り予想"}
+            {opLs?"▼":"▶"} {afterOpen?"✅ 予想 vs 実際の始値":"📋 お気に入りの寄り予想"}
           </div>
           <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>
             {afterOpen
@@ -6351,7 +6355,7 @@ function PremarketPanel(p){
           </div>
         </div>
 
-        {!favKey?(
+        {opLs&&(!favKey?(
           <div style={{padding:"20px 14px",fontSize:13,color:"#4a7090",textAlign:"center"}}>お気に入りに日本株が登録されていません</div>
         ):loading&&!data?(
           <div style={{padding:"24px 14px",fontSize:13,color:"#4a90c0",textAlign:"center"}}>日足とベータを計算中...</div>
@@ -6439,17 +6443,17 @@ function PremarketPanel(p){
               );
             })}
           </div>
-        )}
+        ))}
       </div>
 
       {/* ── 下段：過去の的中率サマリー ────────────────────────────── */}
       <div style={cardStyle}>
-        <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}>
-          <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>📊 寄り予想の的中率</div>
+        <div onClick={function(){setOpSt(!opSt);}} style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px",cursor:"pointer"}}>
+          <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{opSt?"▼":"▶"} 📊 寄り予想の的中率</div>
           <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>お気に入り銘柄の記録（pm_*）を集計。既存のスコア的中率とは別枠で貯まります</div>
           <div style={{fontSize:10,color:"#2a6090",marginTop:2}}>件数は予想の延べ数（同じ日でも出どころが違えば別に数えます）</div>
         </div>
-        {!stats||!stats.total?(
+        {opSt&&(!stats||!stats.total?(
           <div style={{padding:"20px 14px",fontSize:13,color:"#4a7090",textAlign:"center"}}>
             まだ答え合わせ済みの記録がありません（寄り付き前に予想を作り、9:00以降にこのタブを開くと貯まります）
           </div>
@@ -6506,7 +6510,7 @@ function PremarketPanel(p){
               })}
             </div>
           </div>
-        )}
+        ))}
       </div>
 
     </div>
