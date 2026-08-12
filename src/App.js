@@ -3000,6 +3000,120 @@ function findThickLevels(levels){
   return valid.filter(function(l){return l.vol>=avg*THICK_ORDER_MULTIPLIER;});
 }
 
+// ── 寄り前（板寄せ）判定 ─────────────────────────────────────────────────
+// 時刻ではなく立花証券の「気配値種類」で判定する。p_1_QAS(売)・p_1_QBS(買)は
+// 寄り前が "0107"、ザラ場が "0101" で配信されるため、8:00〜9:00という時計まかせの
+// 判定（boardSessionLabel）より確実に板寄せ中かどうかが分かる。
+// 板寄せ中は売買の10本板が拮抗する仕組みなので、GAV/GBVの比率から需給を読む
+// 既存ロジック（板の勢い・見せ板・板スコア補正）は誤作動する。呼び出し側でガードする。
+var PRE_OPEN_QUOTE_SIGN="0107";
+function isPreOpenQuote(quote){
+  if(!quote||!quote.fields) return false;
+  var f=quote.fields;
+  return String(f.p_1_QAS||"")===PRE_OPEN_QUOTE_SIGN||String(f.p_1_QBS||"")===PRE_OPEN_QUOTE_SIGN;
+}
+// 寄り前の需給を成行注文ベースで取り出す。板寄せでは10本板が拮抗するため、
+// 偏りが出るのは成行数量(AAV/ABV)とOVER/UNDER(QOV/QUV)の方。
+// p_1_GAP1/GBP1 …売・買の気配値（特別気配で片側しか出ない場合は出ている方を使う）
+// p_1_PRP …前日終値、p_1_DOP …当日始値
+function preOpenDemand(quote){
+  if(!quote||!quote.fields) return null;
+  var f=quote.fields;
+  function num(v){var n=Number(v);return isFinite(n)?n:null;}
+  var aav=num(f.p_1_AAV),abv=num(f.p_1_ABV);   // 売成行数量・買成行数量
+  var qov=num(f.p_1_QOV),quv=num(f.p_1_QUV);   // 売OVER・買UNDER
+  var gap=num(f.p_1_GAP1),gbp=num(f.p_1_GBP1); // 売気配値・買気配値
+  var prp=num(f.p_1_PRP);                      // 前日終値
+  var qp=null;
+  if(gap>0&&gbp>0) qp=(gap+gbp)/2;
+  else if(gap>0) qp=gap;
+  else if(gbp>0) qp=gbp;
+  var mkTotal=(aav||0)+(abv||0),ouTotal=(qov||0)+(quv||0);
+  return{
+    aav:aav,abv:abv,qov:qov,quv:quv,prp:prp,qp:qp,
+    mkBuyPct:mkTotal>0?(abv||0)/mkTotal*100:null,   // 成行の買い比率
+    ouBuyPct:ouTotal>0?(quv||0)/ouTotal*100:null,   // UNDER（買い待ち）の比率
+    gapPct:(qp!=null&&prp>0)?(qp-prp)/prp*100:null  // 前日終値からの乖離%
+  };
+}
+
+// ── 寄り前気配のスナップショット記録（localStorage: pq_<ticker>）─────────────
+// Phase 2Bで「寄り前気配 → 実際の始値」の補正係数を決めるための実測データ集め。
+// 1件の形式: { d:"YYYY-MM-DD", t:"HH:MM", qp:気配値, prp:前日終値, aav, abv, qov, quv, dop:実際の始値 }
+// ※ pm_<ticker>（寄り予想の答え合わせ）とは別枠。この記録は予想には一切使わない。
+var PQ_SLOT_MIN=5;        // 記録間隔（分）。同じスロットには1件だけ残す
+var PQ_KEEP_DAYS=30;      // 保持する日数（日付ベースで古い日から捨てる）
+var PQ_OPEN_MIN=9*60;     // 9:00 JST。これ以降にp_1_DOPが取れたら始値として書き込む
+function pqKey(t){return "pq_"+t;}
+function pqLoad(t){
+  try{var list=JSON.parse(localStorage.getItem(pqKey(t))||"[]");return Array.isArray(list)?list:[];}
+  catch(e){return[];}
+}
+// 直近PQ_KEEP_DAYS日分だけ残して保存する
+function pqSave(t,list){
+  try{
+    var days=[],seen={};
+    for(var i=0;i<list.length;i++){var d=list[i]&&list[i].d;if(d&&!seen[d]){seen[d]=1;days.push(d);}}
+    if(days.length>PQ_KEEP_DAYS){
+      days.sort();
+      var keep={};
+      days.slice(-PQ_KEEP_DAYS).forEach(function(d){keep[d]=1;});
+      list=list.filter(function(r){return r&&keep[r.d];});
+    }
+    localStorage.setItem(pqKey(t),JSON.stringify(list));
+  }catch(e){}
+}
+function pqPad2(n){return(n<10?"0":"")+n;}
+// 今のJST日付と、5分単位に切り下げた時刻を返す（切り下げが重複記録よけを兼ねる）
+function pqNowSlot(){
+  var jst=new Date(Date.now()+9*3600000);
+  var h=jst.getUTCHours(),m=jst.getUTCMinutes();
+  return{
+    d:jst.toISOString().slice(0,10),
+    t:pqPad2(h)+":"+pqPad2(Math.floor(m/PQ_SLOT_MIN)*PQ_SLOT_MIN),
+    min:h*60+m
+  };
+}
+// 寄り前の間だけ、5分スロットごとに1件記録する
+function pqRecordSnapshot(ticker,quote){
+  if(!ticker||!quote||quote.stale) return;
+  if(!isPreOpenQuote(quote)) return;
+  var q=preOpenDemand(quote);
+  if(!q||q.qp==null) return;   // 気配値が付いていない間は記録しない
+  var slot=pqNowSlot();
+  var list=pqLoad(ticker);
+  for(var i=0;i<list.length;i++){if(list[i]&&list[i].d===slot.d&&list[i].t===slot.t) return;} // 同じスロットは1件だけ
+  list.push({d:slot.d,t:slot.t,qp:q.qp,prp:q.prp,aav:q.aav,abv:q.abv,qov:q.qov,quv:q.quv,dop:null});
+  pqSave(ticker,list);
+}
+// 9:00以降にp_1_DOP（当日始値）が取れたら、その日の全レコードにdopを埋める
+function pqFillOpen(ticker,quote){
+  if(!ticker||!quote||!quote.fields||quote.stale) return;
+  var slot=pqNowSlot();
+  if(slot.min<PQ_OPEN_MIN) return;              // 前日の始値を誤って書かないよう9:00以降だけ
+  var dop=Number(quote.fields.p_1_DOP);
+  if(!(dop>0)) return;
+  var list=pqLoad(ticker),hit=false;
+  for(var i=0;i<list.length;i++){
+    if(list[i]&&list[i].d===slot.d&&list[i].dop==null){list[i].dop=dop;hit=true;}
+  }
+  if(hit) pqSave(ticker,list);
+}
+// 貯まった件数の集計（🌅寄り予想タブの下部に1行だけ出す用）
+function pqCountAll(){
+  var days={},total=0;
+  try{
+    for(var i=0;i<localStorage.length;i++){
+      var k=localStorage.key(i);
+      if(!k||k.indexOf("pq_")!==0) continue;
+      var list=JSON.parse(localStorage.getItem(k)||"[]");
+      if(!Array.isArray(list)) continue;
+      for(var j=0;j<list.length;j++){if(list[j]&&list[j].d){days[list[j].d]=1;total++;}}
+    }
+  }catch(e){}
+  return{days:Object.keys(days).length,total:total};
+}
+
 // ── ①板の時系列記録＋②見せ板検出 ────────────────────────────────────────
 // 板は「今いくら並んでいるか」より「増えているか減っているか」に方向性が出る。
 // 7秒おきに届く気配値をticker別に貯めておき、買い比率の推移と、厚い注文が
@@ -3077,6 +3191,9 @@ function BoardMomentumPanel(p){
   if(!p.isJP) return null;
   var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"};
   var title=<div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:4}}>📈 板の勢い</div>;
+  // 寄り前（板寄せ）は10本板の売買数量が拮抗するため、買い比率も見せ板判定も意味を持たない。
+  // ロジックはそのままに、表示だけ成行ベースの需給パネルへ差し替える。
+  if(isPreOpenQuote(p.quote)) return <PreOpenDemandPanel quote={p.quote}/>;
   var tr=boardTrend(p.ticker);
   if(!tr) return <div style={box}>{title}<div style={{fontSize:10,color:"#4a7090"}}>記録中…（20秒ほどで表示）</div></div>;
   var dir=tr.diff>=1.5?{t:"↑ 買い増加中",c:"#22d3a0"}
@@ -3107,6 +3224,43 @@ function BoardMomentumPanel(p){
           ⚠️ 見せ板の疑い（買{sp.buy}回・売{sp.sell}回 出入り）
         </div>
       )}
+    </div>
+  );
+}
+// ── 🌅 寄り前の需給パネル（板寄せ中だけ「板の勢い」の代わりに出す）──────────
+// 板寄せ中は10本板が拮抗するので、偏りが出るのは成行数量とOVER/UNDER。
+// ※ここは表示のみ。スコア（calcBoardScore）には一切反映しない。
+function PreOpenDemandPanel(p){
+  var q=preOpenDemand(p.quote);
+  var box={background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"8px 10px"};
+  var title=<div style={{fontSize:11,fontWeight:700,color:"#4a90c0",marginBottom:4}}>🌅 寄り前の需給（板寄せ中）</div>;
+  if(!q) return <div style={box}>{title}<div style={{fontSize:10,color:"#4a7090"}}>気配を取得中…</div></div>;
+  function pctCol(v){return v==null?"#6a90b0":(v>=60?"#22d3a0":(v<=40?"#f43f5e":"#fbbf24"));}
+  var gapCol=q.gapPct==null?"#6a90b0":(q.gapPct>0?"#22d3a0":(q.gapPct<0?"#f43f5e":"#6a90b0"));
+  function row(label,body){
+    return(
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",fontSize:11,color:"#a8c4e0",marginTop:2}}>
+        <span>{label}</span>{body}
+      </div>
+    );
+  }
+  return(
+    <div style={box}>
+      {title}
+      {row("成行の偏り",
+        <b style={{fontSize:13,fontWeight:800,color:pctCol(q.mkBuyPct)}}>
+          {q.mkBuyPct==null?"—":"成行 買い"+q.mkBuyPct.toFixed(0)+"%"}
+        </b>)}
+      {row("OVER/UNDER",
+        <b style={{color:pctCol(q.ouBuyPct)}}>{q.ouBuyPct==null?"—":"買い"+q.ouBuyPct.toFixed(0)+"%"}</b>)}
+      {row("気配値",
+        <b style={{color:"#d8eeff"}}>
+          {q.qp==null?"—":Math.round(q.qp).toLocaleString()}
+          {q.gapPct!=null&&<span style={{color:gapCol,marginLeft:4}}>（{q.gapPct>=0?"+":""}{q.gapPct.toFixed(2)}%）</span>}
+        </b>)}
+      <div style={{fontSize:9,color:"#4a7090",marginTop:4}}>
+        板寄せ中は10本板が拮抗するため、板の勢い・見せ板の判定は行いません（表示のみ・スコアには反映しません）
+      </div>
     </div>
   );
 }
@@ -3457,10 +3611,20 @@ function StockDetailPanel(p){
   // 板スコア補正（日本株のみ。板が届いていない間はnullでパネル非表示）
   var boardPrice=(liveTick&&liveTick.price!=null)?liveTick.price:s.rawPrice;
   var boardScore=s.market==="JP"?calcBoardScore(tachibanaQuote,boardPrice):null;
+  // 寄り前（板寄せ）は10本板の比率が拮抗するため、そのまま採点すると誤った補正になる。
+  // calcBoardScoreの中身は変えず、ここで補正0（判定なし）に差し替える。
+  var preOpen=s.market==="JP"&&isPreOpenQuote(tachibanaQuote);
+  if(preOpen&&boardScore) boardScore={adj:0,session:boardScore.session,buyVol:boardScore.buyVol,sellVol:boardScore.sellVol,
+    items:[{label:"寄り前のため判定なし",val:"板寄せ中",state:0}]};
 
   // 板の勢い用：気配値が更新されるたびに履歴へ記録する（日本株のみ）
+  // 寄り前の気配は板寄せ由来で性質が違うため履歴に混ぜない（9:00直後の勢い・見せ板判定が
+  // 寄り前のデータで誤作動するのを防ぐ）。あわせて寄り前気配のスナップショットを貯める。
   useEffect(function(){
-    if(s.market==="JP") pushBoardHistory(s.ticker,tachibanaQuote);
+    if(s.market!=="JP") return;
+    if(!isPreOpenQuote(tachibanaQuote)) pushBoardHistory(s.ticker,tachibanaQuote);
+    pqRecordSnapshot(s.ticker,tachibanaQuote);
+    pqFillOpen(s.ticker,tachibanaQuote);
   },[tachibanaQuote]);
 
   return(
@@ -3556,7 +3720,8 @@ function StockDetailPanel(p){
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
           <BoardScorePanel board={boardScore} baseScore={s.score}/>
           <BoardMomentumPanel ticker={s.ticker} isJP={s.market==="JP"} quote={tachibanaQuote}/>
-          <SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>
+          {/* 寄り前は板の厚み（findThickLevels）が板寄せの拮抗で意味を持たないためパネルごと非表示 */}
+          {!preOpen&&<SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>}
         </div>
       </div>
 
@@ -6025,6 +6190,16 @@ function PremarketPanel(p){
           </div>
         )}
       </div>
+
+      {/* 寄り前気配スナップショット（pq_*）の貯まり具合。件数だけの確認用 */}
+      {(function(){
+        var c=pqCountAll();
+        return(
+          <div style={{fontSize:11,color:"#4a7090",padding:"0 4px 4px"}}>
+            気配スナップショット: {c.days}日分 / {c.total}件（Phase 2B の校正用）
+          </div>
+        );
+      })()}
     </div>
   );
 }
