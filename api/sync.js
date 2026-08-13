@@ -212,6 +212,8 @@ async function handleScanUniverse(req, res) {
     try {
       const { saveUniverse } = await import('./_scan.js');
       await saveUniverse(list);
+      // 何件で上書きしたかを残す（自動スキャンの件数が想定と合わないときの突き合わせ用）
+      console.log('[scan-universe] 銘柄リストを保存しました。件数:', list.length);
       return res.status(200).json({ ok: true, count: list.length });
     } catch (e) {
       return res.status(500).json({ error: 'save failed: ' + e.message });

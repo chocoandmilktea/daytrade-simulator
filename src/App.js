@@ -208,16 +208,24 @@ var TACHIBANA_QUOTE_API="https://daytrade-simulator.vercel.app/api/sync?resource
 // ── サーバー側スキャン用の銘柄リスト送信（Phase 2）─────────────────────────
 // 手動スキャンで読み込んだ銘柄をサーバー（Redis）に預けておき、
 // 場中の自動スキャン（Phase 3のスケジューラ）が同じ銘柄を対象にできるようにする。
-// あくまで「おまけ」の処理なので、失敗しても画面の動作には一切影響させない
+// 画面の動作は止めないが、失敗を黙って握りつぶすと「自動スキャンが古い少数の銘柄
+// リストのまま動き続けている」ことに気づけないため、成否は必ずconsoleに出す。
 var SCAN_UNIVERSE_API="https://daytrade-simulator.vercel.app/api/sync?resource=scan-universe";
 function saveScanUniverse(list){
   try{
     var tickers=(list||[]).map(function(s){return typeof s==="string"?s:(s&&s.ticker);})
       .filter(function(t){return !!t;});
-    if(!tickers.length)return;
+    if(!tickers.length){console.warn("[scan-universe] 送信する銘柄が0件のため保存しません");return;}
+    // 全銘柄ぶんの分析リクエストと同じホストを使うため、混み合うと接続待ちで
+    // 8秒では切れてしまう（銘柄数が多いときほど失敗する）。余裕をもって15秒にする
     fetch(SCAN_UNIVERSE_API,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(tickers),signal:AbortSignal.timeout(8000)}).catch(function(){});
-  }catch(e){}
+      body:JSON.stringify(tickers),signal:AbortSignal.timeout(15000)})
+      .then(function(res){
+        if(!res.ok){console.error("[scan-universe] 保存失敗 HTTP "+res.status+" — 自動スキャンは前回の銘柄リストのまま実行されます");return;}
+        console.log("[scan-universe] "+tickers.length+"銘柄を保存しました");
+      })
+      .catch(function(e){console.error("[scan-universe] 保存失敗: "+(e&&e.message)+" — 自動スキャンは前回の銘柄リストのまま実行されます");});
+  }catch(e){console.error("[scan-universe] 保存処理でエラー: "+(e&&e.message));}
 }
 
 // ── 東証33業種コード（業種名 → 4桁コード）─────────────────────────────
@@ -6717,6 +6725,17 @@ export default function App(){
           }
         });
         await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
+        // 場中の自動スキャン用に、今回の銘柄リストをサーバーへ預ける。
+        // ・分析を始める前に送る：157銘柄ぶんのAPI呼び出しと同時に送ると同一ホストへの
+        //   接続待ちでタイムアウトし、保存されないまま終わってしまうため
+        // ・ランキングを取得できなかった回は universe が「お気に入り＋トレード中」の
+        //   数銘柄だけになる。これを保存すると自動スキャンがその数銘柄しか見なくなるので、
+        //   失敗時は保存せず前回のリストを残す（今回の「毎回8件」の原因）
+        if(rankingFailed||jpCount===0){
+          console.warn("[scan-universe] ランキングを取得できなかったため保存しません（自動スキャンは前回の銘柄リストを使います）");
+        }else{
+          saveScanUniverse(universe);
+        }
         setProgress({done:0,total:universe.length,msg:null});
         // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
         // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
@@ -6729,7 +6748,6 @@ export default function App(){
         results.sort(function(x,y){return y.score-x.score;});
         setStocks(results);
         setTs(new Date().toLocaleTimeString("ja-JP"));
-        saveScanUniverse(universe); // 場中の自動スキャン用に、今回の銘柄リストをサーバーへ預ける
         startDayNightFill(results); // 表示後に☀️日中型を裏で取得
       },function(next,max,err,wait){
         setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
