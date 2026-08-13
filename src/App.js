@@ -248,11 +248,8 @@ function saveScanUniverse(list,source){
       return;
     }
     if(!tickers.length){console.warn("[scan-universe] 送信する銘柄が0件のため保存しません");return;}
-    // カード群が /api/daily 等を一斉に叩いている最中に送ると、同一ホストへの接続待ち
-    // （ブラウザは同時6本まで）でタイムアウトするため、5秒ほど遅らせてから送る
-    setTimeout(function(){
-      postScanUniverse({tickers:tickers,source:"ranking",count:tickers.length,savedAt:Date.now()},false);
-    },5000);
+    // 送信は分析バッチ開始前・接続プールが空のうちに撃つ（遅延させると157件の同時取得と衝突する）
+    postScanUniverse({tickers:tickers,source:"ranking",count:tickers.length,savedAt:Date.now()},false);
   }catch(e){console.error("[scan-universe] 保存処理でエラー: "+(e&&e.message));}
 }
 
@@ -6757,7 +6754,7 @@ export default function App(){
         // universe の素性を source として渡し、ランキング取得に成功した回だけ保存させる。
         // jpCount は fetchSectorRanking / fetchRanking の戻り値の件数（buildStockUniverse の
         // 結果）なので、0件＝ランキングを1件も取れなかった＝universe は「お気に入り＋
-        // トレード中」だけ、という判定に使える。保存はsaveScanUniverse内で5秒遅延させる
+        // トレード中」だけ、という判定に使える。分析バッチを始める前にここで送る
         var universeSource=(jpCount>0)?"ranking":"fallback";
         saveScanUniverse(universe,universeSource);
         setProgress({done:0,total:universe.length,msg:null});
