@@ -206,15 +206,15 @@ async function handleScanUniverse(req, res) {
     if (typeof body === 'string') {
       try { body = JSON.parse(body); } catch (e) { return res.status(400).json({ error: 'invalid json' }); }
     }
-    // 配列そのままでも {tickers:[...]} でも受け付ける
-    const list = Array.isArray(body) ? body : (body && Array.isArray(body.tickers) ? body.tickers : null);
-    if (!list) return res.status(400).json({ error: 'array required' });
+    // ボディはそのまま _scan.js へ渡す（ガード判定は _scan.js に集約）。
+    // 拒否された場合もHTTP 200で reason を返す（フロント側でログに出すため）
     try {
       const { saveUniverse } = await import('./_scan.js');
-      await saveUniverse(list);
+      const result = await saveUniverse(body);
       // 何件で上書きしたかを残す（自動スキャンの件数が想定と合わないときの突き合わせ用）
-      console.log('[scan-universe] 銘柄リストを保存しました。件数:', list.length);
-      return res.status(200).json({ ok: true, count: list.length });
+      if (result.ok) console.log('[scan-universe] 銘柄リストを保存しました。件数:', result.count);
+      else console.warn('[scan-universe] 銘柄リストを保存しませんでした:', result.reason);
+      return res.status(200).json(result);
     } catch (e) {
       return res.status(500).json({ error: 'save failed: ' + e.message });
     }
