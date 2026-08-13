@@ -113,7 +113,8 @@ async function handleTachibanaQuote(req, res) {
 }
 
 // ── 寄り前ログ（tachibana-server の premarketLogger.js から届く） ─────────
-// 8:31〜9:06の気配推移を1日1本のJSONで受け取り、日付キーで30日保存する。
+// 8:31〜9:06の気配推移を、1回のスナップショット（{ time, rows }）ごとに
+// POSTで受け取り、日付キーの配列へ追記していく。30日保存。
 // 立花の戻り値をそのまま貯めたものなので、加工は一切しない。
 const PREMARKET_LOG_PREFIX = 'premarket:log:';
 const PREMARKET_LOG_TTL = 60 * 60 * 24 * 30; // 30日（秒）
@@ -143,11 +144,18 @@ async function handlePremarketLog(req, res) {
     }
     try {
       const body = readBody(req);
-      // 送信側(9:06 JST)が付けてきた日付を優先し、無ければサーバー側のJST当日にする
+      // 送信側が付けてきた日付を優先し、無ければサーバー側のJST当日にする
       const date = isDateString(body.date) ? body.date : jstDateString();
-      await redis.set(PREMARKET_LOG_PREFIX + date, packForRedis(body), { ex: PREMARKET_LOG_TTL });
-      const count = Array.isArray(body.records) ? body.records.length : 0;
-      return res.status(200).json({ ok: true, date: date, count: count });
+      const key = PREMARKET_LOG_PREFIX + date;
+
+      // 既存の配列を読み、無ければ（過去の別形式だった場合も含め）空配列から始める
+      const stored = unpackFromRedis(await redis.get(key));
+      const list = Array.isArray(stored) ? stored : [];
+
+      list.push({ time: body.time, rows: body.rows });
+      await redis.set(key, packForRedis(list), { ex: PREMARKET_LOG_TTL });
+
+      return res.status(200).json({ ok: true, date: date, count: list.length });
     } catch (e) {
       return res.status(500).json({ error: 'save failed: ' + e.message });
     }
@@ -163,13 +171,8 @@ async function handlePremarketLog(req, res) {
         return res.status(200).json({ dates: dates });
       }
 
-      // date未指定なら直近の保存日を1件返す
-      let target = date;
-      if (!target) {
-        const dates = await listPremarketDates();
-        if (!dates.length) return res.status(200).json({ found: false });
-        target = dates[0];
-      }
+      // date未指定なら本日（JST）の分を返す
+      const target = date || jstDateString();
       if (!isDateString(target)) return res.status(400).json({ error: 'invalid date' });
 
       const raw = await redis.get(PREMARKET_LOG_PREFIX + target);
