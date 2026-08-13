@@ -112,6 +112,78 @@ async function handleTachibanaQuote(req, res) {
   return res.status(405).json({ error: 'method not allowed' });
 }
 
+// ── 寄り前ログ（tachibana-server の premarketLogger.js から届く） ─────────
+// 8:31〜9:06の気配推移を1日1本のJSONで受け取り、日付キーで30日保存する。
+// 立花の戻り値をそのまま貯めたものなので、加工は一切しない。
+const PREMARKET_LOG_PREFIX = 'premarket:log:';
+const PREMARKET_LOG_TTL = 60 * 60 * 24 * 30; // 30日（秒）
+
+// JSTの当日（YYYY-MM-DD）。VercelはUTCで動くため、+9時間してから日付部分を取る
+function jstDateString() {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function isDateString(s) {
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+// 保存済みの日付を新しい順に返す
+async function listPremarketDates() {
+  const keys = await redis.keys(PREMARKET_LOG_PREFIX + '*');
+  return (keys || [])
+    .map(function (k) { return String(k).slice(PREMARKET_LOG_PREFIX.length); })
+    .sort()
+    .reverse();
+}
+
+async function handlePremarketLog(req, res) {
+  if (req.method === 'POST') {
+    if (!RELAY_SECRET || req.headers['x-relay-secret'] !== RELAY_SECRET) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+    try {
+      const body = readBody(req);
+      // 送信側(9:06 JST)が付けてきた日付を優先し、無ければサーバー側のJST当日にする
+      const date = isDateString(body.date) ? body.date : jstDateString();
+      await redis.set(PREMARKET_LOG_PREFIX + date, packForRedis(body), { ex: PREMARKET_LOG_TTL });
+      const count = Array.isArray(body.records) ? body.records.length : 0;
+      return res.status(200).json({ ok: true, date: date, count: count });
+    } catch (e) {
+      return res.status(500).json({ error: 'save failed: ' + e.message });
+    }
+  }
+
+  if (req.method === 'GET') {
+    try {
+      const { date } = req.query;
+
+      // date=list → 保存済みの日付一覧だけを返す
+      if (date === 'list') {
+        const dates = await listPremarketDates();
+        return res.status(200).json({ dates: dates });
+      }
+
+      // date未指定なら直近の保存日を1件返す
+      let target = date;
+      if (!target) {
+        const dates = await listPremarketDates();
+        if (!dates.length) return res.status(200).json({ found: false });
+        target = dates[0];
+      }
+      if (!isDateString(target)) return res.status(400).json({ error: 'invalid date' });
+
+      const raw = await redis.get(PREMARKET_LOG_PREFIX + target);
+      const parsed = unpackFromRedis(raw);
+      if (!parsed) return res.status(200).json({ found: false, date: target });
+      return res.status(200).json({ found: true, date: target, data: parsed });
+    } catch (e) {
+      return res.status(500).json({ error: 'load failed: ' + e.message });
+    }
+  }
+
+  return res.status(405).json({ error: 'method not allowed' });
+}
+
 // ── サーバー側スキャン（Phase 2）の窓口 ──────────────────────────────────
 // 実処理は api/_scan.js。ここは受け口だけ。立花中継と同じく、Vercel Hobbyの
 // 関数12個制限を消費しないよう sync.js に相乗りさせている。
@@ -213,6 +285,7 @@ export default async function handler(req, res) {
   const { resource } = req.query;
   if (resource === 'tachibana-watch') return handleTachibanaWatch(req, res);
   if (resource === 'tachibana-quote') return handleTachibanaQuote(req, res);
+  if (resource === 'premarket-log') return handlePremarketLog(req, res);
   if (resource === 'scan-universe') return handleScanUniverse(req, res);
   if (resource === 'scan-run') return handleScanRun(req, res);
   if (resource === 'scan-result') return handleScanResult(req, res);
