@@ -113,9 +113,10 @@ async function handleTachibanaQuote(req, res) {
 }
 
 // ── 寄り前ログ（tachibana-server の premarketLogger.js から届く） ─────────
-// 8:31〜9:06の気配推移を、1回のスナップショット（{ time, rows }）ごとに
+// 8:31〜9:06の気配推移を、1回の記録セッション
+// （{ date, codes, cols, startedAt, finishedAt, count, records }）ごとに
 // POSTで受け取り、日付キーの配列へ追記していく。30日保存。
-// 立花の戻り値をそのまま貯めたものなので、加工は一切しない。
+// 立花の戻り値をそのまま貯めたものなので、キー名の変換・整形は一切しない。
 const PREMARKET_LOG_PREFIX = 'premarket:log:';
 const PREMARKET_LOG_TTL = 60 * 60 * 24 * 30; // 30日（秒）
 
@@ -152,10 +153,12 @@ async function handlePremarketLog(req, res) {
       const stored = unpackFromRedis(await redis.get(key));
       const list = Array.isArray(stored) ? stored : [];
 
-      list.push({ time: body.time, rows: body.rows });
+      // 送られてきたボディを丸ごと追記する（同じ日に複数回POSTされても上書きしない）
+      list.push(body);
       await redis.set(key, packForRedis(list), { ex: PREMARKET_LOG_TTL });
 
-      return res.status(200).json({ ok: true, date: date, count: list.length });
+      // count は「その日に何セッション貯まっているか」を返す
+      return res.status(200).json({ ok: true, count: list.length });
     } catch (e) {
       return res.status(500).json({ error: 'save failed: ' + e.message });
     }
