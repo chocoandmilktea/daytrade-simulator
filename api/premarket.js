@@ -5,6 +5,9 @@
 //
 // リクエスト例:
 //   /api/premarket        → { marketBias, indicators, missing, ts, cached }
+//   /api/premarket?codes=7203,9984[&cols=pDPP,pQAS]
+//                         → 上記に加えて quotes（立花の時価情報の生データ）を返す
+//                           ※quotesはキャッシュせず毎回取得する
 //
 // データ取得元: Yahoo Finance（daily.js / intraday.js と同じ非公式チャートAPI）
 //
@@ -128,8 +131,29 @@ async function fetchMarketSentiment() {
   };
 }
 
-// 3分キャッシュ（サーバーレス関数のインスタンスが生きている間だけ有効）
-let cache = { data: null, ts: 0 };
+// ── 寄り前の時価情報（立花証券の生データ）──────────────────────────────
+// tachibana-serverの/market-priceを呼ぶだけ。返ってきたJSONは加工せずそのまま
+// quotesに載せる（どのカラムが実際に返るか未確認のため、生のまま確認したい）。
+// withFallbackは使わない。寄り前の秒単位の変化を見るのが目的で、
+// Redisの前回成功データ（＝前日の引け値）が混ざると判断を誤るため。
+async function fetchTachibanaQuotes(codes, cols) {
+  const apiUrl = process.env.TACHIBANA_MARKET_PRICE_API;
+  if (!apiUrl) throw new Error("TACHIBANA_MARKET_PRICE_API not set");
+
+  const headers = {};
+  if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
+
+  let url = `${apiUrl}?code=${encodeURIComponent(codes)}`;
+  if (cols) url += `&cols=${encodeURIComponent(cols)}`;
+
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT) });
+  if (!r.ok) throw new Error("market-price " + r.status);
+  return await r.json();
+}
+
+// 3分キャッシュ（サーバーレス関数のインスタンスが生きている間だけ有効）。
+// クエリごとに内容が変わるため、codes/colsごとにキーを分ける（地合いのみキャッシュ対象）
+let cache = {}; // key -> { data, ts }
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -141,22 +165,45 @@ export default async function handler(req, res) {
 
   try {
     const now = Date.now();
-    if (cache.data && now - cache.ts < PREMARKET_TTL) {
-      res.setHeader("Cache-Control", "public, max-age=180");
-      return res.status(200).json({ ...cache.data, cached: true });
+    const codes = req.query.codes || "";
+    const cols = req.query.cols || "";
+    const cacheKey = `${codes}|${cols}`;
+
+    // codes指定時のみ立花の時価情報を取る（毎回取り直す＝キャッシュしない）。
+    // 取得に失敗しても地合いは返したいので、エラーはquotesErrorに入れるだけにする
+    let quotes = null;
+    let quotesError = null;
+    if (codes) {
+      // 気配はキャッシュさせない（CDNに寄り前の古い値を持たせないため）
+      res.setHeader("Cache-Control", "no-store");
+      try {
+        quotes = await fetchTachibanaQuotes(codes, cols);
+      } catch (e) {
+        quotesError = e.message;
+      }
+    }
+
+    const cached = cache[cacheKey];
+    if (cached && now - cached.ts < PREMARKET_TTL) {
+      if (!codes) res.setHeader("Cache-Control", "public, max-age=180");
+      return res.status(200).json({ ...cached.data, ...(codes ? { quotes: quotes, quotesError: quotesError } : {}), cached: true });
     }
 
     const sentiment = await fetchMarketSentiment();
     // 1つも取れなかった場合はキャッシュせず、次の呼び出しで取り直す
     if (!sentiment.indicators.length) {
-      return res.status(200).json({ marketBias: null, indicators: [], missing: sentiment.missing, ts: now, cached: false });
+      return res.status(200).json({
+        marketBias: null, indicators: [], missing: sentiment.missing,
+        ...(codes ? { quotes: quotes, quotesError: quotesError } : {}),
+        ts: now, cached: false,
+      });
     }
 
     const data = { ...sentiment, ts: now };
-    cache = { data: data, ts: now };
+    cache[cacheKey] = { data: data, ts: now };
 
-    res.setHeader("Cache-Control", "public, max-age=180");
-    return res.status(200).json({ ...data, cached: false });
+    if (!codes) res.setHeader("Cache-Control", "public, max-age=180");
+    return res.status(200).json({ ...data, ...(codes ? { quotes: quotes, quotesError: quotesError } : {}), cached: false });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
