@@ -128,8 +128,32 @@ async function fetchMarketSentiment() {
   };
 }
 
-// 3分キャッシュ（サーバーレス関数のインスタンスが生きている間だけ有効）
-let cache = { data: null, ts: 0 };
+// ── 立花証券の寄り前気配（codes指定時のみ）────────────────────────────
+// tachibana-server の /market-price をそのまま中継する。どのカラムが実際に返るかを
+// 明朝実測するのが目的なので、戻り値は加工せずそのまま quotes に載せる。
+async function fetchQuotes(codes, cols) {
+  // 専用の環境変数が無ければ /ranking-data のURLからパスを差し替えて使う
+  const apiUrl = process.env.TACHIBANA_MARKET_PRICE_API
+    || (process.env.TACHIBANA_RANKING_API || "").replace("/ranking-data", "/market-price");
+  if (!apiUrl) throw new Error("TACHIBANA_MARKET_PRICE_API not set");
+
+  const headers = {};
+  if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
+
+  let url = `${apiUrl}?code=${encodeURIComponent(codes)}`;
+  if (cols) url += `&cols=${encodeURIComponent(cols)}`;
+
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT) });
+  const json = await r.json().catch(() => null);
+  // 立花側のエラーも握りつぶさず、そのまま呼び出し元に返す
+  if (!r.ok) return { error: `market-price ${r.status}`, ...(json || {}) };
+  return json;
+}
+
+// 3分キャッシュ（サーバーレス関数のインスタンスが生きている間だけ有効）。
+// クエリごとに内容が変わるため、codes と cols を含めたキーで分ける。
+// quotes（寄り前気配）はキャッシュせず毎回取りに行く。
+let cache = {}; // cacheKey -> { data, ts }
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -141,22 +165,39 @@ export default async function handler(req, res) {
 
   try {
     const now = Date.now();
-    if (cache.data && now - cache.ts < PREMARKET_TTL) {
+    const codes = req.query?.codes ? String(req.query.codes) : "";
+    const cols = req.query?.cols ? String(req.query.cols) : "";
+    const cacheKey = `${codes}|${cols}`;
+
+    // codes指定時のみ寄り前気配を取得（キャッシュせず毎回取りに行く）
+    let quotes = null;
+    if (codes) {
+      try {
+        quotes = await fetchQuotes(codes, cols);
+      } catch (e) {
+        quotes = { error: e.message };
+      }
+      // 気配は秒単位で変わるためCDN・ブラウザにも一切キャッシュさせない
+      res.setHeader("Cache-Control", "no-store");
+    } else {
       res.setHeader("Cache-Control", "public, max-age=180");
-      return res.status(200).json({ ...cache.data, cached: true });
+    }
+
+    const hit = cache[cacheKey];
+    if (hit && now - hit.ts < PREMARKET_TTL) {
+      return res.status(200).json({ ...hit.data, cached: true, ...(codes ? { quotes: quotes } : {}) });
     }
 
     const sentiment = await fetchMarketSentiment();
     // 1つも取れなかった場合はキャッシュせず、次の呼び出しで取り直す
     if (!sentiment.indicators.length) {
-      return res.status(200).json({ marketBias: null, indicators: [], missing: sentiment.missing, ts: now, cached: false });
+      return res.status(200).json({ marketBias: null, indicators: [], missing: sentiment.missing, ts: now, cached: false, ...(codes ? { quotes: quotes } : {}) });
     }
 
     const data = { ...sentiment, ts: now };
-    cache = { data: data, ts: now };
+    cache[cacheKey] = { data: data, ts: now };
 
-    res.setHeader("Cache-Control", "public, max-age=180");
-    return res.status(200).json({ ...data, cached: false });
+    return res.status(200).json({ ...data, cached: false, ...(codes ? { quotes: quotes } : {}) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
