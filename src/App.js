@@ -211,20 +211,48 @@ var TACHIBANA_QUOTE_API="https://daytrade-simulator.vercel.app/api/sync?resource
 // 画面の動作は止めないが、失敗を黙って握りつぶすと「自動スキャンが古い少数の銘柄
 // リストのまま動き続けている」ことに気づけないため、成否は必ずconsoleに出す。
 var SCAN_UNIVERSE_API="https://daytrade-simulator.vercel.app/api/sync?resource=scan-universe";
-function saveScanUniverse(list){
+// 送信本体。全銘柄ぶんの分析リクエストと同じホストを使うため、混み合うと接続待ちで
+// 8秒では切れてしまう（銘柄数が多いときほど失敗する）。余裕をもって15秒にし、
+// それでも失敗したら3秒後に1回だけ再送する。
+function postScanUniverse(payload,retried){
+  fetch(SCAN_UNIVERSE_API,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload),signal:AbortSignal.timeout(15000)})
+    .then(function(res){
+      if(!res.ok) throw new Error("HTTP "+res.status);
+      return res.json().catch(function(){return null;});
+    })
+    .then(function(body){
+      // サーバー側のガードで弾かれた場合もHTTP 200で理由が返る
+      if(body&&body.ok===false){console.warn("[scan-universe] 保存失敗: サーバーが拒否しました（"+body.reason+"）");return;}
+      console.log("[scan-universe] 保存成功 "+payload.count+"件");
+    })
+    .catch(function(e){
+      var msg=(e&&e.message)||"unknown";
+      if(!retried){
+        console.warn("[scan-universe] 保存失敗: "+msg+" — 3秒後に1回だけ再送します");
+        setTimeout(function(){postScanUniverse(payload,true);},3000);
+        return;
+      }
+      console.error("[scan-universe] 保存失敗: "+msg+" — 自動スキャンは前回の銘柄リストのまま実行されます");
+    });
+}
+// source は universe の素性。"ranking"（ランキング取得成功）のときだけ保存する。
+// "fallback"（お気に入り＋トレード中の数銘柄だけ）を保存すると自動スキャンが
+// その数銘柄しか見なくなるため、絶対に送らない（今回の「毎回8件」の原因）。
+function saveScanUniverse(list,source){
   try{
     var tickers=(list||[]).map(function(s){return typeof s==="string"?s:(s&&s.ticker);})
       .filter(function(t){return !!t;});
+    if(source!=="ranking"){
+      console.warn("[scan-universe] ランキング取得失敗のため保存をスキップ（"+tickers.length+"件, source=fallback）");
+      return;
+    }
     if(!tickers.length){console.warn("[scan-universe] 送信する銘柄が0件のため保存しません");return;}
-    // 全銘柄ぶんの分析リクエストと同じホストを使うため、混み合うと接続待ちで
-    // 8秒では切れてしまう（銘柄数が多いときほど失敗する）。余裕をもって15秒にする
-    fetch(SCAN_UNIVERSE_API,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(tickers),signal:AbortSignal.timeout(15000)})
-      .then(function(res){
-        if(!res.ok){console.error("[scan-universe] 保存失敗 HTTP "+res.status+" — 自動スキャンは前回の銘柄リストのまま実行されます");return;}
-        console.log("[scan-universe] "+tickers.length+"銘柄を保存しました");
-      })
-      .catch(function(e){console.error("[scan-universe] 保存失敗: "+(e&&e.message)+" — 自動スキャンは前回の銘柄リストのまま実行されます");});
+    // カード群が /api/daily 等を一斉に叩いている最中に送ると、同一ホストへの接続待ち
+    // （ブラウザは同時6本まで）でタイムアウトするため、5秒ほど遅らせてから送る
+    setTimeout(function(){
+      postScanUniverse({tickers:tickers,source:"ranking",count:tickers.length,savedAt:Date.now()},false);
+    },5000);
   }catch(e){console.error("[scan-universe] 保存処理でエラー: "+(e&&e.message));}
 }
 
@@ -6726,16 +6754,12 @@ export default function App(){
         });
         await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
         // 場中の自動スキャン用に、今回の銘柄リストをサーバーへ預ける。
-        // ・分析を始める前に送る：157銘柄ぶんのAPI呼び出しと同時に送ると同一ホストへの
-        //   接続待ちでタイムアウトし、保存されないまま終わってしまうため
-        // ・ランキングを取得できなかった回は universe が「お気に入り＋トレード中」の
-        //   数銘柄だけになる。これを保存すると自動スキャンがその数銘柄しか見なくなるので、
-        //   失敗時は保存せず前回のリストを残す（今回の「毎回8件」の原因）
-        if(rankingFailed||jpCount===0){
-          console.warn("[scan-universe] ランキングを取得できなかったため保存しません（自動スキャンは前回の銘柄リストを使います）");
-        }else{
-          saveScanUniverse(universe);
-        }
+        // universe の素性を source として渡し、ランキング取得に成功した回だけ保存させる。
+        // jpCount は fetchSectorRanking / fetchRanking の戻り値の件数（buildStockUniverse の
+        // 結果）なので、0件＝ランキングを1件も取れなかった＝universe は「お気に入り＋
+        // トレード中」だけ、という判定に使える。保存はsaveScanUniverse内で5秒遅延させる
+        var universeSource=(jpCount>0)?"ranking":"fallback";
+        saveScanUniverse(universe,universeSource);
         setProgress({done:0,total:universe.length,msg:null});
         // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
         // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
