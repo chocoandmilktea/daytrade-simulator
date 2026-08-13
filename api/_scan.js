@@ -176,11 +176,24 @@ export async function runScanBatch(opts) {
 
   // 自動スキャンは日本時間の日中に走るため、米国株は市場が閉まっていて前日終値しか
   // 取れない。統計を汚すうえに実行時間も無駄になるので、日本株（".T"）だけに絞る。
-  var universe = (await loadUniverse()).filter(function (entry) {
+  var saved = await loadUniverse();
+  var universe = saved.filter(function (entry) {
     var s = normalizeStock(entry);
     return !!(s && s.ticker.endsWith(".T"));
   });
-  if (!universe.length) return { error: "universe empty" };
+  // 銘柄リストが無い（または日本株が1件も無い）場合は、固定リストで代替せず0件で終わる。
+  // 少数の固定銘柄で「成功したように見える」状態を作ると、リストが届いていないことに
+  // 気づけなくなるため。
+  if (!universe.length) {
+    console.log("[scan] 銘柄リストが空のため0件で終了します（保存件数:" + saved.length +
+      " 日本株:0）。アプリで手動スキャンを実行して銘柄リストを保存してください");
+    return { error: "universe empty" };
+  }
+  // 何件を対象にしているかを1スロットにつき1回だけ残す（件数の食い違いの検出用）
+  if (offset === 0) {
+    console.log("[scan] 銘柄リスト 保存件数:" + saved.length + " 日本株:" + universe.length +
+      " slot:" + slot + " date:" + date);
+  }
 
   var total = universe.length;
   var batch = [];
