@@ -4203,7 +4203,7 @@ function FavPanel(p){
   var isMobile=useIsMobile();
   var extraH=isMobile?MOBILE_TABBAR_H:0; // スマホ用タブバー分の高さを差し引く
 
-  // groupFilter: -1=📋全銘柄 / 0=⭐全体 / 1〜4=グループ。タブを移動しても保持される
+  // groupFilter: -1=📋全銘柄 / 0=未分類 / 1〜4=グループ。タブを移動しても保持される
   var groupFilterS=usePersistedState("fav_group_filter",0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1];
   // sortMode: "reg"=既定順（お気に入り=登録順・全銘柄=スキャン順）/ "score"=スコア順 / "momentum"=初動順 / "trade"=トレード順
   var sortModeS=usePersistedState("fav_sort_mode","reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1];
@@ -4274,8 +4274,8 @@ function FavPanel(p){
 
   // ── 表示対象の銘柄リスト ───────────────────────────────────────────
   var favStocks=favs.slice().reverse().map(function(t){return stocks.find(function(s){return s.ticker===t;});}).filter(Boolean);
+  // 0（未分類）もグループ1〜4と同じ扱い。グループ未設定の銘柄だけを表示する
   var baseList=isAll?stocks.slice()
-    :groupFilter===0?favStocks
     :favStocks.filter(function(s){var g=favGroups[s.ticker];return(g==null?0:g)===groupFilter;});
   // 手法バッジのグループ順位（スキャル→デイトレ→スイング）。tradeTypeが無い古いデータでも
   // 並べられるよう、ラベル（⚡スキャル等）の文言でも判定する。判定不能はいちばん下に送る
@@ -4360,7 +4360,7 @@ function FavPanel(p){
     var active=groupFilter===val;
     var color=val===-1?"#0ea5e9":"#fbbf24";
     // グループ1〜5には★と同じ色の●を先頭に付けて、どの色がどのグループか分かるようにする
-    var dot=val>=1?<span style={{color:GROUP_COLORS[val]||GROUP_COLORS[0],marginRight:2}}>●</span>:null;
+    var dot=val>=0?<span style={{color:GROUP_COLORS[val]||GROUP_COLORS[0],marginRight:2}}>●</span>:null;
     return(<button key={val} onClick={function(){setGroupFilter(val);}} style={{flexShrink:0,background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400,whiteSpace:"nowrap"}}>{dot}{label}</button>);
   }
   function editGroupName(num){
@@ -4403,7 +4403,7 @@ function FavPanel(p){
           {divider}
           {pcGap}
           {gBtn(-1,"📋全銘柄")}
-          {gBtn(0,"⭐全体")}
+          {gBtn(0,"未分類")}
           {[1,2,3,4].map(function(n){return <span key={n} style={{flexShrink:0,display:"flex",alignItems:"center",gap:2}}>{gBtn(n,groupNames[n])}{groupFilter===n&&<span onClick={function(){editGroupName(n);}} style={{cursor:"pointer",fontSize:11,color:"#4a6080"}}>✎</span>}</span>;})}
           {divider}
           {pcGap}
@@ -5586,13 +5586,13 @@ function GuidePanel(){
       {title:"📋 一覧の使い方",items:[
         "銘柄カードをタップ → 詳細シグナル表示",
         "上部バーは横スクロールします（件数／銘柄検索／グループ／🌱初動順／🏆スコア順／🏭業種まとめ登録／📊的中率／再スキャン。PC版では再スキャンが右端に並びます）",
-        "「📋全銘柄」＝今回スキャンした全銘柄を表示。「⭐全体」＝お気に入り登録銘柄をすべて表示",
+        "「📋全銘柄」＝今回スキャンした全銘柄を表示。「●未分類」＝お気に入りのうちグループに入れていない銘柄を表示（グループ1〜4と同じ絞り込み。先頭の●は★の色と対応）",
         "★/☆ボタンでお気に入りの登録・解除",
         "グループ1〜4に分類可能（グループ名は選択中に表示される✎アイコンで編集）",
         "検索欄にティッカーコード（例：AAPL、7203）か会社名（例：トヨタ）を入力すると候補が並び、タップでそのまま追加登録できる（隣のプルダウンで登録先グループも指定可）",
         "並び順：既定は「📋全銘柄＝スキャン順／⭐お気に入り＝登録順（新しい順）」。🌱初動順・🏆スコア順を押すと切り替わり、同じボタンをもう一度押すと既定に戻る",
         "「🏭業種まとめ登録」ボタン：業種を1つ選ぶと、その業種の出来高上位50銘柄を選んだグループへ一括登録（取得できた件数が50未満の場合はその分だけ登録）。登録した銘柄の株価は自動で取得され、そのままお気に入り一覧に並ぶ（取得中は「銘柄データを取得中... 12/50」と表示）",
-        "同じ画面の下部にある「🗑 一括解除」で、保存先（未分類・グループ1〜4）ごとにまとめてお気に入りから外せる（保存先の「未分類」＝どのグループにも入れていない銘柄。上部バーの「⭐全体」は絞り込み用で、グループを問わず全お気に入りを表示する意味）",
+        "同じ画面の下部にある「🗑 一括解除」で、保存先（未分類・グループ1〜4）ごとにまとめてお気に入りから外せる",
         "「📊的中率」ボタンでお気に入り銘柄のシグナル的中率を確認"
       ]},
       {title:"📊 データ取得の方法",items:["米国株：Yahoo Finance・15分足（直近30日）","日本株：Yahoo Finance・15分足（直近30日）","1分足チャート：Yahoo Finance・1分足（直近5営業日／15〜20分程度の遅延あり）","現在値・板情報のリアルタイム表示：立花証券e支店API（WebSocket中継）","日本株ランキング：立花証券API（出来高上位＋値上がり率上位のハイブリッド）","米国株ランキング：Yahoo Finance 出来高上位50","TOPIX・PER/PBR・配当利回り：立花証券API","市況指数（日経・ダウ等）：Yahoo Finance・15分遅延"]},
@@ -6194,6 +6194,10 @@ function PremarketPanel(p){
   var updS=useState("");var lastUpd=updS[0],setLastUpd=updS[1];
   var afterS=useState(pmIsAfterOpen());var afterOpen=afterS[0],setAfterOpen=afterS[1];
   var pqCopyS=useState(false);var pqCopied=pqCopyS[0],setPqCopied=pqCopyS[1];
+  // 各カードの開閉。銘柄が多いとスクロールが長くなるため、下段の的中率は既定で閉じておく
+  var opMkS=useState(true);var opMk=opMkS[0],setOpMk=opMkS[1];    // 🌅今朝の地合い
+  var opLsS=useState(true);var opLs=opLsS[0],setOpLs=opLsS[1];    // 予想一覧／答え合わせ
+  var opStS=useState(false);var opSt=opStS[0],setOpSt=opStS[1];   // 📊的中率
 
   // 気配スナップショット（pq_*）をまとめてクリップボードへ。iPadからでも取り出せるように
   function copyPqAll(){
@@ -6206,8 +6210,23 @@ function PremarketPanel(p){
       }
     }catch(e){}
     var text=JSON.stringify(obj);
-    if(navigator.clipboard){navigator.clipboard.writeText(text).then(function(){setPqCopied(true);setTimeout(function(){setPqCopied(false);},2000);});}
-    else{prompt("気配スナップショット",text);}
+    var done=function(){setPqCopied(true);setTimeout(function(){setPqCopied(false);},2000);};
+    // iPadのSafariなどclipboard APIが拒否される環境があるため、失敗したら旧方式で入れ直す
+    var legacy=function(){
+      try{
+        var ta=document.createElement("textarea");
+        ta.value=text;ta.style.position="fixed";ta.style.top="0";ta.style.opacity="0";
+        document.body.appendChild(ta);ta.focus();ta.select();ta.setSelectionRange(0,text.length);
+        var ok=document.execCommand("copy");
+        document.body.removeChild(ta);
+        if(ok){done();return;}
+      }catch(e){}
+      prompt("気配スナップショット（手動でコピーしてください）",text);
+    };
+    try{
+      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(legacy);
+      else legacy();
+    }catch(e){legacy();}
   }
 
   // 9:00をまたいだら自動で「答え合わせ」表示へ切り替える（1分ごとに確認）
@@ -6267,11 +6286,24 @@ function PremarketPanel(p){
 
   return(
     <div>
+      {/* 寄り前気配スナップショット（pq_*）の貯まり具合と取り出し。件数だけの確認用 */}
+      {(function(){
+        var c=pqCountAll();
+        return(
+          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:"#4a7090",padding:"0 4px 8px"}}>
+            <span>気配スナップショット: {c.days}日分 / {c.total}件（Phase 2B の校正用）</span>
+            <button onClick={copyPqAll} disabled={c.total===0} style={{marginLeft:"auto",background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:c.total===0?"#2a4560":"#b8cce0",padding:"4px 9px",fontSize:11,fontWeight:700,cursor:c.total===0?"default":"pointer",fontFamily:"monospace",flexShrink:0}}>
+              {pqCopied?"✅ コピーしました":"📋 コピー"}
+            </button>
+          </div>
+        );
+      })()}
+
       {/* ── 上段：今朝の地合いサマリー ───────────────────────────── */}
       <div style={cardStyle}>
         <div style={headStyle}>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>🌅 今朝の地合い</div>
+          <div onClick={function(){setOpMk(!opMk);}} style={{minWidth:0,cursor:"pointer"}}>
+            <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{opMk?"▼":"▶"} 🌅 今朝の地合い</div>
             <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>
               {data?("予想対象日: "+data.targetDate):"読み込み中..."}{lastUpd?" ・ 更新 "+lastUpd:""}
             </div>
@@ -6281,7 +6313,7 @@ function PremarketPanel(p){
             {loading?"取得中...":"🔄 更新"}
           </button>
         </div>
-        <div style={{padding:"12px 14px"}}>
+        {opMk&&<div style={{padding:"12px 14px"}}>
           <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:10}}>
             <span style={{fontSize:11,color:"#4a7090"}}>総合（想定ギャップ）</span>
             <span style={{fontSize:24,fontWeight:700,color:biasCol,fontFamily:"monospace"}}>{fmtPm(bias)}</span>
@@ -6301,7 +6333,7 @@ function PremarketPanel(p){
           </div>
           {market&&market.missing&&market.missing.length>0&&
             <div style={{fontSize:10,color:"#4a7090",marginTop:8}}>取得できず除外: {market.missing.map(function(m){return m.label;}).join(" / ")}</div>}
-        </div>
+        </div>}
       </div>
 
       {err&&<div style={{background:"#3a0a0a",border:"1px solid #f43f5e",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#fca5a5",marginBottom:10}}>{err}</div>}
@@ -6312,9 +6344,9 @@ function PremarketPanel(p){
 
       {/* ── 中段：予想一覧 / 9:00以降は答え合わせ ─────────────────── */}
       <div style={cardStyle}>
-        <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}>
+        <div onClick={function(){setOpLs(!opLs);}} style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px",cursor:"pointer"}}>
           <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>
-            {afterOpen?"✅ 予想 vs 実際の始値":"📋 お気に入りの寄り予想"}
+            {opLs?"▼":"▶"} {afterOpen?"✅ 予想 vs 実際の始値":"📋 お気に入りの寄り予想"}
           </div>
           <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>
             {afterOpen
@@ -6323,7 +6355,7 @@ function PremarketPanel(p){
           </div>
         </div>
 
-        {!favKey?(
+        {opLs&&(!favKey?(
           <div style={{padding:"20px 14px",fontSize:13,color:"#4a7090",textAlign:"center"}}>お気に入りに日本株が登録されていません</div>
         ):loading&&!data?(
           <div style={{padding:"24px 14px",fontSize:13,color:"#4a90c0",textAlign:"center"}}>日足とベータを計算中...</div>
@@ -6411,17 +6443,17 @@ function PremarketPanel(p){
               );
             })}
           </div>
-        )}
+        ))}
       </div>
 
       {/* ── 下段：過去の的中率サマリー ────────────────────────────── */}
       <div style={cardStyle}>
-        <div style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px"}}>
-          <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>📊 寄り予想の的中率</div>
+        <div onClick={function(){setOpSt(!opSt);}} style={{background:"#071428",borderBottom:"1px solid #0f2040",padding:"10px 14px",cursor:"pointer"}}>
+          <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff"}}>{opSt?"▼":"▶"} 📊 寄り予想の的中率</div>
           <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>お気に入り銘柄の記録（pm_*）を集計。既存のスコア的中率とは別枠で貯まります</div>
           <div style={{fontSize:10,color:"#2a6090",marginTop:2}}>件数は予想の延べ数（同じ日でも出どころが違えば別に数えます）</div>
         </div>
-        {!stats||!stats.total?(
+        {opSt&&(!stats||!stats.total?(
           <div style={{padding:"20px 14px",fontSize:13,color:"#4a7090",textAlign:"center"}}>
             まだ答え合わせ済みの記録がありません（寄り付き前に予想を作り、9:00以降にこのタブを開くと貯まります）
           </div>
@@ -6478,21 +6510,9 @@ function PremarketPanel(p){
               })}
             </div>
           </div>
-        )}
+        ))}
       </div>
 
-      {/* 寄り前気配スナップショット（pq_*）の貯まり具合。件数だけの確認用 */}
-      {(function(){
-        var c=pqCountAll();
-        return(
-          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:"#4a7090",padding:"0 4px 4px"}}>
-            <span>気配スナップショット: {c.days}日分 / {c.total}件（Phase 2B の校正用）</span>
-            <button onClick={copyPqAll} disabled={c.total===0} style={{marginLeft:"auto",background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:c.total===0?"#2a4560":"#b8cce0",padding:"4px 9px",fontSize:11,fontWeight:700,cursor:c.total===0?"default":"pointer",fontFamily:"monospace",flexShrink:0}}>
-              {pqCopied?"✅ コピーしました":"📋 コピー"}
-            </button>
-          </div>
-        );
-      })()}
     </div>
   );
 }
