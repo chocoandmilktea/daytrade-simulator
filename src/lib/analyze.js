@@ -632,7 +632,6 @@ export function analyzeStock(stock,pd,vixVal,opts){
   var hasRSIOversold=signals.find(function(sig){return sig.label.startsWith("RSI")&&(sig.val==="売られすぎ"||sig.val==="やや売られ");});
   var hasBBLow=signals.find(function(sig){return sig.label==="BB"&&(sig.val==="下限→反発"||sig.val==="下限付近");});
   var hasStochOversold=signals.find(function(sig){return sig.label.startsWith("Stoch")&&(sig.val==="売られすぎ"||sig.val==="やや売られ");});
-  var hasTrendUp=signals.find(function(sig){return sig.label==="トレンド"&&sig.val==="上昇";});
   var hasGC=signals.find(function(sig){return sig.label==="MACD"&&sig.val==="ゴールデンクロス";});
   var hasDC=signals.find(function(sig){return sig.label==="MACD"&&sig.val==="デッドクロス";});
   var hasBearTrend=signals.find(function(sig){return sig.label==="トレンド"&&sig.val==="下降";});
