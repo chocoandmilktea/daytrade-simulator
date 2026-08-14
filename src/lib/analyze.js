@@ -844,12 +844,11 @@ export function analyzeStock(stock,pd,vixVal,opts){
   var atrUpper=isJP?Math.round(price+atr):parseFloat((price+atr).toFixed(2));
   var atrLower=isJP?Math.round(price-atr):parseFloat((price-atr).toFixed(2));
   // ── 利確/損切りライン（標準パターン：利確ATR×1.5／損切りATR×0.75、リスクリワード比1:2）──
-  var isJPmkt=stock.market==="JP";
   var profitTargetV=price+atr*1.5;
   var stopLossV=price-atr*0.75;
   var profitLoss={
-    target:isJPmkt?Math.round(profitTargetV):parseFloat(profitTargetV.toFixed(2)),
-    stop:isJPmkt?Math.round(stopLossV):parseFloat(stopLossV.toFixed(2))
+    target:isJP?Math.round(profitTargetV):parseFloat(profitTargetV.toFixed(2)),
+    stop:isJP?Math.round(stopLossV):parseFloat(stopLossV.toFixed(2))
   };
   // ── デイトレ用 買値（エントリー1本）────────────────────────────────
   // VWAPより上の銘柄のみ対象。VWAP下・値幅使い切り時は買値を出さない(null)
@@ -883,14 +882,14 @@ export function analyzeStock(stock,pd,vixVal,opts){
       if(price>todayHigh){
         bpMode="now"; bpAnchor=price; bpReason="当日高値を更新中（現在値で追随）";
       }else{
-        bpMode="break"; bpAnchor=todayHigh+tickSizeFor(todayHigh,isJPmkt);
-        bpReason="当日高値"+roundTickPrice(todayHigh,0,isJPmkt)+"の上抜け待ち（逆指値）";
+        bpMode="break"; bpAnchor=todayHigh+tickSizeFor(todayHigh,isJP);
+        bpReason="当日高値"+roundTickPrice(todayHigh,0,isJP)+"の上抜け待ち（逆指値）";
       }
       // 残り時間チェック（日本株・14:30以降のブレイク狙いは伸びきらない可能性）
       var jstNow=new Date(Date.now()+9*3600*1000);
       var jstMin=jstNow.getUTCHours()*60+jstNow.getUTCMinutes();
-      var lateWarn=(isJPmkt&&jstMin>=870)?"引けまで残りわずか":null;
-      buyPlan=buildBuyPlan(bpMode,bpAnchor,atrDaily,isJPmkt,bpReason,lateWarn);
+      var lateWarn=(isJP&&jstMin>=870)?"引けまで残りわずか":null;
+      buyPlan=buildBuyPlan(bpMode,bpAnchor,atrDaily,isJP,bpReason,lateWarn);
       if(!buyPlan) planSkip="買値の算出に失敗";
     }
   }
@@ -939,8 +938,8 @@ export function analyzeStock(stock,pd,vixVal,opts){
     var atrCv=price+atr*1.5;
     if(r1v!==null&&isFinite(r1v)){
       resistance={
-        r1:isJPmkt?Math.round(r1v):parseFloat(r1v.toFixed(2)),
-        atrCeil:isJPmkt?Math.round(atrCv):parseFloat(atrCv.toFixed(2))
+        r1:isJP?Math.round(r1v):parseFloat(r1v.toFixed(2)),
+        atrCeil:isJP?Math.round(atrCv):parseFloat(atrCv.toFixed(2))
       };
     }
   }
