@@ -590,7 +590,6 @@ export function analyzeStock(stock,pd,vixVal,opts){
   breakdown.push({label:"RSI",delta:sc-scChk});scChk=sc;
 
   // ── BB位置（最大8点）+ BB収束ボーナス（最大7点）────────────────────────
-  var bbSqueeze=false;
   if(bollVal){
     var bbPos=(closes[n]-bollVal.lower)/(bollVal.upper-bollVal.lower||1);
     if(price<=bollVal.lower){sc+=8;signals.push({label:"BB",val:"下限→反発",state:1});}
@@ -609,8 +608,8 @@ export function analyzeStock(stock,pd,vixVal,opts){
       var bwAvg=recentBW.reduce(function(a,b){return a+b;})/recentBW.length;
       var bwNow=bollVal.upper-bollVal.lower;
       var bwRatio=bwNow/bwAvg;
-      if(bwRatio<=0.7){sc+=7;bbSqueeze=true;signals.push({label:"BB収束",val:"強収束("+Math.round(bwRatio*100)+"%)",state:1});}
-      else if(bwRatio<=0.85){sc+=4;bbSqueeze=true;signals.push({label:"BB収束",val:"収束中("+Math.round(bwRatio*100)+"%)",state:1});}
+      if(bwRatio<=0.7){sc+=7;signals.push({label:"BB収束",val:"強収束("+Math.round(bwRatio*100)+"%)",state:1});}
+      else if(bwRatio<=0.85){sc+=4;signals.push({label:"BB収束",val:"収束中("+Math.round(bwRatio*100)+"%)",state:1});}
       else if(bwRatio>=1.3){signals.push({label:"BB収束",val:"拡大中",state:-1});}
       else{signals.push({label:"BB収束",val:"平常("+Math.round(bwRatio*100)+"%)",state:0});}
     }
