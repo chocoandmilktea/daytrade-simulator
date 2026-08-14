@@ -2007,7 +2007,8 @@ function mergeScanResultDay(date,slots){
   if(failed) console.warn("[intraday-import] "+date+" localStorageへ保存できなかった銘柄: "+failed+"件");
   return{count:count,tickers:saved};
 }
-var SCAN_IMPORT_BUSY=false; // 二重起動の防止
+var SCAN_IMPORT_BUSY=false; // 二重起動の防止（画面の「取り込み中…」表示にも使う）
+function isScanImportBusy(){return SCAN_IMPORT_BUSY;}
 // 未取り込みの日付ぶんだけ取得してマージし、そのあとで古い記録を削除する（この順序を守る）。
 // 通信に失敗した日は「取り込み済み」にせず次の機会に回す（画面の動作には影響させない）。
 // 成功・失敗はどちらも必ず console に出す（黙って握りつぶさない）
@@ -2023,6 +2024,12 @@ function runScanImport(force){
     if(info.key!==today&&st.days[info.key]!=null) continue;         // 取り込み済み（当日だけ毎回）
     targets.push(info.key);
   }
+  // 一度も取り込んでいない状態＝初回一括取得。何日ぶん取りに行くかを先頭に出す
+  if(!st.last&&targets.length) console.log("[intraday-import] 初回取り込み "+targets.length+"日ぶん");
+  // 取り込みを始めたことを画面（的中率パネル）に伝え、「取り込み中…」に切り替えさせる
+  try{window.dispatchEvent(new Event("scanimport"));}catch(e){}
+  // 1日ずつ順番に取りに行く（並列にしない）。1日ぶんが失敗しても
+  // catch で受けて次の日へ進み、失敗した日は st.days に入れず次回に回す
   var imported=0,seen={},errs=[],chain=Promise.resolve();
   targets.forEach(function(date){
     chain=chain.then(function(){
@@ -2063,6 +2070,8 @@ function runScanImport(force){
   }).catch(function(e){
     SCAN_IMPORT_BUSY=false;
     console.warn("[intraday-import] 取り込み処理が中断しました: "+e.message);
+    // 中断時も「取り込み中…」のままにしない
+    try{window.dispatchEvent(new Event("scanimport"));}catch(e2){}
     return false;
   });
 }
@@ -5175,6 +5184,7 @@ function SignalAccuracyContent(p){
   var chrAcc=calcChronosAccuracy(),chrV=chronosVerdict(chrAcc);
   var intradayAcc=calcIntradayAccuracy();
   var scanImp=getScanImportStatus();
+  var scanBusy=isScanImportBusy(); // 取り込み中は件数ではなく「取り込み中…」を出す
   var verdictAcc=calcVerdictAccuracy();
   // 自動スキャン結果の取り込みが終わったら、その場で数値を描き直す
   var impS=useState(0);
@@ -5388,9 +5398,10 @@ function SignalAccuracyContent(p){
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>⏰ 時間帯別 的中率（当日終値との比較）</div>
         {/* サーバー自動スキャンの取り込み状況（Phase 4）。失敗時は理由まで出す */}
-        <div style={{fontSize:11,color:scanImp?(scanImp.err?"#fbbf24":"#22d3a0"):"#4a7090",marginBottom:4}}>
-          {scanImp?("最終取り込み: "+scanImp.at+" / 直近 "+scanImp.total.toLocaleString()+"件 / 保持 "+scanImp.days+"日"+
-            (scanImp.err?(" ／ ⚠️ 取り込み失敗: "+scanImp.err):"")):"自動収集データがまだありません（起動時に取り込みます）"}
+        <div style={{fontSize:11,color:(scanBusy||!scanImp)?"#4a7090":(scanImp.err?"#fbbf24":"#22d3a0"),marginBottom:4}}>
+          {scanBusy?"取り込み中…":
+            (scanImp?("最終取り込み: "+scanImp.at+" / 直近 "+scanImp.total.toLocaleString()+"件 / 保持 "+scanImp.days+"日"+
+              (scanImp.err?(" ／ ⚠️ 取り込み失敗: "+scanImp.err):"")):"自動収集データがまだありません（起動時に取り込みます）")}
         </div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>その時間帯にスコア60点以上だった銘柄が、その日の引け（後場後半か引け後の最後のスキャン）までに上がっていたかを集計。始点と1時間以上離れたペアのみ対象です。翌営業日ではなく“当日中”の答え合わせです</div>
         {intradayAcc.every(function(s){return s.total===0;})?(
@@ -6900,9 +6911,21 @@ export default function App(){
   // ── サーバー自動スキャン結果の取り込み（Phase 4）─────────────────────────
   // アプリ起動時に1回だけ実行する。スキャンのたび・画面に戻るたびには実行しない
   // （通信を増やさないため）。取り込みのあとに14日より古い記録の削除まで行う。
-  // 失敗しても起動は妨げない＝結果はconsoleに出すだけで画面の動作には影響させない
+  // 失敗しても起動は妨げない＝結果はconsoleに出すだけで画面の動作には影響させない。
+  // 初回は最大14日ぶんの通信が走るため、起動直後ではなく初期描画が落ち着いてから始める
+  // （requestIdleCallback が無いSafari等では setTimeout で代用する）
   useEffect(function(){
-    runScanImport(true);
+    var idleId=null,timerId=null;
+    function start(){runScanImport(true);}
+    if(typeof window.requestIdleCallback==="function"){
+      idleId=window.requestIdleCallback(start,{timeout:3000}); // 暇にならなくても3秒で始める
+    }else{
+      timerId=setTimeout(start,1500);
+    }
+    return function(){
+      if(idleId!=null&&typeof window.cancelIdleCallback==="function") window.cancelIdleCallback(idleId);
+      if(timerId!=null) clearTimeout(timerId);
+    };
   },[]);
   useEffect(function(){
     fetch(VERCEL_API+"?ticker="+encodeURIComponent("^VIX")+"&range=5d")
