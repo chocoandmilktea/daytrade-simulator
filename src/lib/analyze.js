@@ -917,15 +917,16 @@ export function analyzeStock(stock,pd,vixVal,opts){
   var support=null;
   if(lows.length>=BB_P){
     var validLows=lows.filter(function(v){return v!=null&&v>0&&!isNaN(v)&&isFinite(v);});
-    var isJPfmt=stock.market==="JP";
+    // 端数処理の判定は関数先頭で宣言した isJP を再利用する
+    // （旧 isJPfmt は同じ関数スコープ内で同一条件を再宣言していただけのため統合）
     var s1v=validLows.length>=BB_P?Math.min.apply(null,validLows.slice(-BB_P)):null; // 20日相当
     // ※旧S2(全期間安値)は削除。15分足の取得期間が約20営業日しかなく、S1とほぼ同値に
     //   なるだけで意味が無かった。中期の安値は日足ベース(calc52wのlow60)を使う。
     var atrFv=price-atr*1.5;
     if(s1v!==null&&isFinite(s1v)){
       support={
-        s1:isJPfmt?Math.round(s1v):parseFloat(s1v.toFixed(2)),
-        atrFloor:isJPfmt?Math.round(atrFv):parseFloat(atrFv.toFixed(2))
+        s1:isJP?Math.round(s1v):parseFloat(s1v.toFixed(2)),
+        atrFloor:isJP?Math.round(atrFv):parseFloat(atrFv.toFixed(2))
       };
     }
   }
