@@ -30,11 +30,9 @@ import { analyzeStock } from "../src/lib/analyze.js";
 const redis = Redis.fromEnv();
 
 export const UNIVERSE_KEY = "scan:universe";
-// 過去に保存できた最大件数（ハイウォーターマーク）。極端に少ないリストで
-// 上書きされるのを防ぐ判定に使う。守る対象（scan:universe）自身を基準にすると
-// 157→60→25→8 と階段状に転げ落ちるため、必ず別キーで持つ。
-export const UNIVERSE_MAX_KEY = "scan:universe:max";
-export const UNIVERSE_TTL = 60 * 60 * 24 * 30; // 30日（秒）
+// 組み立て済みマーク（scan:universe:built）のTTLが3日のため、それより長く保つ。
+// 本体がマークより先に失効すると「組み立て済み扱いなのに中身が空」になる。
+export const UNIVERSE_TTL = 60 * 60 * 24 * 7; // 7日（秒）
 export const RESULT_TTL = 60 * 60 * 24 * 30;   // 30日（秒）
 
 // slot（HHMM）→ 時間帯ラベル。サーバー時刻を一切見ないための対応表。
@@ -108,9 +106,9 @@ export async function loadUniverse() {
   return raw;
 }
 
-// 保存は2段のガードを通ったときだけ行う。拒否した場合は理由を返す（呼び出し側でログに出す）。
+// 保存はガードを通ったときだけ行う。拒否した場合は理由を返す（呼び出し側でログに出す）。
 export async function saveUniverse(payload) {
-  // ガード①：ランキング由来（source:"ranking"）の新形式だけ受け付ける。
+  // ガード：ランキング由来（source:"ranking"）の新形式だけ受け付ける。
   // お気に入りだけのfallbackリストと、旧形式の生配列POSTはここで弾かれる。
   if (!payload || payload.source !== "ranking" || !Array.isArray(payload.tickers)) {
     var got = Array.isArray(payload) ? "生配列" : (payload && typeof payload === "object" ? ("source=" + payload.source + " tickers=" + (Array.isArray(payload.tickers) ? "配列" : typeof payload.tickers)) : String(payload));
@@ -118,18 +116,10 @@ export async function saveUniverse(payload) {
     return { ok: false, reason: "source must be 'ranking' and tickers must be an array (" + got + ")" };
   }
   var count = payload.tickers.length;
-  // ガード②：過去の最大件数の半分未満なら弾く（157件のリストが8件で潰されるのを防ぐ）
-  var max = Number(await redis.get(UNIVERSE_MAX_KEY));
-  if (!isFinite(max) || max < 0) max = 0;
-  if (max > 0 && count < max * 0.5) {
-    console.warn("[scan-universe] 保存を拒否：件数が過去最大の半分未満です（" + count + "件 / 過去最大 " + max + "件）");
-    return { ok: false, reason: "count " + count + " is less than half of max " + max };
-  }
   await redis.set(UNIVERSE_KEY, JSON.stringify({
     tickers: payload.tickers, source: "ranking", count: count,
     savedAt: payload.savedAt || Date.now(),
   }), { ex: UNIVERSE_TTL });
-  if (count > max) await redis.set(UNIVERSE_MAX_KEY, count, { ex: UNIVERSE_TTL });
   return { ok: true, count: count };
 }
 
