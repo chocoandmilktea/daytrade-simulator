@@ -205,53 +205,11 @@ var INTRADAY_API="https://daytrade-simulator.vercel.app/api/intraday";
 var DAILY_API="https://daytrade-simulator.vercel.app/api/daily";
 var TACHIBANA_WATCH_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-watch";
 var TACHIBANA_QUOTE_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-quote";
-// ── サーバー側スキャン用の銘柄リスト送信（Phase 2）─────────────────────────
-// 手動スキャンで読み込んだ銘柄をサーバー（Redis）に預けておき、
-// 場中の自動スキャン（Phase 3のスケジューラ）が同じ銘柄を対象にできるようにする。
-// 画面の動作は止めないが、失敗を黙って握りつぶすと「自動スキャンが古い少数の銘柄
-// リストのまま動き続けている」ことに気づけないため、成否は必ずconsoleに出す。
-var SCAN_UNIVERSE_API="https://daytrade-simulator.vercel.app/api/sync?resource=scan-universe";
-// 送信本体。全銘柄ぶんの分析リクエストと同じホストを使うため、混み合うと接続待ちで
-// 8秒では切れてしまう（銘柄数が多いときほど失敗する）。余裕をもって15秒にし、
-// それでも失敗したら3秒後に1回だけ再送する。
-function postScanUniverse(payload,retried){
-  fetch(SCAN_UNIVERSE_API,{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(payload),signal:AbortSignal.timeout(15000)})
-    .then(function(res){
-      if(!res.ok) throw new Error("HTTP "+res.status);
-      return res.json().catch(function(){return null;});
-    })
-    .then(function(body){
-      // サーバー側のガードで弾かれた場合もHTTP 200で理由が返る
-      if(body&&body.ok===false){console.warn("[scan-universe] 保存失敗: サーバーが拒否しました（"+body.reason+"）");return;}
-      console.log("[scan-universe] 保存成功 "+payload.count+"件");
-    })
-    .catch(function(e){
-      var msg=(e&&e.message)||"unknown";
-      if(!retried){
-        console.warn("[scan-universe] 保存失敗: "+msg+" — 3秒後に1回だけ再送します");
-        setTimeout(function(){postScanUniverse(payload,true);},3000);
-        return;
-      }
-      console.error("[scan-universe] 保存失敗: "+msg+" — 自動スキャンは前回の銘柄リストのまま実行されます");
-    });
-}
-// source は universe の素性。"ranking"（ランキング取得成功）のときだけ保存する。
-// "fallback"（お気に入り＋トレード中の数銘柄だけ）を保存すると自動スキャンが
-// その数銘柄しか見なくなるため、絶対に送らない（今回の「毎回8件」の原因）。
-function saveScanUniverse(list,source){
-  try{
-    var tickers=(list||[]).map(function(s){return typeof s==="string"?s:(s&&s.ticker);})
-      .filter(function(t){return !!t;});
-    if(source!=="ranking"){
-      console.warn("[scan-universe] ランキング取得失敗のため保存をスキップ（"+tickers.length+"件, source=fallback）");
-      return;
-    }
-    if(!tickers.length){console.warn("[scan-universe] 送信する銘柄が0件のため保存しません");return;}
-    // 送信は分析バッチ開始前・接続プールが空のうちに撃つ（遅延させると157件の同時取得と衝突する）
-    postScanUniverse({tickers:tickers,source:"ranking",count:tickers.length,savedAt:Date.now()},false);
-  }catch(e){console.error("[scan-universe] 保存処理でエラー: "+(e&&e.message));}
-}
+// ── サーバー側スキャン用の銘柄リストについて ──────────────────────────────
+// 以前はここから api/sync?resource=scan-universe へ銘柄リストをPOSTしていたが、
+// 無認証の書き込み口だったため廃止した。現在はサーバー（api/_scan.js の
+// buildUniverse）が、同期データの last_sectors とお気に入り・トレード中銘柄を使って
+// 自分で組み立てる。アプリ側は last_sectors を同期に含めるだけでよい。
 
 // ── 東証33業種コード（業種名 → 4桁コード）─────────────────────────────
 // ニュースに出てきた業種にコードを添えて表示する用途と、業種まとめ登録の表示に使う
@@ -742,6 +700,9 @@ var GROUP_COLORS=["#fbbf24","#22d3a0","#0ea5e9","#a78bfa","#f97316","#ec4899"];
 // ★の色分けに使う最新のグループ情報。StockCard等へprops追加せずに参照するため、
 // App側の useEffect で favGroups の最新値をここへ書き写している
 var FAV_GROUP_CACHE={};
+// 最新の同期関数。scan() は useCallback のため中の値が古くなるので、
+// FAV_GROUP_CACHE と同じくApp側の描画時にここへ書き写している
+var PUSH_SYNC=null;
 // ★ボタンの見た目：進行中トレードがあれば赤、無ければお気に入りのグループ色
 function starStyle(ticker,isFav,trades){
   if(hasActiveTrade(ticker,trades)) return {symbol:"★",color:"#f43f5e"};
@@ -5056,6 +5017,7 @@ function SyncPanel(p){
     if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
     if(data.personalTrades){saveTrades("personal",data.personalTrades);p.setPersonalTrades(data.personalTrades);}
     if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(t){localStorage.setItem("sh_"+t,JSON.stringify(data.scoreHist[t]));});}catch(e){}}
+    if(data.lastSectors&&data.lastSectors.length){try{localStorage.setItem("last_sectors",JSON.stringify(data.lastSectors));}catch(e){}}
     try{localStorage.setItem("daytrade_uid",id);}catch(e){}
     if(setUserId)setUserId(id);
   }
@@ -6589,7 +6551,10 @@ export default function App(){
   var syncLoadedS=useState(false);var syncLoaded=syncLoadedS[0],setSyncLoaded=syncLoadedS[1];
   function syncToServer(nextFavs,nextGroups,nextGroupNames,nextPersonalTrades,targetId){
     if(!syncLoaded)return; // 起動時の読み込み完了前は保存しない
-    fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+    // last_sectors はサーバー側スキャンが銘柄リストを組み立てる材料にもなるため同期する。
+    // 未保存（1度もスキャンしていない端末）のときは項目ごと送らない＝他端末の値を消さない
+    var lastSectors=(function(){try{var v=localStorage.getItem("last_sectors");return v?JSON.parse(v):null;}catch(e){return null;}})();
+    var payload={
       favs:nextFavs,
       scoreHist:getAllScoreHist(),
       forecasts:fcLoad(),
@@ -6597,8 +6562,14 @@ export default function App(){
       groupNames:nextGroupNames,
       appTrades:[], // アプリ予想は廃止（サーバー側の旧データも空で上書きする）
       personalTrades:nextPersonalTrades!==undefined?nextPersonalTrades:personalTrades
-    })}).catch(function(){});
+    };
+    if(Array.isArray(lastSectors))payload.lastSectors=lastSectors;
+    fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).catch(function(){});
   }
+  // scan() は useCallback([startDayNightFill]) のため、中で参照する値は初回描画のまま古くなる。
+  // last_sectors を更新した直後に最新の同期関数を呼べるよう、描画のたびに書き写しておく
+  // （FAV_GROUP_CACHE と同じ方式）
+  PUSH_SYNC=function(){syncToServer(favs,favGroups,groupNames);};
   var favPickerS=useState(null);var favPickerTicker=favPickerS[0],setFavPickerTicker=favPickerS[1];
   // groupNum: 0=未分類 / 1〜5=グループ / null=お気に入り削除
   function applyFav(ticker,groupNum){setFavs(function(prev){
@@ -6805,6 +6776,8 @@ export default function App(){
         // 次回「前回の業種を表示」で使えるよう、実際に読み込んだ業種を保存
         if(uResult.sectors&&uResult.sectors.length){
           try{localStorage.setItem("last_sectors",JSON.stringify(uResult.sectors.map(function(s){return s.name;})));}catch(e){}
+          // サーバー側の自動スキャンが同じ業種で銘柄リストを組めるよう、すぐ同期に反映する
+          try{if(PUSH_SYNC)PUSH_SYNC();}catch(e){}
         }
         var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
         var uTickers=universe.map(function(s){return s.ticker;});
@@ -6818,13 +6791,8 @@ export default function App(){
           }
         });
         await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
-        // 場中の自動スキャン用に、今回の銘柄リストをサーバーへ預ける。
-        // universe の素性を source として渡し、ランキング取得に成功した回だけ保存させる。
-        // jpCount は fetchSectorRanking / fetchRanking の戻り値の件数（buildStockUniverse の
-        // 結果）なので、0件＝ランキングを1件も取れなかった＝universe は「お気に入り＋
-        // トレード中」だけ、という判定に使える。分析バッチを始める前にここで送る
-        var universeSource=(jpCount>0)?"ranking":"fallback";
-        saveScanUniverse(universe,universeSource);
+        // 場中の自動スキャン用の銘柄リストはサーバー側が自分で組み立てるため、
+        // ここから送信することはしない（同期した last_sectors・お気に入り・トレードを見る）
         setProgress({done:0,total:universe.length,msg:null});
         // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
         // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
@@ -6975,6 +6943,8 @@ export default function App(){
         if(data.personalTrades){saveTrades("personal",data.personalTrades);setPersonalTrades(data.personalTrades);}
         if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(ticker){localStorage.setItem("sh_"+ticker,JSON.stringify(data.scoreHist[ticker]));});}catch(e){}}
         if(data.forecasts){try{fcMerge(data.forecasts);}catch(e){}}
+        // 「前回の業種」も端末間で揃える（サーバー側スキャンが見ている値と一致させるため）
+        if(data.lastSectors&&data.lastSectors.length){try{localStorage.setItem("last_sectors",JSON.stringify(data.lastSectors));}catch(e){}}
       })
       .catch(function(){})
       .finally(function(){setSyncLoaded(true);}); // 成功・失敗どちらでも保存ロックを解除

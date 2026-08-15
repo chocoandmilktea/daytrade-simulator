@@ -23,6 +23,7 @@
 // サーバーからは渡さない＝補正なし（係数1.0）。区別できるよう adjusted:false を記録する。
 
 import { Redis } from "@upstash/redis";
+import { gunzipSync } from "zlib";
 import { fetchStockPayload } from "./stock.js";
 import { analyzeStock } from "../src/lib/analyze.js";
 
@@ -91,6 +92,12 @@ export function normalizeStock(entry) {
   };
 }
 
+// 日本株（".T"）だけを残すためのふるい
+export function isJPEntry(entry) {
+  var s = normalizeStock(entry);
+  return !!(s && s.ticker.endsWith(".T"));
+}
+
 // ── Redis: 銘柄リスト ────────────────────────────────────────────────────
 // 新形式 {tickers:[...], source, count, savedAt} と、旧形式（tickerの生配列）の両方に対応する。
 // 旧形式は次の手動スキャンが成功するまでRedisに残っているため、後方互換が必要。
@@ -124,6 +131,146 @@ export async function saveUniverse(payload) {
   }), { ex: UNIVERSE_TTL });
   if (count > max) await redis.set(UNIVERSE_MAX_KEY, count, { ex: UNIVERSE_TTL });
   return { ok: true, count: count };
+}
+
+// ── サーバー側での銘柄リスト構築 ──────────────────────────────────────────
+// 以前はアプリ（App.js）が手動スキャンのたびに無認証でPOSTしていたが、書き込み口を
+// 外部に晒したままにしないため、同じ内容をサーバー側で組み立てるようにした。
+// 骨格はフロントの buildStockUniverse と同じ：
+//   ① 同期済みの last_sectors があれば /api/sector?sectors=… を叩く
+//   ② セクター指定が無い／0件だった場合は /api/ranking?market=jp へフォールバック
+//   ③ ticker単位の先勝ちで重複除去（件数の絞り込み・並べ替えはしない＝返却順のまま）
+//   ④ お気に入り・トレード中（status!=="done"）の銘柄を末尾に追加
+//
+// 【userIdについて】リクエストからは一切受け取らず、環境変数 SCAN_SYNC_USER_ID の
+// 固定値だけを見る。外部から渡されたuserIdで他人の同期データを読ませないため。
+export const UNIVERSE_BUILD_KEY = "scan:universe:built"; // 最後に組み立てた "YYYY-MM-DD:slot"
+const UNIVERSE_BUILD_TTL = 60 * 60 * 24 * 3; // 3日（秒）。連休を挟んでも判定が効くように
+const SYNC_USER_ID = process.env.SCAN_SYNC_USER_ID || "";
+// 組み立て全体の時間予算。Vercelの関数上限（10秒）を超えないよう、外部API2本ぶんを
+// この中に収める（1本目が長引いた場合は2本目の待ち時間が自動的に削られる）
+const BUILD_BUDGET_MS = 8000;
+const GZ_PREFIX = "gz:";
+
+// api/sync.js が保存した同期データを読む。展開手順は sync.js の unpackFromRedis と同じ
+// （sync.js を import すると循環参照になるため、ここでは同じ処理を持つ）
+function unpackSync(data) {
+  if (data == null) return null;
+  if (typeof data === "object") return data; // Upstashが自動でJSONに戻した場合
+  if (typeof data !== "string") return null;
+  if (data.startsWith(GZ_PREFIX)) {
+    var json = gunzipSync(Buffer.from(data.slice(GZ_PREFIX.length), "base64")).toString("utf8");
+    return JSON.parse(json);
+  }
+  try { return JSON.parse(data); } catch (e) { return null; }
+}
+
+// 自分自身のAPIを叩くためのURL。ranking.js / sector.js と同じ組み立て方にしてある
+function apiBase(host) {
+  var h = host || process.env.VERCEL_URL || "daytrade-simulator.vercel.app";
+  var protocol = h.indexOf("localhost") >= 0 ? "http" : "https";
+  return protocol + "://" + h;
+}
+
+// 残り時間ぶんだけ待つfetch。最低1.5秒は待つ（予算を使い切っていても1回は試す）
+async function fetchJsonWithin(url, deadline) {
+  var ms = Math.max(1500, deadline - Date.now());
+  var res = await fetch(url, { signal: AbortSignal.timeout(ms), cache: "no-store" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return await res.json();
+}
+
+// 同期された last_sectors を /api/sector に渡せる形に整える（sector.js 側と同じく最大3件）
+function normalizeSectors(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(function (s) { return typeof s === "string" ? s.trim() : (s && s.name ? String(s.name).trim() : ""); })
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+// ランキング結果と同期データから銘柄リスト（tickerの配列）を作る純粋な処理。
+// 外部通信を含まないので、そのまま単体で実行して結果を確認できる。
+export function composeUniverse(stocks, sync) {
+  var seen = {}, tickers = [];
+  function push(ticker) {
+    if (!ticker || typeof ticker !== "string" || seen[ticker]) return false;
+    seen[ticker] = true;
+    tickers.push(ticker);
+    return true;
+  }
+  // ①ランキング（先勝ち。並べ替えも件数の絞り込みもしない）
+  (stocks || []).forEach(function (s) {
+    push(typeof s === "string" ? s : (s && s.ticker));
+  });
+  var rankingCount = tickers.length;
+  // ②お気に入り（universeに未収載のものだけ末尾へ）
+  var favAdded = 0;
+  ((sync && sync.favs) || []).forEach(function (t) { if (push(t)) favAdded++; });
+  // ③トレード中（status!=="done"）。同期タイミングによるズレは許容する
+  var tradeAdded = 0;
+  ((sync && sync.personalTrades) || []).forEach(function (t) {
+    if (!t || t.status === "done") return;
+    if (push(t.ticker)) tradeAdded++;
+  });
+  return { tickers: tickers, rankingCount: rankingCount, favAdded: favAdded, tradeAdded: tradeAdded };
+}
+
+// 銘柄リストを組み立ててRedisへ保存する。保存の可否は saveUniverse のガードに委ねる。
+export async function buildUniverse(opts) {
+  var o = opts || {};
+  var deadline = Date.now() + BUILD_BUDGET_MS;
+  var base = apiBase(o.host);
+
+  // 同期データ（お気に入り・トレード・前回の業種）。読めなくてもランキングだけで続行する
+  var sync = null;
+  if (!SYNC_USER_ID) {
+    console.warn("[scan-universe] SCAN_SYNC_USER_ID が未設定です。お気に入り・トレード中銘柄は追加されません");
+  } else {
+    try {
+      sync = unpackSync(await redis.get("user:" + SYNC_USER_ID));
+    } catch (e) {
+      console.warn("[scan-universe] 同期データの読み込みに失敗: " + e.message);
+    }
+  }
+
+  var sectors = normalizeSectors(sync && sync.lastSectors);
+  var stocks = [], origin = "";
+  if (sectors.length) {
+    try {
+      var sectorJson = await fetchJsonWithin(base + "/api/sector?sectors=" + encodeURIComponent(sectors.join(",")), deadline);
+      stocks = Array.isArray(sectorJson.stocks) ? sectorJson.stocks : [];
+      origin = "sector(" + sectors.join("/") + ")";
+    } catch (e) {
+      console.warn("[scan-universe] /api/sector 失敗: " + e.message + " — 通常ランキングに切り替えます");
+    }
+  }
+  // 業種指定が無い場合も、指定したが0件だった場合も通常ランキングで代替する
+  // （フロントの buildStockUniverse と同じ挙動）
+  if (!stocks.length) {
+    var rankingJson = await fetchJsonWithin(base + "/api/ranking?market=jp", deadline);
+    stocks = Array.isArray(rankingJson.stocks) ? rankingJson.stocks : [];
+    origin = sectors.length ? "ranking(業種で取れなかったため代替)" : "ranking";
+  }
+
+  var composed = composeUniverse(stocks, sync);
+  // source は saveUniverse のガード①に合わせて常に "ranking"（＝ランキング由来）。
+  // 業種指定かどうかは origin としてログにだけ残す
+  var result = await saveUniverse({
+    tickers: composed.tickers, source: "ranking", count: composed.tickers.length, savedAt: Date.now(),
+  });
+  console.log("[scan-universe] 組み立て " + origin + " ランキング:" + composed.rankingCount +
+    "件 +お気に入り" + composed.favAdded + "件 +トレード中" + composed.tradeAdded +
+    "件 = " + composed.tickers.length + "件 / 保存:" + (result.ok ? "成功" : "拒否(" + result.reason + ")"));
+  return {
+    count: composed.tickers.length,
+    rankingCount: composed.rankingCount,
+    favAdded: composed.favAdded,
+    tradeAdded: composed.tradeAdded,
+    origin: origin,
+    saved: !!result.ok,
+    reason: result.ok ? null : result.reason,
+  };
 }
 
 // ── api/stock.js のレスポンス → analyzeStock に渡す株価データ ─────────────
@@ -205,19 +352,47 @@ export async function runScanBatch(opts) {
   var session = sessionFromSlot(slot);
   if (!session) return { error: "unknown slot: " + slot };
 
+  // ── スロットの先頭で銘柄リストを組み直す ────────────────────────────────
+  // 組み立て（外部API 2本）とスキャン（5銘柄）を1回の呼び出しに詰めるとVercelの
+  // 10秒制限を超えるため、組み立てた回は done:0 / nextOffset:0 で即座に返し、
+  // 実際のスキャンは呼び出し側（Railway）が続けて投げる次の1回に任せる。
+  if (offset === 0) {
+    var mark = date + ":" + slot;
+    var lastMark = "";
+    try { lastMark = String((await redis.get(UNIVERSE_BUILD_KEY)) || ""); } catch (e) { lastMark = ""; }
+    if (lastMark !== mark) {
+      // マークは組み立ての前に立てる。関数が時間切れで落ちても同じスロットで
+      // 組み立てを繰り返さず、前回のリストでスキャンへ進めるようにするため
+      try { await redis.set(UNIVERSE_BUILD_KEY, mark, { ex: UNIVERSE_BUILD_TTL }); } catch (e) { /* 失敗しても続行 */ }
+      var built = null;
+      try {
+        built = await buildUniverse({ host: o.host });
+      } catch (e) {
+        console.log("[scan] 銘柄リストの組み立てに失敗: " + e.message + " — 前回のリストで続行します");
+      }
+      var ready = (await loadUniverse()).filter(isJPEntry);
+      if (!ready.length) {
+        console.log("[scan] 組み立て後も銘柄リストが空のため0件で終了します slot:" + slot + " date:" + date);
+        return { error: "universe empty" };
+      }
+      return {
+        done: 0, total: ready.length, nextOffset: 0, requested: 0, failed: [],
+        session: session, stored: 0, elapsedMs: Date.now() - startedAt,
+        built: built || { saved: false },
+      };
+    }
+  }
+
   // 自動スキャンは日本時間の日中に走るため、米国株は市場が閉まっていて前日終値しか
   // 取れない。統計を汚すうえに実行時間も無駄になるので、日本株（".T"）だけに絞る。
   var saved = await loadUniverse();
-  var universe = saved.filter(function (entry) {
-    var s = normalizeStock(entry);
-    return !!(s && s.ticker.endsWith(".T"));
-  });
+  var universe = saved.filter(isJPEntry);
   // 銘柄リストが無い（または日本株が1件も無い）場合は、固定リストで代替せず0件で終わる。
   // 少数の固定銘柄で「成功したように見える」状態を作ると、リストが届いていないことに
   // 気づけなくなるため。
   if (!universe.length) {
     console.log("[scan] 銘柄リストが空のため0件で終了します（保存件数:" + saved.length +
-      " 日本株:0）。アプリで手動スキャンを実行して銘柄リストを保存してください");
+      " 日本株:0）。ランキング取得（/api/sector・/api/ranking）が通っているか確認してください");
     return { error: "universe empty" };
   }
   // 何件を対象にしているかを1スロットにつき1回だけ残す（件数の食い違いの検出用）
