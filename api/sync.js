@@ -190,6 +190,139 @@ async function handlePremarketLog(req, res) {
   return res.status(405).json({ error: 'method not allowed' });
 }
 
+// ── 寄り前ログの集計（読み取り専用） ────────────────────────────────────
+// premarket-log で貯めた生ログを「日付 × 銘柄」で1行にまとめて返す。
+// 参照するキーは premarket-log と同じ premarket:log:<日付> のみで、
+// 保存もTTLの延長も一切しない（生ログは検証用にそのまま残す）。
+//
+// 生ログの入れ子は次の3階層になっている:
+//   セッション { startedAt, finishedAt, records } → records[] { ts, raw } → raw[] { sIssueCode, ... }
+// エラー時のレコードは raw を持たず { ts, error } なので、集計対象から自然に外れる。
+
+// 立花の戻り値は文字列。空文字・数値化できない値は null として扱う
+function toNum(v) {
+  if (v == null) return null;
+  var s = String(v).trim();
+  if (s === '') return null;
+  var n = Number(s);
+  return isFinite(n) ? n : null;
+}
+
+function round1(n) { return Math.round(n * 10) / 10; }
+function round2(n) { return Math.round(n * 100) / 100; }
+
+// 1日ぶんのセッション配列を、銘柄ごとの1行にまとめる
+function summarizePremarketDate(date, sessions) {
+  // まず銘柄コードごとに { ts, row } を集める
+  var byCode = {};
+  sessions.forEach(function (session) {
+    if (!session || !Array.isArray(session.records)) return;
+    session.records.forEach(function (rec) {
+      if (!rec || !Array.isArray(rec.raw)) return; // エラーレコードには raw が無い
+      rec.raw.forEach(function (row) {
+        if (!row) return;
+        var code = String(row.sIssueCode == null ? '' : row.sIssueCode).trim();
+        if (!code) return;
+        if (!byCode[code]) byCode[code] = [];
+        byCode[code].push({ ts: toNum(rec.ts), row: row });
+      });
+    });
+  });
+
+  return Object.keys(byCode).sort().map(function (code) {
+    // 同じ日に複数セッションが貯まっている場合に備え、取得時刻の昇順に並べ直す
+    var list = byCode[code].slice().sort(function (a, b) {
+      return (a.ts == null ? 0 : a.ts) - (b.ts == null ? 0 : b.ts);
+    });
+
+    var ratios = [];
+    var open = null;
+    var prevClose = null;
+
+    list.forEach(function (item) {
+      var ask = toNum(item.row.pAAV); // 売気配数量
+      var bid = toNum(item.row.pABV); // 買気配数量
+      // 寄り成立後のレコードは気配が空文字（または0）になるため、
+      // 売買どちらも有効な値がある時だけ買い比率の計算に使う
+      if (ask != null && bid != null && ask !== 0 && bid !== 0) {
+        ratios.push(bid / (ask + bid) * 100);
+      }
+      // 始値・前日終値は「取得できた最後の非空値」を採用する
+      // （始値は寄りが付くまで空なので、上書きしていくと最終的に確定値が残る）
+      var o = toNum(item.row.pDOP);
+      if (o != null) open = o;
+      var p = toNum(item.row.pPRP);
+      if (p != null) prevClose = p;
+    });
+
+    // 有効レコードが0件なら買い比率は全て null にする
+    var first = null, last = null, min = null, max = null, avg = null;
+    if (ratios.length > 0) {
+      var sum = 0, lo = ratios[0], hi = ratios[0];
+      ratios.forEach(function (r) {
+        sum += r;
+        if (r < lo) lo = r;
+        if (r > hi) hi = r;
+      });
+      first = round1(ratios[0]);
+      last = round1(ratios[ratios.length - 1]);
+      min = round1(lo);
+      max = round1(hi);
+      avg = round1(sum / ratios.length);
+    }
+
+    // 前日終値が0だと割り算が壊れるため、その場合も null にする
+    var gapPct = null;
+    if (open != null && prevClose != null && prevClose !== 0) {
+      gapPct = round2((open - prevClose) / prevClose * 100);
+    }
+
+    return {
+      date: date,
+      code: code,
+      quoteCount: list.length, // 除外前の全レコード数
+      // その銘柄が実際に取れた最初と最後の時刻（epochミリ秒）
+      startedAt: list.length ? list[0].ts : null,
+      finishedAt: list.length ? list[list.length - 1].ts : null,
+      buyRatioFirst: first,
+      buyRatioLast: last,
+      buyRatioMin: min,
+      buyRatioMax: max,
+      buyRatioAvg: avg,
+      open: open,
+      prevClose: prevClose,
+      gapPct: gapPct,
+    };
+  });
+}
+
+async function handlePremarketSummary(req, res) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
+  try {
+    var date = req.query.date;
+    var dates;
+    if (date) {
+      if (!isDateString(date)) return res.status(400).json({ error: 'invalid date' });
+      dates = [date];
+    } else {
+      // date未指定なら保存されている全日付（新しい順）
+      dates = await listPremarketDates();
+    }
+    if (dates.length === 0) return res.status(200).json({ count: 0, rows: [] });
+
+    var values = await redis.mget(...dates.map(function (d) { return PREMARKET_LOG_PREFIX + d; }));
+    var rows = [];
+    dates.forEach(function (d, i) {
+      var parsed = unpackFromRedis(values[i]);
+      if (!Array.isArray(parsed)) return; // 未保存の日付は飛ばす
+      rows = rows.concat(summarizePremarketDate(d, parsed));
+    });
+    return res.status(200).json({ count: rows.length, rows: rows });
+  } catch (e) {
+    return res.status(500).json({ error: 'load failed: ' + e.message });
+  }
+}
+
 // ── サーバー側スキャン（Phase 2）の窓口 ──────────────────────────────────
 // 実処理は api/_scan.js。ここは受け口だけ。立花中継と同じく、Vercel Hobbyの
 // 関数12個制限を消費しないよう sync.js に相乗りさせている。
@@ -294,6 +427,7 @@ export default async function handler(req, res) {
   if (resource === 'tachibana-watch') return handleTachibanaWatch(req, res);
   if (resource === 'tachibana-quote') return handleTachibanaQuote(req, res);
   if (resource === 'premarket-log') return handlePremarketLog(req, res);
+  if (resource === 'premarket-summary') return handlePremarketSummary(req, res);
   if (resource === 'scan-universe') return handleScanUniverse(req, res);
   if (resource === 'scan-run') return handleScanRun(req, res);
   if (resource === 'scan-result') return handleScanResult(req, res);
