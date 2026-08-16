@@ -215,10 +215,16 @@ function round2(n) { return Math.round(n * 100) / 100; }
 function summarizePremarketDate(date, sessions) {
   // まず銘柄コードごとに { ts, row } を集める
   var byCode = {};
+  // エラーは銘柄単位ではなく取得単位で起きるため、その日のセッション全体で数える
+  var errorCount = 0;
   sessions.forEach(function (session) {
     if (!session || !Array.isArray(session.records)) return;
     session.records.forEach(function (rec) {
-      if (!rec || !Array.isArray(rec.raw)) return; // エラーレコードには raw が無い
+      if (!rec) return;
+      if (!Array.isArray(rec.raw)) { // エラーレコードには raw が無い（{ ts, error }）
+        errorCount++;
+        return;
+      }
       rec.raw.forEach(function (row) {
         if (!row) return;
         var code = String(row.sIssueCode == null ? '' : row.sIssueCode).trim();
@@ -242,9 +248,10 @@ function summarizePremarketDate(date, sessions) {
     list.forEach(function (item) {
       var ask = toNum(item.row.pAAV); // 売気配数量
       var bid = toNum(item.row.pABV); // 買気配数量
-      // 寄り成立後のレコードは気配が空文字（または0）になるため、
-      // 売買どちらも有効な値がある時だけ買い比率の計算に使う
-      if (ask != null && bid != null && ask !== 0 && bid !== 0) {
+      // 寄り成立後のレコードは気配が空文字になるため、両方に値がある時だけ使う。
+      // 片側が0の買い一色・売り一色はギャップ予想で最も重要な局面なので、
+      // 合計が0でない限り除外せず、0% / 100% として記録する
+      if (ask != null && bid != null && ask + bid > 0) {
         ratios.push(bid / (ask + bid) * 100);
       }
       // 始値・前日終値は「取得できた最後の非空値」を採用する
@@ -280,7 +287,9 @@ function summarizePremarketDate(date, sessions) {
     return {
       date: date,
       code: code,
-      quoteCount: list.length, // 除外前の全レコード数
+      quoteCount: list.length, // その銘柄のrawが取れたレコード数
+      validCount: ratios.length, // うち買い比率の計算に使えた件数
+      errorCount: errorCount, // その日のセッション全体でrawを持たなかったレコード数
       // その銘柄が実際に取れた最初と最後の時刻（epochミリ秒）
       startedAt: list.length ? list[0].ts : null,
       finishedAt: list.length ? list[list.length - 1].ts : null,
