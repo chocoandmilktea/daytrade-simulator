@@ -353,7 +353,16 @@ export async function runScanBatch(opts) {
     if (lastMark !== mark) {
       // マークは組み立ての前に立てる。関数が時間切れで落ちても同じスロットで
       // 組み立てを繰り返さず、前回のリストでスキャンへ進めるようにするため
-      try { await redis.set(UNIVERSE_BUILD_KEY, mark, { ex: UNIVERSE_BUILD_TTL }); } catch (e) { /* 失敗しても続行 */ }
+      var markSaved = false;
+      try {
+        await redis.set(UNIVERSE_BUILD_KEY, mark, { ex: UNIVERSE_BUILD_TTL });
+        markSaved = true;
+      } catch (e) {
+        console.error("[scan] 組み立てマークの保存に失敗: " + e.message + " slot:" + slot + " date:" + date);
+      }
+      // マークが残らないと毎回「組み立て回」と判定され、呼び出し側が空回りし続ける。
+      // nextOffset を返さずエラーで終わらせ、Railway側のループを即座に止める。
+      if (!markSaved) return { error: "universe build mark save failed" };
       var built = null;
       try {
         built = await buildUniverse({ host: o.host });
