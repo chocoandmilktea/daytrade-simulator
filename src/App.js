@@ -4375,12 +4375,24 @@ function FavPanel(p){
     var codes=displayStocks.filter(function(s){return s.ticker.endsWith(".T");})
       .map(function(s){return s.ticker.replace(".T","");});
     if(codes.length===0)return; // 日本株が1件も無ければ何もしない
-    navigator.clipboard.writeText(codes.join(",")).then(function(){
-      setCodeCopied(true);
-      setTimeout(function(){setCodeCopied(false);},2000); // 2秒だけ✅表示に切り替える
-    }).catch(function(e){
-      window.alert("コピーに失敗しました: "+(e&&e.message?e.message:e));
-    });
+    var text=codes.join(",");
+    var done=function(){setCodeCopied(true);setTimeout(function(){setCodeCopied(false);},2000);}; // 2秒だけ✅表示に切り替える
+    // 非HTTPSやiPadのSafariなどclipboard APIが使えない環境があるため、旧方式→promptの順で入れ直す
+    var legacy=function(){
+      try{
+        var ta=document.createElement("textarea");
+        ta.value=text;ta.style.position="fixed";ta.style.top="0";ta.style.opacity="0";
+        document.body.appendChild(ta);ta.focus();ta.select();ta.setSelectionRange(0,text.length);
+        var ok=document.execCommand("copy");
+        document.body.removeChild(ta);
+        if(ok){done();return;}
+      }catch(e){}
+      prompt("銘柄コード（手動でコピーしてください）",text);
+    };
+    try{
+      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(legacy);
+      else legacy();
+    }catch(e){legacy();}
   }
   var divider=<span style={{flexShrink:0,width:1,alignSelf:"stretch",background:"#1e3050"}}/>;
   // PC版だけ、区切りの位置に余白を足して見やすくする（スマホは横スクロールのため余白なし）
@@ -5602,7 +5614,7 @@ function GuidePanel(){
     {key:"fav",icon:"⭐",label:"メイン（お気に入り／全銘柄）",sections:[
       {title:"📋 一覧の使い方",items:[
         "銘柄カードをタップ → 詳細シグナル表示",
-        "上部バーは横スクロールします（件数／銘柄検索／グループ／🌱初動順／🏆スコア順／🏭業種まとめ登録／📊的中率／再スキャン／📋コード。PC版では再スキャンと📋が右端に並びます）",
+        "上部バーは横スクロールします（件数／銘柄検索／グループ／🌱初動順／🏆スコア順／🎯トレード順／🏭業種まとめ登録／📊的中率／再スキャン／📋コード。PC版では再スキャンと📋が右端に並びます）",
         "右端の「📋」ボタン：いま表示中の銘柄のうち日本株のコードだけを、表示順のままカンマ区切り（例 7203,6758,9984）でクリップボードにコピーする。コピーできると2秒だけ✅に変わる",
         "「📋全銘柄」＝今回スキャンした全銘柄を表示。「●未分類」＝お気に入りのうちグループに入れていない銘柄を表示（グループ1〜4と同じ絞り込み。先頭の●は★の色と対応）",
         "★/☆ボタンでお気に入りの登録・解除",
