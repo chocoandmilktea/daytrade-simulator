@@ -341,26 +341,10 @@ async function handlePremarketSummary(req, res) {
 // 立花中継。60秒おきに叩かれる）のコールドスタートまで重くなる。
 // そのため scan-* が呼ばれた時だけ動的importで読み込む。
 
-// ① 銘柄リストの保存・取得（POST: 配列を保存 / GET: 現在のリストを返す）
+// ① 銘柄リストの取得（GET: 現在のリストを返す）
+// 保存はサーバー側（_scan.js の buildUniverse）が scan-run の中で行う。
+// 以前あった無認証のPOST（アプリから銘柄リストを送りつける口）は廃止した。
 async function handleScanUniverse(req, res) {
-  if (req.method === 'POST') {
-    let body = req.body;
-    if (typeof body === 'string') {
-      try { body = JSON.parse(body); } catch (e) { return res.status(400).json({ error: 'invalid json' }); }
-    }
-    // ボディはそのまま _scan.js へ渡す（ガード判定は _scan.js に集約）。
-    // 拒否された場合もHTTP 200で reason を返す（フロント側でログに出すため）
-    try {
-      const { saveUniverse } = await import('./_scan.js');
-      const result = await saveUniverse(body);
-      // 何件で上書きしたかを残す（自動スキャンの件数が想定と合わないときの突き合わせ用）
-      if (result.ok) console.log('[scan-universe] 銘柄リストを保存しました。件数:', result.count);
-      else console.warn('[scan-universe] 銘柄リストを保存しませんでした:', result.reason);
-      return res.status(200).json(result);
-    } catch (e) {
-      return res.status(500).json({ error: 'save failed: ' + e.message });
-    }
-  }
   if (req.method === 'GET') {
     try {
       const { loadUniverse } = await import('./_scan.js');
@@ -393,6 +377,7 @@ async function handleScanRun(req, res) {
       slot: body.slot,
       offset: body.offset,
       limit: body.limit != null ? body.limit : SCAN_DEFAULT_LIMIT,
+      host: req.headers.host, // 銘柄リスト組み立て時に自分自身の /api/sector・/api/ranking を叩くため
     });
     // universe未登録・slot不正などは処理不能なので400で返す（呼び出し側が止められるように）
     if (result.error && result.done == null) return res.status(400).json(result);
@@ -449,7 +434,14 @@ export default async function handler(req, res) {
 
   if (req.method === 'POST') {
     try {
-      const { favs, scoreHist, groups, groupNames, appTrades, personalTrades, forecasts } = readBody(req);
+      const { favs, scoreHist, groups, groupNames, appTrades, personalTrades, forecasts, lastSectors } = readBody(req);
+      // last_sectors（前回スキャンした業種）はサーバー側スキャンの銘柄リスト組み立てにも使う。
+      // 未送信（undefined）の場合は保存済みの値をそのまま残す＝古いアプリからのPOSTで消さない
+      let nextSectors = Array.isArray(lastSectors) ? lastSectors : null;
+      if (nextSectors === null) {
+        const prev = unpackFromRedis(await redis.get(key));
+        nextSectors = (prev && Array.isArray(prev.lastSectors)) ? prev.lastSectors : [];
+      }
       await redis.set(key, packForRedis({
         favs: favs || [],
         scoreHist: scoreHist || {},
@@ -458,6 +450,7 @@ export default async function handler(req, res) {
         appTrades: appTrades || [],
         personalTrades: personalTrades || [],
         forecasts: forecasts || [],
+        lastSectors: nextSectors,
       }), { ex: TTL });
       return res.status(200).json({ ok: true });
     } catch (e) {
@@ -471,7 +464,7 @@ export default async function handler(req, res) {
       const data = await redis.get(key);
       const parsed = unpackFromRedis(data);
       if (!parsed) {
-        return res.status(200).json({ found: false, favs: [], scoreHist: {}, groups: {}, groupNames: {}, appTrades: [], personalTrades: [], forecasts: [] });
+        return res.status(200).json({ found: false, favs: [], scoreHist: {}, groups: {}, groupNames: {}, appTrades: [], personalTrades: [], forecasts: [], lastSectors: [] });
       }
       await redis.expire(key, TTL);
       return res.status(200).json({
@@ -483,6 +476,7 @@ export default async function handler(req, res) {
         appTrades: parsed.appTrades || [],
         personalTrades: parsed.personalTrades || [],
         forecasts: parsed.forecasts || [],
+        lastSectors: parsed.lastSectors || [],
       });
     } catch (e) {
       return res.status(500).json({ error: 'load failed: ' + e.message });
