@@ -975,15 +975,15 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
   }
   var hasStale52=false; // 日足未取得で52週が出せない銘柄が1つでもあるか
   var lines=top.map(function(s,i){
-    var isJPmkt=s.market==="JP";
-    var unit=isJPmkt?"¥":"$";
+    var isJP=s.market==="JP";
+    var unit=isJP?"¥":"$";
     var w52=calc52w(dailyByTicker&&dailyByTicker[s.ticker],s.rawPrice);
     if(!w52) hasStale52=true;
     var trendLine="";
     // 履歴2件だと「初回スコア→今日」の差がそのまま出て +97 のような極端な値になる。
     // 3件以上に限定し、何日分の推移かも添えてAIが過大評価しないようにする
     // 休場中の記録はスコアの土俵が違うため、取引日の記録だけで推移を出す
-    var histTD=tradingDayHist(s.scoreHist,isJPmkt);
+    var histTD=tradingDayHist(s.scoreHist,isJP);
     if(histTD.length>=3){
       var slice=histTD.slice(-5);
       var trend=Math.round(slice[slice.length-1].s-slice[0].s); // 小数のまま出すと桁が汚れるので丸める
@@ -1003,8 +1003,8 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
     // ATR利確とATR上限、ATR損切とATR下限は元が同じ計算なので重複させない（AIが別物と誤認するため）
     // S2/R2は日足、S1/R1は15分足と取得元が違うため、まれに内外が逆転する。
     // 「S2はS1より安い / R2はR1より高い」が成立する時だけ出す（矛盾した数値をAIに渡さない）
-    var s2v=(w52&&w52.low60!=null)?(isJPmkt?Math.round(w52.low60):parseFloat(w52.low60.toFixed(2))):null;
-    var r2v=(w52&&w52.high60!=null)?(isJPmkt?Math.round(w52.high60):parseFloat(w52.high60.toFixed(2))):null;
+    var s2v=(w52&&w52.low60!=null)?(isJP?Math.round(w52.low60):parseFloat(w52.low60.toFixed(2))):null;
+    var r2v=(w52&&w52.high60!=null)?(isJP?Math.round(w52.high60):parseFloat(w52.high60.toFixed(2))):null;
     var zoneArr=[];
     if(s.support) zoneArr.push("S1(20日安値) "+unit+s.support.s1);
     if(s2v!=null&&s.support&&s2v<s.support.s1) zoneArr.push("S2(60日安値) "+unit+s2v);
@@ -1028,7 +1028,7 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
     var pos52=w52
       ?w52.position.toFixed(0)+"%（52週高値比 "+w52.fromHigh.toFixed(1)+"%・上値のしこりの目安）"
       :"─（日足未取得のため算出不可。この銘柄は52週情報なしとして判断すること）";
-    var idLine=isJPmkt
+    var idLine=isJP
       ?(s.name||s.ticker)+"（東京証券取引所・証券コード "+s.ticker.replace(".T","")+"）"
       :s.ticker+(s.name?" ("+s.name+")":"");
     return((i+1)+". "+idLine+"\n"+
