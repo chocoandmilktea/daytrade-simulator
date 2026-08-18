@@ -4173,6 +4173,7 @@ function FavPanel(p){
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
   var addGroupS=useState(0);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
   var showAccS=useState(false);var showAcc=showAccS[0],setShowAcc=showAccS[1];
+  var codeCopiedS=useState(false);var codeCopied=codeCopiedS[0],setCodeCopied=codeCopiedS[1]; // 📋銘柄コード一括コピーの成功表示
   var isAll=groupFilter===-1;
   // 銘柄名マスタ（コード→会社名）。会社名でも検索できるようにするため保持する。
   // 端末に24時間キャッシュされているので、通常は通信せずそのまま使える
@@ -4328,6 +4329,32 @@ function FavPanel(p){
     var name=prompt("グループ名を入力",groupNames[num]);
     if(name&&name.trim())renameGroup(num,name.trim());
   }
+  // 📋 表示中の日本株の銘柄コードを「7203,6758,9984」形式でまとめてコピーする。
+  // tachibana-server の PREMARKET_CODES を手打ちする手間をなくすためのもの。
+  // 対象は今フィルター＆並び替えを通った displayStocks のみ（表示順そのまま）
+  function copyDisplayedCodes(){
+    var codes=displayStocks.filter(function(s){return s.ticker.endsWith(".T");})
+      .map(function(s){return s.ticker.replace(".T","");});
+    if(codes.length===0)return; // 日本株が1件も無ければ何もしない
+    var text=codes.join(",");
+    var done=function(){setCodeCopied(true);setTimeout(function(){setCodeCopied(false);},2000);}; // 2秒だけ✅表示に切り替える
+    // 非HTTPSやiPadのSafariなどclipboard APIが使えない環境があるため、旧方式→promptの順で入れ直す
+    var legacy=function(){
+      try{
+        var ta=document.createElement("textarea");
+        ta.value=text;ta.style.position="fixed";ta.style.top="0";ta.style.opacity="0";
+        document.body.appendChild(ta);ta.focus();ta.select();ta.setSelectionRange(0,text.length);
+        var ok=document.execCommand("copy");
+        document.body.removeChild(ta);
+        if(ok){done();return;}
+      }catch(e){}
+      prompt("銘柄コード（手動でコピーしてください）",text);
+    };
+    try{
+      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(legacy);
+      else legacy();
+    }catch(e){legacy();}
+  }
   var divider=<span style={{flexShrink:0,width:1,alignSelf:"stretch",background:"#1e3050"}}/>;
   // PC版だけ、区切りの位置に余白を足して見やすくする（スマホは横スクロールのため余白なし）
   var pcGap=isMobile?null:<span style={{flexShrink:0,width:14}}/>;
@@ -4376,6 +4403,8 @@ function FavPanel(p){
           {pcGap}
           <button onClick={function(){setShowAcc(true);}} style={{flexShrink:0,background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>📊的中率</button>
           {p.onScan&&<button onClick={p.onScan} style={{flexShrink:0,marginLeft:isMobile?0:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>}
+          {/* 行の右端：表示中の日本株コードをカンマ区切りでまとめてコピー */}
+          <button onClick={copyDisplayedCodes} title="表示中の日本株の銘柄コードをカンマ区切りでコピー" style={{flexShrink:0,marginLeft:p.onScan?0:(isMobile?0:"auto"),background:"transparent",border:"1px solid "+(codeCopied?"#22d3a0":"#1e3050"),borderRadius:6,color:codeCopied?"#22d3a0":"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>{codeCopied?"✅":"📋"}</button>
         </div>
         {statusMsg&&<div style={{fontSize:12,color:searchStatus==="ok"?"#22d3a0":"#f43f5e",marginTop:4}}>{statusMsg}</div>}
         {/* 表示中の銘柄に見つからない場合の案内。追加成功などのステータスとは重ねず、どちらか一方だけ出す */}
@@ -5547,7 +5576,8 @@ function GuidePanel(){
     {key:"fav",icon:"⭐",label:"メイン（お気に入り／全銘柄）",sections:[
       {title:"📋 一覧の使い方",items:[
         "銘柄カードをタップ → 詳細シグナル表示",
-        "上部バーは横スクロールします（件数／銘柄検索／グループ／🌱初動順／🏆スコア順／🏭業種まとめ登録／📊的中率／再スキャン。PC版では再スキャンが右端に並びます）",
+        "上部バーは横スクロールします（件数／銘柄検索／グループ／🌱初動順／🏆スコア順／🎯トレード順／🏭業種まとめ登録／📊的中率／再スキャン／📋コード。PC版では再スキャンと📋が右端に並びます）",
+        "右端の「📋」ボタン：いま表示中の銘柄のうち日本株のコードだけを、表示順のままカンマ区切り（例 7203,6758,9984）でクリップボードにコピーする。コピーできると2秒だけ✅に変わる",
         "「📋全銘柄」＝今回スキャンした全銘柄を表示。「●未分類」＝お気に入りのうちグループに入れていない銘柄を表示（グループ1〜4と同じ絞り込み。先頭の●は★の色と対応）",
         "★/☆ボタンでお気に入りの登録・解除",
         "グループ1〜4に分類可能（グループ名は選択中に表示される✎アイコンで編集）",
