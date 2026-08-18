@@ -209,6 +209,7 @@ export function composeUniverse(stocks, sync) {
 // 銘柄リストを組み立ててRedisへ保存する。保存の可否は saveUniverse のガードに委ねる。
 export async function buildUniverse(opts) {
   var o = opts || {};
+  var t0 = Date.now(); // 所要ms計測用（scan:universe:meta に残すだけで挙動には影響しない）
   var deadline = Date.now() + BUILD_BUDGET_MS;
   var base = apiBase(o.host);
 
@@ -223,6 +224,8 @@ export async function buildUniverse(opts) {
       console.warn("[scan-universe] 同期データの読み込みに失敗: " + e.message);
     }
   }
+
+  var tSync = Date.now();
 
   var sectors = normalizeSectors(sync && sync.lastSectors);
   var stocks = [], origin = "";
@@ -243,15 +246,28 @@ export async function buildUniverse(opts) {
     origin = sectors.length ? "ranking(業種で取れなかったため代替)" : "ranking";
   }
 
+  var tRanking = Date.now();
+
   var composed = composeUniverse(stocks, sync);
+  var tMerge = Date.now();
   // source は saveUniverse のガード①に合わせて常に "ranking"（＝ランキング由来）。
   // 業種指定かどうかは origin としてログにだけ残す
   var result = await saveUniverse({
     tickers: composed.tickers, source: "ranking", count: composed.tickers.length, savedAt: Date.now(),
   });
+  var tSave = Date.now();
   console.log("[scan-universe] 組み立て " + origin + " ランキング:" + composed.rankingCount +
     "件 +お気に入り" + composed.favAdded + "件 +トレード中" + composed.tradeAdded +
     "件 = " + composed.tickers.length + "件 / 保存:" + (result.ok ? "成功" : "拒否(" + result.reason + ")"));
+  // 所要msの記録（ランタイムログを開かずに後から確認するための補助情報）。
+  // 失敗しても本体の処理は止めない＝握りつぶす
+  try {
+    await redis.set("scan:universe:meta", JSON.stringify({
+      builtAt: new Date().toISOString(), source: origin, count: composed.tickers.length,
+      saved: !!result.ok, totalMs: tSave - t0,
+      parts: { sync: tSync - t0, ranking: tRanking - tSync, merge: tMerge - tRanking, save: tSave - tMerge },
+    }), { ex: UNIVERSE_TTL });
+  } catch (e) { /* 計測の失敗は無視する */ }
   return {
     count: composed.tickers.length,
     rankingCount: composed.rankingCount,
