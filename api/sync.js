@@ -311,14 +311,8 @@ async function handlePremarketSummary(req, res) {
   if (!req.query.date) return res.status(400).json({ error: 'date required' });
   try {
     var date = req.query.date;
-    var dates;
-    if (date) {
-      if (!isDateString(date)) return res.status(400).json({ error: 'invalid date' });
-      dates = [date];
-    } else {
-      // date未指定なら保存されている全日付（新しい順）
-      dates = await listPremarketDates();
-    }
+    if (!isDateString(date)) return res.status(400).json({ error: 'invalid date' });
+    var dates = [date];
     if (dates.length === 0) return res.status(200).json({ count: 0, rows: [] });
 
     var values = await redis.mget(...dates.map(function (d) { return PREMARKET_LOG_PREFIX + d; }));
