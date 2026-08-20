@@ -306,6 +306,9 @@ function summarizePremarketDate(date, sessions) {
 
 async function handlePremarketSummary(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
+  // date未指定だと保存済みの全日分（最大30日）を展開してしまい、40銘柄規模では
+  // 応答が数十MBに達してVercelの上限・実行時間を圧迫する。Redisを触る前に弾く
+  if (!req.query.date) return res.status(400).json({ error: 'date required' });
   try {
     var date = req.query.date;
     var dates;
