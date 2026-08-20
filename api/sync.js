@@ -26,6 +26,11 @@ const WATCH_KEY = 'tachibana:watch';
 const WATCH_TTL = 60 * 5;
 const RELAY_SECRET = process.env.TACHIBANA_RELAY_SECRET;
 
+// TACHIBANA_RELAY_SECRET による認証。未設定時は常に拒否（フェイルクローズ）
+function isAuthed(req) {
+  return !!RELAY_SECRET && req.headers['x-relay-secret'] === RELAY_SECRET;
+}
+
 const GZ_PREFIX = 'gz:';
 
 const SCAN_DEFAULT_LIMIT = 5; // scan-run の limit 既定値（1バッチあたりの銘柄数）
@@ -69,9 +74,7 @@ async function handleTachibanaWatch(req, res) {
     return res.status(200).json({ ok: true });
   }
   if (req.method === 'GET') {
-    if (RELAY_SECRET && req.headers['x-relay-secret'] !== RELAY_SECRET) {
-      return res.status(401).json({ error: 'unauthorized' });
-    }
+    if (!isAuthed(req)) return res.status(401).json({ error: 'unauthorized' });
     const data = await redis.get(WATCH_KEY);
     if (!data) return res.status(200).json({ found: false });
     const parsed = typeof data === 'string' ? JSON.parse(data) : data;
@@ -85,9 +88,7 @@ const QUOTE_SNAPSHOT_TTL = 60 * 60 * 24 * 3; // 3日（連休を挟んでも切�
 
 async function handleTachibanaQuote(req, res) {
   if (req.method === 'POST') {
-    if (RELAY_SECRET && req.headers['x-relay-secret'] !== RELAY_SECRET) {
-      return res.status(401).json({ error: 'unauthorized' });
-    }
+    if (!isAuthed(req)) return res.status(401).json({ error: 'unauthorized' });
     const { ticker, fields, updatedAt } = req.body || {};
     if (!ticker) return res.status(400).json({ error: 'ticker required' });
     const payload = JSON.stringify({ ticker, fields, updatedAt: updatedAt || Date.now() });
@@ -140,9 +141,7 @@ async function listPremarketDates() {
 
 async function handlePremarketLog(req, res) {
   if (req.method === 'POST') {
-    if (!RELAY_SECRET || req.headers['x-relay-secret'] !== RELAY_SECRET) {
-      return res.status(401).json({ error: 'unauthorized' });
-    }
+    if (!isAuthed(req)) return res.status(401).json({ error: 'unauthorized' });
     try {
       const body = readBody(req);
       // 送信側が付けてきた日付を優先し、無ければサーバー側のJST当日にする
@@ -362,9 +361,7 @@ async function handleScanUniverse(req, res) {
 // X-Relay-Secret による認証を必須にする
 async function handleScanRun(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' });
-  if (!RELAY_SECRET || req.headers['x-relay-secret'] !== RELAY_SECRET) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
+  if (!isAuthed(req)) return res.status(401).json({ error: 'unauthorized' });
   let body = req.body;
   if (typeof body === 'string') {
     try { body = JSON.parse(body); } catch (e) { return res.status(400).json({ error: 'invalid json' }); }
