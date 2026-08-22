@@ -14,7 +14,8 @@
 
 ## ファイル早見表（読む前の当たり付け用）
 
-- `src/App.js` … フロント全体（React・単一ファイル）。UI・状態管理・全API呼び出し・スキャンのキュー制御
+- `src/App.js` … フロント全体（React）。UI・状態管理・全API呼び出し・スキャンのキュー制御。**スコア計算の本体は `src/lib/analyze.js` に分離済み**
+- `src/lib/analyze.js` … スコア計算本体（約1050行）。`src/App.js`（`src/App.js:12`）と `api/_scan.js`（`api/_scan.js:28`）の両方から import される共有モジュール。変更するとフロント表示だけでなく自動スキャンの保存スコアも同時に変わる
 - `api/ranking.js` … 出来高／値上がりランキング生成（JP: 立花、US: Yahoo）
 - `api/sector.js` … AI選定業種で絞ったランキング（`ranking.js` の関数を再利用）
 - `api/stock.js` … 個別銘柄の詳細（分足: Yahoo、財務指標/TOPIX: 立花）。内部は並列取得
@@ -26,7 +27,6 @@
 - `api/notify.js` … Pushover通知
 - `api/_fallbackCache.js` … 取得失敗時のRedisフォールバック共通ヘルパー（`_` 始まりはVercelにエンドポイント扱いさせないため）
 - `api/_scan.js` … 定時自動スキャンの本体（対象銘柄リストの組み立て・スコア計算・結果保存）。窓口は `sync.js?resource=scan-run`
-- `api/index.js` … 用途未確認のため触らない
 - **⚠️ Vercel Hobbyはサーバーレス関数12個まで。新しい `api/*.js` を増やさず既存に相乗りさせる**（`sync.js` が立花中継を兼ねるのはこのため）
 
 ## 構成・データ源
@@ -40,15 +40,24 @@
 
 Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachibana-server(webapi.js) → 立花e支店API`（tachibana-server側は `index.js`（起動）/ `auth.js`（ログイン・仮想URL復号）/ `eventClient.js`（WebSocket）/ `relay.js` / `watcher.js` / `webapi.js` / `scanner.js`（定時スキャンのスケジューラ））。
 
-- エンドポイントは4つ: `/ranking-data`（`api/ranking.js`・1〜3分キャッシュ）、`/issue-detail?code=XXXX`（`api/stock.js`・1時間）、`/topix`（`api/stock.js`・1時間）、`/names`（`api/ipo.js`・24時間）
+- エンドポイントは5つ。**Vercel側キャッシュとサーバー側（tachibana-server）キャッシュは別物**なので混同しないこと:
+  - `/topix` … 呼び出し元 `api/stock.js`（Vercel側キャッシュ: 1時間 / `TOPIX_TTL`）｜サーバー側キャッシュ: 未確認
+  - `/issue-detail?code=XXXX` … 呼び出し元 `api/stock.js`（Vercel側キャッシュ: 1時間 / `ISSUE_DETAIL_TTL`）｜サーバー側キャッシュ: 未確認
+  - `/ranking-data` … 呼び出し元 `api/ranking.js`（Vercel側キャッシュ: なし。`withFallback` は失敗時フォールバックであってキャッシュではない）｜サーバー側キャッシュ: 3分
+  - `/names` … 呼び出し元 `api/ipo.js`（Vercel側キャッシュ: 1時間 / `CACHE_TTL`）｜サーバー側キャッシュ: 24時間（銘柄マスタ）。**Vercel側とサーバー側で保持時間が異なる**
+  - `/market-price` … 呼び出し元 `api/premarket.js`（Vercel側キャッシュ: 3分 / `PREMARKET_TTL`）｜サーバー側キャッシュ: なし
 - URLは環境変数から読む（`TACHIBANA_RANKING_API` / `TACHIBANA_ISSUE_DETAIL_API` / `TACHIBANA_TOPIX_API` / `TACHIBANA_NAMES_API`）、認証はヘッダ `X-Relay-Secret`（`TACHIBANA_RELAY_SECRET`）
 - 取得は必ず `withFallback(key, fn)`（`api/_fallbackCache.js`）で包み、`AbortSignal.timeout()` を付ける（8秒目安、一括取得系は15秒）
 - 毎日3:00〜8:30はシステムメンテナンスでAPIが落ちるが、`withFallback` がRedisの前回成功データ（3日保持）を返すため問い合わせ自体をスキップしない
 
 ### リアルタイム株価・板情報（選択中の1銘柄のみ購読）
 
-`App.js` の `TachibanaBoard` が60秒おきに `sync.js?resource=tachibana-watch` へPOST（5分でタイムアウト）→ `tachibana-server` がWebSocketで購読し `tachibana-quote` へPOST（Redis TTL 30秒）→ `App.js` が7秒おきにGETして表示。
+`App.js` の `TachibanaBoard` が60秒おきに `sync.js?resource=tachibana-watch` へPOST → `tachibana-server` がWebSocketで購読し `tachibana-quote` へPOST（Redis TTL 30秒）→ `App.js` が7秒おきにGETして表示。
 
+- 購読の寿命は2段構成。**混同しないこと**
+  - Redis TTL: 5分（`WATCH_TTL` / `api/sync.js:26`）… 購読リクエストのキー自体が消えるまでの時間
+  - 実効タイムアウト: 2分（`watchStaleSeconds` / `tachibana-server` の `config.js`・`watcher.js`）… サーバーが「古い購読」とみなして切る時間
+  - **購読が実際に切れるのは2分側。ポーリング間隔は必ず2分を基準に判断すること**（5分を基準にすると切断に気付けない）
 - フィールド名は `p_1_DPP`（現在値）、`p_1_DYRP`（騰落率）、`p_1_GAV1〜10`（売気配数量）、`p_1_GBV1〜10`（買気配数量）など
 - 受信イベントには「全項目入り」と「価格のみの軽量更新」があるため、**丸ごと置き換えず既存fieldsにマージする**こと（気配値が消えるバグの原因）
 
@@ -60,7 +69,10 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 - 停滞検知あり: 同一 `offset` が3回連続で返った場合はループを中断する（`MAX_SAME_OFFSET = 3`）
 - スキャン対象の銘柄リスト（ユニバース）は**サーバー側で組み立てる**。以前あった無認証のPOST口は廃止済み
 - ユニバース本体 `scan:universe` のTTLは7日（`UNIVERSE_TTL`）。`scan:universe:meta` も同じ7日
-- 組み立て済みマーク `scan:universe:built` のTTLは3日（`UNIVERSE_BUILD_TTL`）。本体より短いのは意図的（`_scan.js:33-34`）
+- 組み立て済みマーク `scan:universe:built` のTTLは3日。本体（7日）より短いのは意図的
+  - 値の定義: `UNIVERSE_BUILD_TTL`（`api/_scan.js:138`）
+  - 理由の説明コメント: `api/_scan.js:33-34`（本体がマークより先に失効すると「組み立て済み扱いなのに中身が空」になる）
+  - ※行番号はズレるため、`UNIVERSE_BUILD_TTL` を grep して追うこと
 - マークの書き込みに失敗した場合は `buildUniverse` を呼ばずエラーを返し、呼び出し側のループを止める（空回り防止）
 - `userId` はリクエストから受け取らず、環境変数 `SCAN_SYNC_USER_ID` で固定
 - 業種絞り込みは同期データの `lastSectors` を参照し、無い場合は `/api/ranking` にフォールバックする
@@ -72,3 +84,5 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 - 外部API呼び出しには必ずタイムアウトとエラーハンドリングを付ける。変更後は「何をどう変えたか」を日本語で要約する
 - 日本株の前日比は `PrevC`（前日終値）を優先。無い場合のみ始値比で代用する
 - 銘柄コードは4桁。`ticker` は `"7203.T"` 形式、立花APIへは `.T` を外して渡す。スキャン時は `CACHE` をクリアして必ず最新データを取る
+- /ranking-data … Vercel側キャッシュなし／サーバー側3分（webapi.js:122）
+  ※「3分」はサーバー側の値。Vercel側は毎回取得する
