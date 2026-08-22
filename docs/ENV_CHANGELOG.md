@@ -20,3 +20,4 @@
 | 2026-08-21 | deploy | tachibana-server | 上記 PREMARKET_MAX 変更に伴うコンテナ全体の自動再デプロイ。起動ログで `対象 100件 / 受領 158件 / 上限 100件` を確認済み | 無 |
 | 2026-08-21 | env | Vercel: SCAN_SYNC_USER_ID | 値を u_25efafacb5d838b3 に上書き。業種絞り込みが効かず origin が ranking に落ちていた原因の対処 | 有 |
 | 2026-08-22 | config | Redis: scan:universe | 手動 scan-run（date=2026-08-21 / slot=1500 / offset=0）で組み立てを実行。origin が sector(精密機器/情報・通信業/海運業) となり業種絞り込みの復旧を確認。count=196（favAdded=134 + rankingCount=62） | 有 |
+| 2026-08-22 | merge | daytrade-simulator | PR#34 docs/ENV_AUDIT.md 追加（2026-08-20時点の環境変数棚卸し） | 無 |
