@@ -4,7 +4,7 @@
 
 ## 作業ルール（トークン節約・最優先）
 
-- `src/App.js` は約6600行。**全体を読むことを禁止する。**
+- `src/App.js` は約7200行。**全体を読むことを禁止する。**
 - 修正依頼を受けたら、まず `grep -n "キーワード" 対象ファイル` で該当行を特定し、その前後50〜100行だけを offset/limit 指定で読む。
 - 読み込む前に「どの関数を何行目付近から読むか」を1行で宣言する。
 - 編集は Edit（部分置換）のみ。Write によるファイル全体の書き換えは禁止。
@@ -25,6 +25,7 @@
 - `api/ipo.js` … 銘柄コード→会社名（立花・1時間キャッシュ）
 - `api/notify.js` … Pushover通知
 - `api/_fallbackCache.js` … 取得失敗時のRedisフォールバック共通ヘルパー（`_` 始まりはVercelにエンドポイント扱いさせないため）
+- `api/_scan.js` … 定時自動スキャンの本体（対象銘柄リストの組み立て・スコア計算・結果保存）。窓口は `sync.js?resource=scan-run`
 - `api/index.js` … 用途未確認のため触らない
 - **⚠️ Vercel Hobbyはサーバーレス関数12個まで。新しい `api/*.js` を増やさず既存に相乗りさせる**（`sync.js` が立花中継を兼ねるのはこのため）
 
@@ -37,7 +38,7 @@
 
 ## 立花証券APIの扱い方（重要）
 
-Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachibana-server(webapi.js) → 立花e支店API`（tachibana-server側は `index.js`（起動）/ `auth.js`（ログイン・仮想URL復号）/ `eventClient.js`（WebSocket）/ `relay.js` / `watcher.js` / `webapi.js`）。
+Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachibana-server(webapi.js) → 立花e支店API`（tachibana-server側は `index.js`（起動）/ `auth.js`（ログイン・仮想URL復号）/ `eventClient.js`（WebSocket）/ `relay.js` / `watcher.js` / `webapi.js` / `scanner.js`（定時スキャンのスケジューラ））。
 
 - エンドポイントは4つ: `/ranking-data`（`api/ranking.js`・1〜3分キャッシュ）、`/issue-detail?code=XXXX`（`api/stock.js`・1時間）、`/topix`（`api/stock.js`・1時間）、`/names`（`api/ipo.js`・24時間）
 - URLは環境変数から読む（`TACHIBANA_RANKING_API` / `TACHIBANA_ISSUE_DETAIL_API` / `TACHIBANA_TOPIX_API` / `TACHIBANA_NAMES_API`）、認証はヘッダ `X-Relay-Secret`（`TACHIBANA_RELAY_SECRET`）
@@ -50,6 +51,19 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 
 - フィールド名は `p_1_DPP`（現在値）、`p_1_DYRP`（騰落率）、`p_1_GAV1〜10`（売気配数量）、`p_1_GBV1〜10`（買気配数量）など
 - 受信イベントには「全項目入り」と「価格のみの軽量更新」があるため、**丸ごと置き換えず既存fieldsにマージする**こと（気配値が消えるバグの原因）
+
+## 定時自動スキャン（`scanner.js` → `api/_scan.js`）
+
+時計とループ制御は `tachibana-server/scanner.js` だけが担当し、銘柄リストの組み立て・スコア計算・保存はすべて `api/_scan.js`。scanner.js は Vercel の `/api/sync?resource=scan-run` を `nextOffset` が返らなくなるまで繰り返し呼ぶ。
+
+- 実行時刻は 8:50 / 9:30 / 11:00 / 13:00 / 15:00（月〜金のみ。土日・祝日はバッチを投げない）、バッチサイズ5・直列。対象は日本株のみ（絞り込みは `_scan.js` 側）
+- 停滞検知あり: 同一 `offset` が3回連続で返った場合はループを中断する（`MAX_SAME_OFFSET = 3`）
+- スキャン対象の銘柄リスト（ユニバース）は**サーバー側で組み立てる**。以前あった無認証のPOST口は廃止済み
+- ユニバース本体 `scan:universe` のTTLは7日（`UNIVERSE_TTL`）。`scan:universe:meta` も同じ7日
+- 組み立て済みマーク `scan:universe:built` のTTLは3日（`UNIVERSE_BUILD_TTL`）。本体より短いのは意図的（`_scan.js:33-34`）
+- マークの書き込みに失敗した場合は `buildUniverse` を呼ばずエラーを返し、呼び出し側のループを止める（空回り防止）
+- `userId` はリクエストから受け取らず、環境変数 `SCAN_SYNC_USER_ID` で固定
+- 業種絞り込みは同期データの `lastSectors` を参照し、無い場合は `/api/ranking` にフォールバックする
 
 ## 開発ルール・よくある落とし穴
 
