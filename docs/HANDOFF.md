@@ -6,41 +6,40 @@
 
 ## 現在の課題
 
-- `PREMARKET_MAX=100` の実測判定は 8/24 朝に**全項目通過**。凍結解除済みで、以降は通常の作業順に戻る
-- 次の山は **金曜夕方の `PREMARKET_MAX` 158（全件）引き上げ**。それまでに `CLAUDE.md` 第2弾と `premarketLogger.js` のログ整理を終えておきたい
+- 8/25 朝の収集窓で `[err]` 0件を確認する（PR #17 の実効検証）。これで premarketLogger.js の件は完了
+- 次の山は **金曜夕方の `PREMARKET_MAX` 158（全件）引き上げ**
 
 ## 進行中の案件
 
-### `CLAUDE.md` 第2弾修正
+### `CLAUDE.md` 第2弾A（誤りの修正・記述の分割）
 
-- 状態: 第1弾（PR #43）・参照書式と関数枠（PR #44）は完了。第2弾は未着手。**これが次の着手対象**
-- 触るファイル: `CLAUDE.md`／`docs/OPERATIONS.md`・`docs/HANDOFF.md`（TTL等の移設先）
-- 次の一手: 指示文を作成して Claude Code へ
+- 状態: 指示文を作成済み。Claude Code へ投入する段階。Vercel側のみで時間帯制約なし
+- 触るファイル: `CLAUDE.md` のみ
+- 次の一手: 指示文を投入 → 実装前確認の報告を受ける → PR を確認してマージ
 
-第2弾の対象:
+Aの対象（5項目）:
 
-- 米国株関連の陳腐化（L3 / L18 / L36）
-- `sync.js` の resource 7種（現在3種のみ記載。`premarket-summary` は date 未指定を意図的に400で弾く）
+1. tachibana-server のファイル列挙に `config.js` / `holidays.js` / `premarketLogger.js` を追加
+2. ファイル早見表に `api/news.js` / `api/premarket.js` を追加（関数枠一覧には既にあるが早見表に無い。役割はコードを読んで確認させる）
+3. 「開発ルール・よくある落とし穴」末尾の `/ranking-data` 重複2行を削除。ただし定義元（`webapi.js`）の情報は残す側へ統合
+4. 米国株の記述3箇所を訂正。**米国株は運用していない（日本株のみ）。ただしコード上に `market==="US"` の分岐等が現存するため削除禁止**の旨を明記
+5. リアルタイム購読の1文（主語3つ・時間3つ）を主語ごとに行分割。7秒GETに対しTTL30秒である関係が読めるようにする
+
+### `CLAUDE.md` 第2弾B（情報の追加・移設）
+
+- 状態: 未着手。A のマージ後に着手する（同一ファイルの並行編集はコンフリクトするため）
+- 触るファイル: `CLAUDE.md` / `docs/HANDOFF.md`（TTL一覧の移設元）
+- 次の一手: A のマージ後に指示文を作成
+
+Bの対象:
+
+- TTL一覧を本ファイル「暫定保持」から `CLAUDE.md` へ移設（移設後はこちらから削除）
+- `api/sync.js` の「TTL90日」記述の修正。**同ファイルは5種のTTLを持つ**ため単一値を書かず「詳細はTTL一覧を参照」とする（TTL一覧の移設とセットで行う）
+- `api/sync.js` の resource 7種の列挙（現在は早見表に「同期＋立花中継の窓口」とだけ。`premarket-summary` は date 未指定を意図的に400で弾く）
 - `tachibana:quote:last:` スナップショット（TTL3日・休場中の板表示用）
-- Redis 1MB制限と `"gz:"` プレフィックス、`unpackSync()` の意図的な二重実装
+- Redis 1MB制限と `"gz:"` プレフィックス
+- `unpackSync()` の意図的な二重実装（循環参照回避）
 - `limit=5` の根拠と `scan-run` 並列実行の絶対禁止
-- 構造上の誤読リスク (b) L50 / (c) L23
-- 早見表に `api/news.js` / `api/premarket.js` を追加
-- `tachibana-server` のファイル列挙漏れ（`config.js` / `holidays.js` / `premarketLogger.js`）
-- TTL一覧の移設（下記「暫定保持」から `CLAUDE.md` へ移し、こちらからは削除する）
-
-### `premarketLogger.js` のログ分類整理
-
-- 状態: 未着手。判定終了により**凍結解除済み**（触ってよい）
-- 触るファイル: `tachibana-server/premarketLogger.js`
-- 次の一手: 下記2点を1つのPRにまとめて指示文を作成
-
-内容:
-
-1. `console.warn` 6箇所を `warn()` ヘルパー経由に変更（Railway で `[err]` 分類されるのを避ける）
-2. POSTサイズ警告の閾値見直し。現行1MBは実運用値（現1.91MB / 158件時3.09MB）に対して低すぎ、毎日 `[err]` が出続ける
-
-反映には Railway 再起動が必要。マージは安全枠（10:00〜10:45 / 13:30〜14:45 / 15:30以降）で行う。
 
 ### `parts.ranking` の原因調査
 
@@ -60,14 +59,14 @@
 - 触るファイル: なし（Railway の環境変数 `PREMARKET_MAX`）
 - 次の一手: 金曜夕方に 100 → 158 へ変更 → 起動ログで `対象 158件` を確認 → 翌月曜朝に実測判定
 
-推定 3.09MB（19.58KB/銘柄 × 158）＝ Vercel上限4.5MB の69%。判定基準は100件時と同じ順（`tick失敗` → `エラー` → POSTサイズ → 件数 → tick所要）。ロールバック先は 100。
+推定 3.09MB（19.58KB/銘柄 × 158）＝ Vercel上限4.5MB の69%。判定基準は100件時と同じ順（`tick失敗` → `エラー` → POSTサイズ → 件数 → tick所要）。ロールバック先は 100。PR #17 の閾値設定により、この規模でも `[err]` は出ない想定。
 
 ## 次にやること
 
 上から順に:
 
-1. `CLAUDE.md` 第2弾修正
-2. `premarketLogger.js` のログ分類整理（`console.warn` 6箇所 ＋ POSTサイズ閾値）
+1. `CLAUDE.md` 第2弾A（指示文は作成済み・投入待ち）
+2. `CLAUDE.md` 第2弾B（Aのマージ後）
 3. `/api/daily` 連打の**調査のみ**
 4. `parts.ranking` 6016ms の原因調査（**調査のみ**）
 5. README 更新
@@ -76,7 +75,7 @@
 
 ## 未決の判断
 
-- なし（`tachibana-server` の残ブランチ3本は削除済み。`premarketLogger.js` の修正は main から新規PRで作る）
+- `docs/ENV_CHANGELOG.md` の表に PR#42〜#45（8/22〜23のドキュメント変更）を遡って追記するか。索引としての完全性を取るなら追記、「これ以前の変更は記録していない」という冒頭宣言との整合を取るなら現状維持。追記する場合は各PRのマージ日を Pull requests → Closed で確認して埋める必要がある
 
 ## 未確認の仮説
 
@@ -100,6 +99,11 @@
 - `scan:universe:meta`: `builtAt` `2026-08-24T00:30:07.387Z`（JST 9:30）／`source` `sector(精密機器/情報・通信業/海運業)`／`count` 200／`saved` true
 - `totalMs` 6754（`sync` 565 / `ranking` 6016 / `merge` 0 / `save` 173）
 
+PR #17 マージ後の再起動（8/24 13:48）:
+
+- `対象 100件 / 受領 158件 / 上限 100件` を確認。起動時 `[err]` 0件
+- 切り捨てログ（`上限により58件を切り捨てました`）が `[inf]` 側に出力されることを確認
+
 派生する事実:
 
 - ペイロード線形性 **19.58KB/銘柄**（12→230KB / 40→790KB / 100→1958KB）。Vercel上限4.5MB
@@ -109,7 +113,7 @@
 - 組み立てが 8:50 ではなく 9:30 に走ったのは `scan:universe:built`（3日TTL）が8:50時点で未期限だったため。仕様どおり
 - 「銘柄数 × 項目数 ≦ 200」制限は 1600（100×16）までは不存在
 
-## 暫定保持（CLAUDE.md 第2弾で移設後に削除する）
+## 暫定保持（CLAUDE.md 第2弾Bで移設後に削除する）
 
 TTL 一覧:
 
@@ -126,7 +130,7 @@ TTL 一覧:
 
 `premarketLogger.js` の壊してはいけない前提:
 
-1. `console.warn` を使わない（Railway で `[err]` 分類）
+1. `warn()` ヘルパーの内部は `console.log`。`console.warn` に戻さない（Railway で `[err]` 分類される）
 2. `running` の解除は `.finally()` のみ
 3. `lastSessionDate` ガードは維持
 4. `errorCount` と `tickErrorCount` を混ぜない
@@ -134,6 +138,7 @@ TTL 一覧:
 6. `PREMARKET_MAX` は起動時に一度だけ確定。変更には再起動が必須
 7. 1ティック＝立花への POST 1回。ボトルネックは Vercel へのペイロードサイズ
 8. 検証窓は平日 8:45〜9:06 の21分のみ。失敗の検知は翌営業日
+9. POSTサイズ閾値は `POST_SIZE_WARN_KB=3500` / `POST_SIZE_ERROR_KB=4000` / `POST_SIZE_LIMIT_KB=4500`。`error()` は `console.error` のまま維持する
 
 `tick失敗` と `エラー` は別カウンタ。必ず `tick失敗` を先に見る。
 
@@ -159,3 +164,4 @@ TTL 一覧:
 固定事項:
 
 - `PREMARKET_CODES` は158件固定の定点観測（`scan:universe` と非連動）
+- **米国株は運用していない（日本株のみ）**。コード上に `market==="US"` の分岐等が現存するが、依頼されない限り削除しない
