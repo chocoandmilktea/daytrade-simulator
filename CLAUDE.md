@@ -82,10 +82,15 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
   - `/issue-detail?code=XXXX` … 呼び出し元 `api/stock.js`（Vercel側キャッシュ: 1時間 / `ISSUE_DETAIL_TTL`）｜サーバー側キャッシュ: 未確認
   - `/ranking-data` … 呼び出し元 `api/ranking.js`（Vercel側キャッシュ: なし。`withFallback` は失敗時フォールバックであってキャッシュではない）｜サーバー側キャッシュ: 3分（`tachibana-server` の `webapi.js`）
   - `/names` … 呼び出し元 `api/ipo.js`（Vercel側キャッシュ: 1時間 / `CACHE_TTL`）｜サーバー側キャッシュ: 24時間（銘柄マスタ）。**Vercel側とサーバー側で保持時間が異なる**
-  - `/market-price` … 呼び出し元 `api/premarket.js`（Vercel側キャッシュ: 3分 / `PREMARKET_TTL`）｜サーバー側キャッシュ: なし
+  - `/market-price` … 呼び出し元 `api/premarket.js`（Vercel側キャッシュ: なし）｜サーバー側キャッシュ: なし
   - これらはすべてモジュールスコープの変数（プロセス内メモリ）であり Redis ではない。Lambda コンテナが再利用されたときだけ効くため、実効ヒット率は記載の時間ほど高くない。唯一の例外は `api/stock.js` の決算日マップで、メモリ6時間 → Redis 24時間（`jpx:earnings-map`）の二段構え
-- URLは環境変数から読む（`TACHIBANA_RANKING_API` / `TACHIBANA_ISSUE_DETAIL_API` / `TACHIBANA_TOPIX_API` / `TACHIBANA_NAMES_API`）、認証はヘッダ `X-Relay-Secret`（`TACHIBANA_RELAY_SECRET`）
-- 取得は必ず `withFallback(key, fn)`（`api/_fallbackCache.js`）で包み、`AbortSignal.timeout()` を付ける（8秒目安、一括取得系は15秒）
+  - `api/premarket.js` の `PREMARKET_TTL`（3分・メモリ）がキャッシュしているのは Yahoo 由来の地合いデータ（`marketBias` / `indicators`）であって、立花の `/market-price`（寄り前気配）ではない。気配は `fetchQuotes()` で毎回そのまま取得しており、`codes` 指定時は `Cache-Control: no-store` を返して CDN・ブラウザにもキャッシュさせない。秒単位で変わるデータのため
+- URLは環境変数から読む（`TACHIBANA_RANKING_API` / `TACHIBANA_ISSUE_DETAIL_API` / `TACHIBANA_TOPIX_API` / `TACHIBANA_NAMES_API` / `TACHIBANA_MARKET_PRICE_API`）、認証はヘッダ `X-Relay-Secret`（`TACHIBANA_RELAY_SECRET`）
+  - `TACHIBANA_MARKET_PRICE_API` … 立花 `/market-price` の URL。`api/premarket.js` が読む。未設定の場合は `TACHIBANA_RANKING_API` の `/ranking-data` を `/market-price` に文字列置換してフォールバックする
+- 立花APIの取得は原則 `withFallback(key, fn)`（`api/_fallbackCache.js`）で包み、`AbortSignal.timeout()` を付ける（8秒目安、一括取得系は15秒）。ただし全5エンドポイント中、実際に包んでいるのは4つ
+  - 包んでいる … `api/stock.js`（`/topix`・`/issue-detail`）、`api/ranking.js`（`/ranking-data`）、`api/ipo.js`（`/names`）
+  - 包んでいない … `api/premarket.js` の `fetchQuotes()`（立花 `/market-price`）と `fetchMarketSentiment()`（Yahoo）。`AbortSignal.timeout` は付いている
+  - 新しい取得処理を追加する場合は `withFallback` を使うこと。上記2つが例外である理由はコード上に明示されていない
 - 毎日3:00〜8:30はシステムメンテナンスでAPIが落ちるが、`withFallback` がRedisの前回成功データ（3日保持）を返すため問い合わせ自体をスキップしない
 
 ### リアルタイム株価・板情報（選択中の1銘柄のみ購読）
@@ -114,6 +119,18 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 時計とループ制御は `tachibana-server/scanner.js` だけが担当し、銘柄リストの組み立て・スコア計算・保存はすべて `api/_scan.js`。scanner.js は Vercel の `/api/sync?resource=scan-run` を `nextOffset` が返らなくなるまで繰り返し呼ぶ。
 
 - 実行時刻は 8:50 / 9:30 / 11:00 / 13:00 / 15:00（月〜金のみ。土日・祝日はバッチを投げない）、バッチサイズ5・直列。対象は日本株のみ（絞り込みは `_scan.js` 側）
+  - `limit=5` は1回の `scan-run` で株価取得とスコア計算を行う銘柄数（`universe.slice(offset, offset + limit)`）
+  - 根拠は Vercel Hobby の関数タイムアウト10秒。`tachibana-server/scanner.js` の冒頭コメントに実測値が残っており、`limit=5` で4.5秒、`limit=8` はタイムアウトして失敗した
+  - 値は3箇所にある
+    - `api/sync.js` `SCAN_DEFAULT_LIMIT`（5）… リクエストに `limit` が無いときの既定値
+    - `api/_scan.js` `DEFAULT_LIMIT`（5）… `runScanBatch()` で `limit` が不正なときの既定値
+    - `tachibana-server/scanner.js` `MAX_BATCH_SIZE`（5）… 実際に送る件数の上限
+  - **Vercel 側に上限チェックはない。** `api/sync.js` は受け取った `body.limit` をそのまま `_scan.js` へ渡すため、5を超える値を外部から送れば通ってしまう。5に丸めているのは呼び出し側の `scanner.js` だけで、環境変数 `SCAN_BATCH_SIZE`（既定 "5"）で下方向には変更できる。固定値ではない
+- **`scan-run` の並列実行は絶対禁止。** Redis の read-modify-write が複数箇所にあるため
+  - `api/_scan.js` `mergeResults(key, rows)` … 本命。`scan:<date>:<slot>` を `get` → ticker 単位でマージ → `set` で書き戻す。同時実行すると後勝ちで片方のバッチ結果が丸ごと消える
+  - `api/_scan.js` `runScanBatch()` の `offset === 0` のブロック … `UNIVERSE_BUILD_KEY` を `get` して比較してから `set` する check-then-act。同時実行すると両方が「組み立て回」と判定し `buildUniverse()` が二重に走る
+  - **Vercel 側にロック機構は一切ない。** 壊れていないのは実装が安全だからではなく、呼び出し側の `tachibana-server/scanner.js` が `running` / `runningSlot` フラグで排他し、バッチを必ず前の応答を待ってから次を投げる直列呼び出しにしているため。この前提が崩れる変更（並列化、別クライアントからの `scan-run` 呼び出し）はデータ破壊に直結する
+  - 同種の read-modify-write は `api/sync.js` にもある。`handlePremarketLog()` の POST（`premarket:log:<日付>` を `get` → `push` → `set`）と、デバイス間同期の POST（`lastSectors` 未送信時に `user:<userId>` を `get` してから `set`）
 - 停滞検知あり: 同一 `offset` が3回連続で返った場合はループを中断する（`MAX_SAME_OFFSET = 3`）
 - スキャン対象の銘柄リスト（ユニバース）は**サーバー側で組み立てる**。以前あった無認証のPOST口は廃止済み
 - ユニバース本体 `scan:universe` のTTLは7日（`UNIVERSE_TTL`）。`scan:universe:meta` も同じ7日
@@ -144,6 +161,25 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 
 - `scan:universe` と `scan:universe:meta` は同じ `UNIVERSE_TTL`（7日）だが、`scan:universe:built` だけは別定数 `UNIVERSE_BUILD_TTL`（3日）である。混同しないこと
 - `scan:universe:built` が残っている間は自動スキャン時のユニバース組み立てがスキップされる。手動テストで組み立てを走らせたい場合は Upstash Data Browser でこのキーを削除する
+- `tachibana:watch` の TTL は5分だが、購読が有効とみなされる実効時間は2分。判定しているのは `tachibana-server/config.js` の `watchStaleSeconds`（120秒）で、Vercel 側の `WATCH_TTL` とは別の値。CLAUDE.md 上の5分だけを見て「2分以上前の購読も有効」と判断しないこと
+
+## Redis への保存形式（gzip）
+
+- `api/sync.js` の `packForRedis()` は、渡されたオブジェクトを**閾値なしで常に** gzip 圧縮し、base64 化して先頭に `gz:` を付けて保存する。「サイズが一定を超えたら圧縮する」という実装ではない
+- 展開は `unpackFromRedis()`。`gz:` で始まれば展開し、そうでなければ素の JSON として `JSON.parse` するため、圧縮導入前の古いデータも読める
+- 実際に `gz:` 付きで保存されるのは `user:<userId>` と `premarket:log:<日付>` の2つだけ。`api/_scan.js` 側（`scan:universe` など）は `JSON.stringify` の素の文字列で保存しており圧縮していない
+- 圧縮の設計理由である「Redis の1リクエストあたり1MB」という制限は、コード上に数値としては存在しない（`api/sync.js` 冒頭のブロックコメントに文章として記載があるのみ）。サイズチェックの実装もない
+- 別物として、`tachibana-server/premarketLogger.js` の `POST_SIZE_LIMIT_KB=4500` は Vercel のリクエストボディ上限であり、Redis の制限ではない。混同しないこと
+
+### 展開処理の二重実装
+
+展開処理は2ファイルに同じ実装が存在する。**関数名が異なる**ので注意。
+
+- `api/sync.js` … `unpackFromRedis(data)`
+- `api/_scan.js` … `unpackSync(data)`
+- 実装は実質同一（差分は `var`/`const` とクォート記号のみ）。これは意図的な重複で、`api/sync.js` が `scan-*` の処理時に `./_scan.js` を動的 import しているため、`_scan.js` から `sync.js` を import すると循環参照になることが理由。`api/_scan.js` の `unpackSync()` 直上にその旨のコメントがある
+- **片方だけを修正すると自動スキャンが同期データを読めなくなる。** 展開処理を変更する場合は必ず両方を同時に直すこと
+- `GZ_PREFIX = 'gz:'` も両ファイルに独立して定義されている
 
 ## api/sync.js の resource 一覧
 
