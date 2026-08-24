@@ -27,6 +27,8 @@
 | 2026-08-24 | merge | tachibana-server | PR#17 premarketLogger.js のログ分類整理（`warn()` を log 化・POSTサイズ閾値を1MB固定から3段階に） | 無 |
 | 2026-08-24 | deploy | tachibana-server | 上記マージに伴うコンテナ全体の自動再デプロイ（13:48 JST 起動）。`対象 100件 / 受領 158件 / 上限 100件`・起動時 `[err]` 0件を確認 | 無 |
 | 2026-08-25 | merge | daytrade-simulator | PR#48 CLAUDE.md 修正9件。立花API 5エンドポイントの Vercel側／サーバー側キャッシュ分離を明記、Redis 保存形式（gzip）と展開処理の二重実装を新設、TACHIBANA_MARKET_PRICE_API を環境変数一覧に追加 | 無 |
+| 2026-08-25 | env | Railway / PREMARKET_MAX | 100 → 158（全件・00:27 JST に実施）。当日朝に実測判定し、tick失敗10件以上・POSTサイズ4000KB超・レコード84件未満・tick 5000ms超のいずれかで 100 へ戻す。100 でも異常が出た場合のみ 40 まで戻す | 有 |
+| 2026-08-25 | deploy | tachibana-server | 上記 PREMARKET_MAX 変更に伴うコンテナ全体の自動再デプロイ。起動ログで「対象 158件 / 受領 158件 / 上限 158件」を確認済み | 無 |
 
 ## 2026-08-24（月）— `PREMARKET_MAX=100` 実測判定：通過
 
