@@ -113,20 +113,9 @@ PR #17 マージ後の再起動（8/24 13:48）:
 - 組み立てが 8:50 ではなく 9:30 に走ったのは `scan:universe:built`（3日TTL）が8:50時点で未期限だったため。仕様どおり
 - 「銘柄数 × 項目数 ≦ 200」制限は 1600（100×16）までは不存在
 
-## 暫定保持（CLAUDE.md 第2弾Bで移設後に削除する）
+## 暫定保持（移設先が決まり次第、順次ここから削除する）
 
-TTL 一覧:
-
-| Redisキー | TTL | 識別子 / 定義ファイル |
-|---|---|---|
-| `scan:universe` | 7日 | `UNIVERSE_TTL`（`api/_scan.js`） |
-| `scan:universe:meta` | 7日 | `UNIVERSE_TTL` 流用 |
-| `scan:universe:built` | 3日 | `UNIVERSE_BUILD_TTL`（`api/_scan.js`） |
-| `user:<userId>` | 90日 | `api/sync.js` |
-| `premarket:log:<日付>` | 30日 | gzip圧縮で追記保存 |
-| `tachibana:quote:last:<ticker>` | 3日 | `api/sync.js`。休場中の板表示用 |
-| `tachibana:quote:<ticker>` | 30秒 | ライブ値 |
-| （購読） | 5分 | `WATCH_TTL`（`api/sync.js`）。**実効は2分**（`watchStaleSeconds`） |
+未移設: `tachibana:watch` の TTL は CLAUDE.md 上 5分（`WATCH_TTL`）だが、実効は2分。判定しているのは `tachibana-server/config.js` の `watchStaleSeconds=120`。PR C で CLAUDE.md へ追記する
 
 `premarketLogger.js` の壊してはいけない前提:
 
@@ -147,12 +136,12 @@ TTL 一覧:
 - `api/sync.js` — `lastSectors` 未送信時に既存値を維持
 - `api/_scan.js` — 組み立てはスロット先頭の1回だけ。マークが先に立つ
 - `api/_scan.js` `saveUniverse` — `source` が `"ranking"` 以外だと保存拒否
-- `api/_scan.js` `unpackSync()` — `sync.js` の展開処理と意図的に二重実装（循環参照回避）。片方だけ直すと自動スキャンが同期データを読めない
+- `api/_scan.js` `unpackSync()` — `sync.js` の `unpackFromRedis()` と意図的に二重実装（循環参照回避）。片方だけ直すと自動スキャンが同期データを読めない ※PR C で CLAUDE.md へ移設予定
 - `src/lib/analyze.js` — `App.js` と `api/_scan.js` の共有。変更すると自動スキャンの保存スコアも変わる
 - `src/App.js` `PUSH_SYNC` — 触るとお気に入りが巻き戻る
 - `src/App.js` `applySyncedData` — SyncPanel の ID 切り替え時に `last_sectors` を上書き
 - `api/sector.js` `sectorCache` と分岐 — 触ると AI 呼び出しが復活
-- `scan-run` の並列実行は絶対禁止（`mergeResults` が read-modify-write）
+- `scan-run` の並列実行は絶対禁止（`mergeResults` が read-modify-write）※PR C で CLAUDE.md へ移設予定
 
 組み立ての起動経路:
 
@@ -164,4 +153,4 @@ TTL 一覧:
 固定事項:
 
 - `PREMARKET_CODES` は158件固定の定点観測（`scan:universe` と非連動）
-- **米国株は運用していない（日本株のみ）**。コード上に `market==="US"` の分岐等が現存するが、依頼されない限り削除しない
+
