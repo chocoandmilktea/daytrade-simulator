@@ -11,6 +11,9 @@
 - `種別`：`env`（環境変数変更）/ `deploy`（再デプロイ）/ `merge`（PRマージ）/ `config`（設定変更）
 - `データ影響`：`有`（収集・保存されるデータの内容や件数が変わる）/ `無` / `不明`
 - 日付は JST。時刻が判断に関わる場合のみ `内容` 欄に併記する
+- 実測値や根拠を伴うものは、表の下に `## 日付 — 件名` の詳述セクションを設ける。**表は一行サマリ（索引）として維持する**
+- 変更を伴わない判定結果・観測結果は表には載せず、詳述セクションのみに書く
+- 2026-08-22〜23 の PR#42〜#45（いずれもドキュメント変更）は当時記録漏れがあり、2026-08-24 に遡って追記した
 
 ## 記録
 
@@ -19,8 +22,11 @@
 | 2026-08-21 | env | Railway / PREMARKET_MAX | 40 → 100（15:41 JST・安全帯内で実施）。8/24朝に実測判定し、tick失敗10件以上・POST 2.5MB超・tick 5000ms超のいずれかで 40 へ戻す | 有 |
 | 2026-08-21 | deploy | tachibana-server | 上記 PREMARKET_MAX 変更に伴うコンテナ全体の自動再デプロイ。起動ログで `対象 100件 / 受領 158件 / 上限 100件` を確認済み | 無 |
 | 2026-08-21 | env | Vercel: SCAN_SYNC_USER_ID | 値を u_25efafacb5d838b3 に上書き。業種絞り込みが効かず origin が ranking に落ちていた原因の対処 | 有 |
-| 2026-08-22 | config | Redis: scan:universe | 手動 scan-run（date=2026-08-21 / slot=1500 / offset=0）で組み立てを実行。origin が sector(精密機器/情報・通信業/海運業) となり業種絞り込みの復旧を確認。count=196（favAdded=134 + rankingCount=62） | 有 |
+| 2026-08-22 | config | Redis: scan:universe | 手動 scan-run (date=2026-08-21 / slot=1500 / offset=0) で組み立てを実行。origin が sector(精密機器/情報・通信業/海運業) となり業種絞り込みの復旧を確認。count=196（favAdded=134 + rankingCount=62） | 有 |
 | 2026-08-22 | merge | daytrade-simulator | PR#34 docs/ENV_AUDIT.md 追加（2026-08-20時点の環境変数棚卸し） | 無 |
+| 2026-08-24 | merge | tachibana-server | PR#17 premarketLogger.js のログ分類整理（`warn()` を log 化・POSTサイズ閾値を1MB固定から3段階に） | 無 |
+| 2026-08-24 | deploy | tachibana-server | 上記マージに伴うコンテナ全体の自動再デプロイ（13:48 JST 起動）。`対象 100件 / 受領 158件 / 上限 100件`・起動時 `[err]` 0件を確認 | 無 |
+
 ## 2026-08-24（月）— `PREMARKET_MAX=100` 実測判定：通過
 
 8/21 に実施した `PREMARKET_MAX` 40→100 の変更について、初の平日収集窓（8:45〜9:06）で実測。全項目通過につき **100 を維持**。ロールバックは実施せず。
@@ -49,6 +55,40 @@
 - スキャン実績: 8:50 スロット `done 203件 / 4分14秒 / 失敗0件`、9:30 スロット `done 200件 / 3分12秒 / 失敗0件`
 - `parts.ranking` = 6016ms（`totalMs` 6754 の89%）。前回計測 5738ms と同水準
 
-**残った観測事項（未対応）**
+**残った観測事項**
 
-`[err] [premarket] POSTサイズが1MBを超えました（Vercel上限4.5MB）` が1件出力。閾値1MBが実運用値（現1.91MB / 将来3.09MB）に対して低すぎ、今後毎日 `[err]` 分類で出続ける。判定には影響しないが、真の障害を埋もれさせるノイズになるため閾値の見直しが必要。
+`[err] [premarket] POSTサイズが1MBを超えました（Vercel上限4.5MB）` が1件出力。閾値1MBが実運用値（現1.91MB / 将来3.09MB）に対して低すぎ、今後毎日 `[err]` 分類で出続ける。判定には影響しないが、真の障害を埋もれさせるノイズになるため閾値の見直しが必要 → 同日 PR#17 で対処（下記）。
+
+## 2026-08-24（月）— `premarketLogger.js` ログ分類整理（PR#17 マージ・Railway 再デプロイ）
+
+環境変数の変更なし。コード変更に伴う Railway コンテナ再起動のみ。起動時刻: 13:48 JST（安全帯 13:30〜14:45 内で実施）。
+
+**変更内容**
+
+- `warn()` ヘルパーの内部を `console.warn` → `console.log` に変更。プレフィックスを `[premarket]` → `[premarket] [warn]` に。Railway で `[err]` 分類されていた正常系5種（`PREMARKET_CODES` 不正値 / 有効コード0件 / `PREMARKET_MAX` 不正 / 前ティック未完了スキップ / ティック取得間隔超過）が `[err]` から外れる
+- POSTサイズ警告の閾値を1MB固定から3段階に変更。定数 `POST_SIZE_WARN_KB=3500` / `POST_SIZE_ERROR_KB=4000` / `POST_SIZE_LIMIT_KB=4500` を新設
+  - 3500KB未満: 出力なし
+  - 3500〜4000KB: `[warn]`（通常ログ扱い）
+  - 4000KB以上: `[err]`（維持）
+- `error()` ヘルパーは `console.error` のまま。真の障害は従来どおり `[err]` に出る
+- 直接の `console.warn` 呼び出しは `warn()` ヘルパー内部の1箇所のみだったため、実装はヘルパー内部の差し替えで完結（呼び出し側5箇所は無変更）
+
+**閾値の根拠**
+
+- ペイロード 19.58KB/銘柄（8/24 実測: 100銘柄 = 1958KB）
+- `PREMARKET_MAX=158`（全件）で約3.09MB（3168KB）。3500KB はその上に置いた警戒線
+- Vercel のリクエストボディ上限 4.5MB
+
+**効果**
+
+8/24 朝に出ていた `[err] [premarket] POSTサイズが1MBを超えました` は、100銘柄（1958KB）でも158銘柄（約3.09MB）でも出力されなくなる。
+
+**確認事項**
+
+- 起動ログ（13:48）で `対象 100件 / 受領 158件 / 上限 100件` を確認。起動時の `[err]` 0件
+- 切り捨てログ（`上限により58件を切り捨てました`）が `[inf]` 側に出力されることを確認
+- 翌営業日（8/25）の収集窓で `[err]` 0件を確認予定
+| 2026-08-2X | merge | daytrade-simulator | PR#42 CLAUDE.md に定時自動スキャンの記述を追加。`src/App.js` 行数を約6600→約7200に修正、`scan:universe:built` のTTLを7日と混同していた記述を2行に分離 | 無 |
+| 2026-08-2X | merge | daytrade-simulator | PR#43 CLAUDE.md 第1弾修正（記述誤り5点）。存在しない `api/index.js` の参照を削除、`src/App.js` の「単一ファイル」記述を訂正、`src/lib/analyze.js` を早見表に追加、5分タイムアウトを `WATCH_TTL` と `watchStaleSeconds` に分解、tachibana-server のエンドポイントを行単位に分割 | 無 |
+| 2026-08-2X | merge | daytrade-simulator | PR#44 CLAUDE.md の参照書式を統一（行番号より識別子名を優先）。Vercel関数枠の消費数 11/12 を明記 | 無 |
+| 2026-08-2X | merge | daytrade-simulator | PR#45 docs/OPERATIONS.md・docs/HANDOFF.md を新設（ドキュメント3層化） | 無 |
