@@ -76,9 +76,7 @@
 
 ## 未決の判断
 
-- `tachibana-server` の残り3ブランチの処遇。凍結理由（月曜判定）は消滅したので判断可能になった。GitHub の Branches 画面で Ahead を見て手動判断する
-  - `premarket-logger-fixes-3-4-5-7iz4uh`（PR #16 Open）／`premarketlogger-fixes-3-4-5-do7s8c`（PR #14 Closed）／`premarket-logger-improvements-k6rqar`（PR #13 Closed）
-  - #16 の内容が上記「ログ分類整理」と重複する可能性がある。重複するなら #16 は Close して作り直すほうが早い
+- なし（`tachibana-server` の残ブランチ3本は削除済み。`premarketLogger.js` の修正は main から新規PRで作る）
 
 ## 未確認の仮説
 
