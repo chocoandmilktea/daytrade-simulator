@@ -29,7 +29,7 @@
 8. 環境変数に `TACHIBANA_MARKET_PRICE_API` を追加
 9. 早見表の `api/premarket.js` に `marketBias` の Yahoo 由来が読み取れるか確認
 
-マージ後、`docs/HANDOFF.md` の暫定保持から `unpackSync` と `scan-run` 並列禁止の2行を削除する。
+マージ後、下部の暫定保持から `unpackSync` と `scan-run` 並列禁止の2行を削除する。
 
 ### `PREMARKET_MAX` 158（全件）引き上げ
 
@@ -131,4 +131,3 @@
 固定事項:
 
 - `PREMARKET_CODES` は158件固定の定点観測（`scan:universe` と非連動）
-
