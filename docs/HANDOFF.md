@@ -1,4 +1,4 @@
-# 作業引き継ぎ（最終更新: 2026-08-23）
+# 作業引き継ぎ（最終更新: 2026-08-24）
 
 このファイルは「今どうなっているか」だけを書く。
 恒久的な制約は CLAUDE.md（実装向け）と docs/OPERATIONS.md（運用向け）に書き、
@@ -6,36 +6,16 @@
 
 ## 現在の課題
 
-- 月曜（8/24）朝の `PREMARKET_MAX=100` 実測判定が最優先。これが通るまで他の作業は着手しない
-- `premarketLogger.js` は月曜判定が終わるまで一切触らない（変更すると Railway が再起動し、検証窓が飛ぶ）
+- `PREMARKET_MAX=100` の実測判定は 8/24 朝に**全項目通過**。凍結解除済みで、以降は通常の作業順に戻る
+- 次の山は **金曜夕方の `PREMARKET_MAX` 158（全件）引き上げ**。それまでに `CLAUDE.md` 第2弾と `premarketLogger.js` のログ整理を終えておきたい
 
 ## 進行中の案件
 
-### PREMARKET_MAX=100 の実測判定
+### `CLAUDE.md` 第2弾修正
 
-- 状態: 8/21 に値を 100 へ変更し反映済み（起動ログ `対象 100件 / 受領 158件 / 上限 100件`）。月曜朝の実測待ち
-- 触るファイル: なし（判定のみ。ロールバック時は Railway の環境変数 `PREMARKET_MAX`）
-- 次の一手: 月曜 9:10〜9:25 に Railway のログを確認。`tick失敗` → `エラー` → POST サイズ → レコード件数 → tick 所要 の順
-
-判定基準:
-
-| 項目 | 通過 | 要ロールバック |
-|---|---|---|
-| `tick失敗` | 0件 | 10件以上 |
-| POST サイズ | 2.0MB前後 | 2.5MB超 |
-| レコード件数 | 84件 | 84未満は要調査 |
-| tick 所要 | 1000〜2000ms | 5000ms超 |
-| 起動ログ `対象` | 100件 | 40件なら変数未反映 |
-
-ロールバック手順: Railway Variables で `PREMARKET_MAX` を 40 に変更 → 自動再デプロイ → 起動ログで `対象 40件` 確認。実行は 10:00〜10:45。ENV_CHANGELOG に実測値つきで追記。
-
-ログが取れなかった場合: `premarket-summary?date=...` で件数・銘柄数のみ確認可。POST サイズは 19.75KB/銘柄で推定。`tick失敗` は取得不能のため**判定不能**（通過ではない）。火曜に再判定。
-
-### CLAUDE.md 第2弾修正
-
-- 状態: 第1弾（PR #43）・参照書式と関数枠（PR #44）は完了。第2弾は未着手。月曜判定通過後に開始
-- 触るファイル: `CLAUDE.md`（第2弾）／`docs/OPERATIONS.md`・`docs/HANDOFF.md`（TTL等の移設先）
-- 次の一手: 月曜判定通過後、指示文を作成
+- 状態: 第1弾（PR #43）・参照書式と関数枠（PR #44）は完了。第2弾は未着手。**これが次の着手対象**
+- 触るファイル: `CLAUDE.md`／`docs/OPERATIONS.md`・`docs/HANDOFF.md`（TTL等の移設先）
+- 次の一手: 指示文を作成して Claude Code へ
 
 第2弾の対象:
 
@@ -45,51 +25,91 @@
 - Redis 1MB制限と `"gz:"` プレフィックス、`unpackSync()` の意図的な二重実装
 - `limit=5` の根拠と `scan-run` 並列実行の絶対禁止
 - 構造上の誤読リスク (b) L50 / (c) L23
-- 早見表に `api/news.js` / `api/premarket.js` を追加（#43・#44 の両方で「参考」に計上）
+- 早見表に `api/news.js` / `api/premarket.js` を追加
 - `tachibana-server` のファイル列挙漏れ（`config.js` / `holidays.js` / `premarketLogger.js`）
 - TTL一覧の移設（下記「暫定保持」から `CLAUDE.md` へ移し、こちらからは削除する）
 
-### ドキュメント3層化
+### `premarketLogger.js` のログ分類整理
 
-- 状態: PR #45 で `docs/OPERATIONS.md`・`docs/HANDOFF.md` を新設。マージ待ち
-- 触るファイル: `CLAUDE.md` / `docs/OPERATIONS.md` / `docs/HANDOFF.md`
-- 次の一手: 「進行中の案件」を案件別見出しに変更 → PR #45 をマージ・ブランチ削除 → 本ファイルに中身を記入
+- 状態: 未着手。判定終了により**凍結解除済み**（触ってよい）
+- 触るファイル: `tachibana-server/premarketLogger.js`
+- 次の一手: 下記2点を1つのPRにまとめて指示文を作成
+
+内容:
+
+1. `console.warn` 6箇所を `warn()` ヘルパー経由に変更（Railway で `[err]` 分類されるのを避ける）
+2. POSTサイズ警告の閾値見直し。現行1MBは実運用値（現1.91MB / 158件時3.09MB）に対して低すぎ、毎日 `[err]` が出続ける
+
+反映には Railway 再起動が必要。マージは安全枠（10:00〜10:45 / 13:30〜14:45 / 15:30以降）で行う。
+
+### `parts.ranking` の原因調査
+
+- 状態: **計測は完了**（8/24: 6016ms、`totalMs` 6754 の89%）。原因調査は未着手
+- 触るファイル: 未定（調査結果次第。`api/ranking.js` / `tachibana-server/webapi.js` が候補）
+- 次の一手: Vercel → tachibana-server → 立花API のどの区間で時間を食っているかを分解する調査タスク。**調査のみ・変更なし**で指示
+
+### `/api/daily` 連打の調査
+
+- 状態: 未着手
+- 触るファイル: `src/App.js`（grep・範囲指定読みのみ。全体読み禁止）
+- 次の一手: useEffect 周辺を grep で特定。**調査のみ**。`PUSH_SYNC` には触らせない
+
+### `PREMARKET_MAX` 158（全件）引き上げ
+
+- 状態: 100の通過により実行条件は満たした。**金曜夕方**に実施予定
+- 触るファイル: なし（Railway の環境変数 `PREMARKET_MAX`）
+- 次の一手: 金曜夕方に 100 → 158 へ変更 → 起動ログで `対象 158件` を確認 → 翌月曜朝に実測判定
+
+推定 3.09MB（19.58KB/銘柄 × 158）＝ Vercel上限4.5MB の69%。判定基準は100件時と同じ順（`tick失敗` → `エラー` → POSTサイズ → 件数 → tick所要）。ロールバック先は 100。
 
 ## 次にやること
 
-月曜判定通過後、上から順に:
+上から順に:
 
 1. `CLAUDE.md` 第2弾修正
-2. `/api/daily` 連打の**調査のみ**（`src/App.js` の `PUSH_SYNC` に触らせない）
-3. `parts.ranking`（5738ms）の計測
-4. `premarketLogger.js` の `console.warn` 6箇所を解消（`warn()` ヘルパー経由）
+2. `premarketLogger.js` のログ分類整理（`console.warn` 6箇所 ＋ POSTサイズ閾値）
+3. `/api/daily` 連打の**調査のみ**
+4. `parts.ranking` 6016ms の原因調査（**調査のみ**）
 5. README 更新
 6. Phase 2B（ギャップ予測を気配ベースへ）
-7. `PREMARKET_MAX` を 158（全件）へ引き上げ — **金曜夕方**。推定3.12MB＝Vercel上限の69%
+7. `PREMARKET_MAX` を 158 へ ← **金曜夕方**
 
 ## 未決の判断
 
-- なし（行番号→識別子名、関数枠明記はいずれも PR #44 で採用・完了）
+- `tachibana-server` の残り3ブランチの処遇。凍結理由（月曜判定）は消滅したので判断可能になった。GitHub の Branches 画面で Ahead を見て手動判断する
+  - `premarket-logger-fixes-3-4-5-7iz4uh`（PR #16 Open）／`premarketlogger-fixes-3-4-5-do7s8c`（PR #14 Closed）／`premarket-logger-improvements-k6rqar`（PR #13 Closed）
+  - #16 の内容が上記「ログ分類整理」と重複する可能性がある。重複するなら #16 は Close して作り直すほうが早い
 
 ## 未確認の仮説
 
 - `validCount` は寄り付き時刻の代理指標の可能性（0/57/69/81 の4値・12刻み）。`validCount=81` と `open=null` が完全一致。例外: `5242`
 - `buyRatioLast` > `buyRatioAvg`（9銘柄で 7/9 vs 6/9）。サンプル不足。5変種（First / Last / Min / Max / Avg）を保存継続中
+- `parts.ranking` の6秒は立花API側の応答待ちが支配的（未検証）
 
 ## 直近の実測値
 
-`PREMARKET_MAX=40`（8/21朝・全項目クリア）:
+`PREMARKET_MAX=100`（8/24朝・全項目通過）:
 
-- 40銘柄 × 16項目 = 640データ点
-- tick 所要 444〜641ms
-- POST 790KB / 84レコード
-- `tick失敗` 0件
+- 100銘柄 / tick 82回すべて完走 / 収集窓1260秒
+- tick 所要 432〜876ms（平均489 / 中央値479）
+- POST 1958KB（1.91MB）/ 84レコード
+- `tick失敗` 0件 / `エラー` 0件
+
+自動スキャン（8/24）:
+
+- 8:50 スロット `done 203件 / 4分14秒 / 失敗0件`
+- 9:30 スロット `done 200件 / 3分12秒 / 失敗0件`
+- `scan:universe:meta`: `builtAt` `2026-08-24T00:30:07.387Z`（JST 9:30）／`source` `sector(精密機器/情報・通信業/海運業)`／`count` 200／`saved` true
+- `totalMs` 6754（`sync` 565 / `ranking` 6016 / `merge` 0 / `save` 173）
 
 派生する事実:
 
-- ペイロード線形性 19.75KB/銘柄（12銘柄→230KB / 40銘柄→790KB）。Vercel上限4.5MB
-- 「銘柄数 × 項目数 ≦ 200」制限は640までは不存在（640〜1600は未検証）
-- PR #15 の修正2（窓突入検知 60秒→15秒）で収集件数が 81→84。**8/20以前と8/21以降でデータ不連続**
+- ペイロード線形性 **19.58KB/銘柄**（12→230KB / 40→790KB / 100→1958KB）。Vercel上限4.5MB
+- 40銘柄444〜641ms に対し100銘柄432〜876ms。**銘柄数増加による tick 遅延はほぼ無い**。ボトルネックは POST サイズ側
+- 158銘柄の推定は約3.09MB（上限の69%）
+- 定時スロットからの自動組み立てで業種フィルタが効くことを初確認（`SCAN_SYNC_USER_ID` 修正が本番反映済み）
+- 組み立てが 8:50 ではなく 9:30 に走ったのは `scan:universe:built`（3日TTL）が8:50時点で未期限だったため。仕様どおり
+- 「銘柄数 × 項目数 ≦ 200」制限は 1600（100×16）までは不存在
 
 ## 暫定保持（CLAUDE.md 第2弾で移設後に削除する）
 
