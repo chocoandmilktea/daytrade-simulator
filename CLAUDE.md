@@ -35,7 +35,7 @@
 - `api/daily.js` … ミニチャート用の日足（直近3ヶ月・Yahoo）
 - `api/intraday.js` … 当日1分足（Yahoo）。銘柄選択時のみ呼ばれ、スキャン時は呼ばれない
 - `api/premarket.js` … 「今朝の地合い」を1レスポンスで返す。日経225先物・SOX・S&P500・NASDAQ・ドル円・VIX・NYダウの前日比をYahooから集め、加重平均して寄り付きの想定ギャップ `marketBias` を出す。`codes` 指定時のみ立花の `/market-price`（寄り前気配）も中継する
-- `api/sync.js` … デバイス間同期（TTL90日）＋ 立花リアルタイム中継の窓口
+- `api/sync.js` … 同期・中継の総合窓口。`resource` パラメータで7種に分岐（詳細は後述）。TTL は用途ごとに5種類あるため、単一の値では表せない
 - `api/ai.js` … Anthropic APIプロキシ（system prompt・web_search対応）
 - `api/news.js` … TDnet（適時開示）とYahooファイナンスの見出しを取得し、Anthropic APIで5カテゴリに要約する。**Web検索は使わず、取得した実データだけをAIに渡す**
 - `api/ipo.js` … 銘柄コード→会社名（立花・1時間キャッシュ）
@@ -83,6 +83,7 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
   - `/ranking-data` … 呼び出し元 `api/ranking.js`（Vercel側キャッシュ: なし。`withFallback` は失敗時フォールバックであってキャッシュではない）｜サーバー側キャッシュ: 3分（`tachibana-server` の `webapi.js`）
   - `/names` … 呼び出し元 `api/ipo.js`（Vercel側キャッシュ: 1時間 / `CACHE_TTL`）｜サーバー側キャッシュ: 24時間（銘柄マスタ）。**Vercel側とサーバー側で保持時間が異なる**
   - `/market-price` … 呼び出し元 `api/premarket.js`（Vercel側キャッシュ: 3分 / `PREMARKET_TTL`）｜サーバー側キャッシュ: なし
+  - これらはすべてモジュールスコープの変数（プロセス内メモリ）であり Redis ではない。Lambda コンテナが再利用されたときだけ効くため、実効ヒット率は記載の時間ほど高くない。唯一の例外は `api/stock.js` の決算日マップで、メモリ6時間 → Redis 24時間（`jpx:earnings-map`）の二段構え
 - URLは環境変数から読む（`TACHIBANA_RANKING_API` / `TACHIBANA_ISSUE_DETAIL_API` / `TACHIBANA_TOPIX_API` / `TACHIBANA_NAMES_API`）、認証はヘッダ `X-Relay-Secret`（`TACHIBANA_RELAY_SECRET`）
 - 取得は必ず `withFallback(key, fn)`（`api/_fallbackCache.js`）で包み、`AbortSignal.timeout()` を付ける（8秒目安、一括取得系は15秒）
 - 毎日3:00〜8:30はシステムメンテナンスでAPIが落ちるが、`withFallback` がRedisの前回成功データ（3日保持）を返すため問い合わせ自体をスキップしない
@@ -96,6 +97,10 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 3. **`App.js`（`TachibanaBoard`）が7秒おきに** `sync.js?resource=tachibana-quote` をGETし、取得した値を表示する
 
 - GET間隔（7秒）＜ 値のTTL（30秒）なので、サーバーが更新を投げ続けている正常時はGETすれば必ず値がある。**値が空で返ってきたら「30秒以上更新が届いていない」という異常のサイン**（GETのタイミングの問題ではない）
+
+- `tachibana:quote:<ticker>`（TTL30秒）と同時に、`tachibana:quote:last:<ticker>`（TTL3日）へ同じ内容を書いている。後者は休場中のフォールバックで、立花が閉まってライブ値の30秒が切れている時間帯でも直近の板を表示するためのもの。3日なのは連休を挟んでも切れないようにするため
+  - GET でライブ値が無いときはこちらを返し、レスポンスに `stale: true` を付ける。`src/App.js` はこの `stale` を見て、板パネルを非表示にする・ヘッダー色を変える・リアルタイム値を採用せず Yahoo に任せる、といった分岐をしている
+  - 読み書きしているのは `api/sync.js` の `handleTachibanaQuote()` のみで、他ファイル・`tachibana-server` からの参照はない
 
 - 購読の寿命は2段構成。**混同しないこと**
   - Redis TTL: 5分（`WATCH_TTL`（`api/sync.js`））… 購読リクエストのキー自体が消えるまでの時間
@@ -118,6 +123,42 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 - マークの書き込みに失敗した場合は `buildUniverse` を呼ばずエラーを返し、呼び出し側のループを止める（空回り防止）
 - `userId` はリクエストから受け取らず、環境変数 `SCAN_SYNC_USER_ID` で固定
 - 業種絞り込みは同期データの `lastSectors` を参照し、無い場合は `/api/ranking` にフォールバックする
+
+## Redis キーと TTL 一覧
+
+以下はすべて Redis（Upstash）に保存されるキー。前述の「Vercel側メモリキャッシュ」とは別物なので混同しないこと。
+
+| キー | TTL | 定数名 | 書き込み元 |
+| --- | --- | --- | --- |
+| `snapshot:<key>`（実績: `snapshot:topix` / `snapshot:issue-detail:<コード>` / `snapshot:ranking-data` / `snapshot:names`） | 3日 | `SNAPSHOT_TTL` | `api/_fallbackCache.js` |
+| `jpx:earnings-map` | 24時間 | `EARNINGS_REDIS_TTL` | `api/stock.js` |
+| `tachibana:watch` | 5分 | `WATCH_TTL` | `api/sync.js` |
+| `tachibana:quote:<ticker>` | 30秒 | 定数なし・直書き | `api/sync.js` |
+| `tachibana:quote:last:<ticker>` | 3日 | `QUOTE_SNAPSHOT_TTL` | `api/sync.js` |
+| `premarket:log:<YYYY-MM-DD>` | 30日 | `PREMARKET_LOG_TTL` | `api/sync.js` |
+| `user:<userId>` | 90日 | `TTL` | `api/sync.js` |
+| `scan:universe` | 7日 | `UNIVERSE_TTL` | `api/_scan.js` |
+| `scan:universe:meta` | 7日 | `UNIVERSE_TTL` を流用（キー名は直書き） | `api/_scan.js` |
+| `scan:universe:built` | 3日 | `UNIVERSE_BUILD_TTL` | `api/_scan.js` |
+| `scan:<YYYY-MM-DD>:<slot>` | 30日 | `RESULT_TTL` | `api/_scan.js` |
+
+- `scan:universe` と `scan:universe:meta` は同じ `UNIVERSE_TTL`（7日）だが、`scan:universe:built` だけは別定数 `UNIVERSE_BUILD_TTL`（3日）である。混同しないこと
+- `scan:universe:built` が残っている間は自動スキャン時のユニバース組み立てがスキップされる。手動テストで組み立てを走らせたい場合は Upstash Data Browser でこのキーを削除する
+
+## api/sync.js の resource 一覧
+
+| resource | メソッド | 内容 |
+| --- | --- | --- |
+| `tachibana-watch` | POST・GET | POST=購読中の銘柄を `tachibana:watch` に書く（無認証）。GET=購読中の銘柄を返す（`X-Relay-Secret` 必須） |
+| `tachibana-quote` | POST・GET | POST=立花のリアルタイム値をライブ用（30秒）とスナップショット用（3日）へ同時に書く（認証必須）。GET=ライブ値、無ければスナップショットを `stale:true` 付きで返す |
+| `premarket-log` | POST・GET | POST=`premarketLogger.js` から届く寄り前気配の生ログを追記（認証必須）。GET=その日の生ログ。`date=list` で保存済み日付一覧 |
+| `premarket-summary` | GET のみ | 寄り前ログを日付×銘柄で1行に集計して返す読み取り専用。保存もTTL延長もしない |
+| `scan-universe` | GET のみ | スキャン対象銘柄リストの現在値を返す。書き込み口は廃止済み（保存は `_scan.js` の `buildUniverse` がサーバー側で行う） |
+| `scan-run` | POST のみ | 定時スキャン1バッチの実行窓口。`_scan.js` を動的 import して `runScanBatch()` を呼ぶ（認証必須） |
+| `scan-result` | GET のみ | `date` 指定で全 slot の保存結果を `mget` してまとめて返す |
+| （`resource` 無し・未知の値） | POST・GET | デバイス間同期にフォールバック。`userId` 必須。`user:<userId>` を読み書き（90日、GET時に延長） |
+
+- `premarket-summary` は `date` 未指定だと Redis に触る前に `400 date required` を返す。これは意図的な仕様で、日付を省くと保存済み全日分（最大30日）を展開して応答が数十MBに達し、Vercel の上限と実行時間を圧迫するため。`date` が `YYYY-MM-DD` 形式でない場合も `400 invalid date`。`premarket-log` で使える `date=list` は `premarket-summary` では使えない
 
 ## 開発ルール・よくある落とし穴
 
