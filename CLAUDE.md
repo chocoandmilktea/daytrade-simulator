@@ -1,6 +1,6 @@
 # DaySimulator（daytrade-simulator）
 
-日本株・米国株のスキャン、スコアリング、トレード記録を行う株式情報アプリ。
+日本株のスキャン、スコアリング、トレード記録を行う株式情報アプリ。
 
 ## 作業ルール（トークン節約・最優先）
 
@@ -29,13 +29,15 @@
 
 - `src/App.js` … フロント全体（React）。UI・状態管理・全API呼び出し・スキャンのキュー制御。**スコア計算の本体は `src/lib/analyze.js` に分離済み**
 - `src/lib/analyze.js` … スコア計算本体（約1050行）。`src/App.js` と `api/_scan.js` の両方が import する共有モジュール。変更するとフロント表示だけでなく自動スキャンの保存スコアも同時に変わる
-- `api/ranking.js` … 出来高／値上がりランキング生成（JP: 立花、US: Yahoo）
+- `api/ranking.js` … 出来高／値上がりランキング生成（日本株のみ・立花）。米国株ランキング（Yahooのスクリーナー）は削除済み
 - `api/sector.js` … AI選定業種で絞ったランキング（`ranking.js` の関数を再利用）
 - `api/stock.js` … 個別銘柄の詳細（分足: Yahoo、財務指標/TOPIX: 立花）。内部は並列取得
 - `api/daily.js` … ミニチャート用の日足（直近3ヶ月・Yahoo）
 - `api/intraday.js` … 当日1分足（Yahoo）。銘柄選択時のみ呼ばれ、スキャン時は呼ばれない
+- `api/premarket.js` … 「今朝の地合い」を1レスポンスで返す。日経225先物・SOX・S&P500・NASDAQ・ドル円・VIX・NYダウの前日比をYahooから集め、加重平均して寄り付きの想定ギャップ `marketBias` を出す。`codes` 指定時のみ立花の `/market-price`（寄り前気配）も中継する
 - `api/sync.js` … デバイス間同期（TTL90日）＋ 立花リアルタイム中継の窓口
 - `api/ai.js` … Anthropic APIプロキシ（system prompt・web_search対応）
+- `api/news.js` … TDnet（適時開示）とYahooファイナンスの見出しを取得し、Anthropic APIで5カテゴリに要約する。**Web検索は使わず、取得した実データだけをAIに渡す**
 - `api/ipo.js` … 銘柄コード→会社名（立花・1時間キャッシュ）
 - `api/notify.js` … Pushover通知
 - `api/_fallbackCache.js` … 取得失敗時のRedisフォールバック共通ヘルパー（`_` 始まりはVercelにエンドポイント扱いさせないため）
@@ -58,17 +60,27 @@
 
 - バックエンド: Vercel Functions（`api/`）／ストア: Upstash Redis（同期データ・フォールバック用スナップショット）／リアルタイム中継: Railway上の別リポジトリ `tachibana-server`（常時起動）
 - 立花証券e支店API: 日本株の現在値・板情報・出来高ランキング・業種・会社名・PER/PBR/EPS/BPS/配当利回り/権利落ち日・TOPIX日次騰落率
-- Yahoo Finance: 分足・日足ミニチャート・米国株全般／東証（JPX）公式Excel（認証不要）: 決算発表予定日
+- Yahoo Finance: 分足・日足ミニチャート・市況指数（日経225先物／米国主要指数／SOX／VIX／ドル円）／東証（JPX）公式Excel（認証不要）: 決算発表予定日
 - **J-Quantsは2026年7月に完全廃止済み。新たにJ-Quantsを使うコードを書かないこと**（`JQUANTS_API_KEY` は不使用）
+
+### 米国株の扱い（コードはあるが運用していない）
+
+- **米国株は現在まったく運用していない。対象は日本株のみ**
+- ただしコード上には米国株向けの実装が残存している。主なものは次の2種類
+  - `market==="US"` の分岐（`src/App.js`。市場バッジ `MKT.US`、ドル円換算表示、ユニバース組み立て時の `market` 判定など）
+  - 米国株向けの価格処理（`src/lib/analyze.js` の `tickSizeFor` / `roundTickPrice` の `isJP=false` 側は呼値0.01・小数2桁、`src/App.js` の `fmtMoney` / `fmtPnl` は `$` 表記）
+- **依頼されていない限り、米国株関連のコードを削除しないこと。** 動作している既存機能を壊すリスクがあるため
+- 新機能を実装するとき、米国株対応を考慮する必要はない
+- なお `api/premarket.js` がS&P500・NASDAQ・NYダウ等を取るのは「日本株の寄り付き想定ギャップの材料」であり、米国株の運用ではない
 
 ## 立花証券APIの扱い方（重要）
 
-Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachibana-server(webapi.js) → 立花e支店API`（tachibana-server側は `index.js`（起動）/ `auth.js`（ログイン・仮想URL復号）/ `eventClient.js`（WebSocket）/ `relay.js` / `watcher.js` / `webapi.js` / `scanner.js`（定時スキャンのスケジューラ））。
+Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachibana-server(webapi.js) → 立花e支店API`（tachibana-server側は `index.js`（起動）/ `config.js`（設定値。`watchStaleSeconds` などの定義元）/ `auth.js`（ログイン・仮想URL復号）/ `eventClient.js`（WebSocket）/ `relay.js` / `watcher.js` / `webapi.js` / `scanner.js`（定時スキャンのスケジューラ）/ `holidays.js`（日本の祝日判定）/ `premarketLogger.js`（寄り付き前の気配データ収集。平日 8:45〜9:06））。
 
 - エンドポイントは5つ。**Vercel側キャッシュとサーバー側（tachibana-server）キャッシュは別物**なので混同しないこと:
   - `/topix` … 呼び出し元 `api/stock.js`（Vercel側キャッシュ: 1時間 / `TOPIX_TTL`）｜サーバー側キャッシュ: 未確認
   - `/issue-detail?code=XXXX` … 呼び出し元 `api/stock.js`（Vercel側キャッシュ: 1時間 / `ISSUE_DETAIL_TTL`）｜サーバー側キャッシュ: 未確認
-  - `/ranking-data` … 呼び出し元 `api/ranking.js`（Vercel側キャッシュ: なし。`withFallback` は失敗時フォールバックであってキャッシュではない）｜サーバー側キャッシュ: 3分
+  - `/ranking-data` … 呼び出し元 `api/ranking.js`（Vercel側キャッシュ: なし。`withFallback` は失敗時フォールバックであってキャッシュではない）｜サーバー側キャッシュ: 3分（`tachibana-server` の `webapi.js`）
   - `/names` … 呼び出し元 `api/ipo.js`（Vercel側キャッシュ: 1時間 / `CACHE_TTL`）｜サーバー側キャッシュ: 24時間（銘柄マスタ）。**Vercel側とサーバー側で保持時間が異なる**
   - `/market-price` … 呼び出し元 `api/premarket.js`（Vercel側キャッシュ: 3分 / `PREMARKET_TTL`）｜サーバー側キャッシュ: なし
 - URLは環境変数から読む（`TACHIBANA_RANKING_API` / `TACHIBANA_ISSUE_DETAIL_API` / `TACHIBANA_TOPIX_API` / `TACHIBANA_NAMES_API`）、認証はヘッダ `X-Relay-Secret`（`TACHIBANA_RELAY_SECRET`）
@@ -77,7 +89,13 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 
 ### リアルタイム株価・板情報（選択中の1銘柄のみ購読）
 
-`App.js` の `TachibanaBoard` が60秒おきに `sync.js?resource=tachibana-watch` へPOST → `tachibana-server` がWebSocketで購読し `tachibana-quote` へPOST（Redis TTL 30秒）→ `App.js` が7秒おきにGETして表示。
+データの流れは3ステップ。**1行につき主語は1つ**。時間の値がどのコンポーネントのものかを取り違えないこと
+
+1. **`App.js`（`TachibanaBoard`）が60秒おきに** `sync.js?resource=tachibana-watch` へPOSTし、「この銘柄を購読中」と伝え続ける
+2. **`tachibana-server` が** その購読要求を見てWebSocketで立花から受信し、更新のたびに `sync.js?resource=tachibana-quote` へPOSTする。Vercel側は受け取った値を **Redisキー `tachibana:quote:<ticker>` にTTL30秒で保存する**
+3. **`App.js`（`TachibanaBoard`）が7秒おきに** `sync.js?resource=tachibana-quote` をGETし、取得した値を表示する
+
+- GET間隔（7秒）＜ 値のTTL（30秒）なので、サーバーが更新を投げ続けている正常時はGETすれば必ず値がある。**値が空で返ってきたら「30秒以上更新が届いていない」という異常のサイン**（GETのタイミングの問題ではない）
 
 - 購読の寿命は2段構成。**混同しないこと**
   - Redis TTL: 5分（`WATCH_TTL`（`api/sync.js`））… 購読リクエストのキー自体が消えるまでの時間
@@ -108,5 +126,3 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 - 外部API呼び出しには必ずタイムアウトとエラーハンドリングを付ける。変更後は「何をどう変えたか」を日本語で要約する
 - 日本株の前日比は `PrevC`（前日終値）を優先。無い場合のみ始値比で代用する
 - 銘柄コードは4桁。`ticker` は `"7203.T"` 形式、立花APIへは `.T` を外して渡す。スキャン時は `CACHE` をクリアして必ず最新データを取る
-- /ranking-data … Vercel側キャッシュなし／サーバー側3分（`tachibana-server` の `webapi.js`）
-  ※「3分」はサーバー側の値。Vercel側は毎回取得する
