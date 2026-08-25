@@ -4,132 +4,141 @@
 恒久的な制約は CLAUDE.md（実装向け）と docs/OPERATIONS.md（運用向け）に書き、
 ここには重複させない。更新は GitHub Web エディタで main 直コミット。
 
+進行中の案件には必ず PR 番号を書く。番号が無いものは未投入。
+「指示文作成済み」だけの記述は、投入済みかどうかが読めないため使わない。
+
 ## 現在の課題
 
-- 当初の完成条件（自動定時スキャン・自動寄り前データ収集の両方が正常稼働）に到達。以降はスコア精度と予測チューニングの運用フェーズに入る
-- 最優先の検証案件は無い。ドキュメント整合と調査系の積み残しを順に片付ける段階
+- 急ぎの案件なし。PREMARKET_MAX 158 と CLAUDE.md 第2弾 の一連の作業はいずれも完了
+- 次の着手候補は PR D（api/ 配下のコメント修正2件）
 
 ## 進行中の案件
 
-### CLAUDE.md PR B
+### api/ 配下のコメント修正（PR D）
 
-- 状態: 未着手。PR A（PR #48）は 8/25 マージ済み。ENV_CHANGELOG も追記済み
-- 触るファイル: `CLAUDE.md` / `api/premarket.js`（行内コメント1行のみ）
-- 次の一手: 指示文を作成する。対象は次の3点
+- 状態: 未投入（PR番号なし）。指示文も未作成
+- 触るファイル: api/sync.js / api/premarket.js
+- 次の一手: 指示文を作成して投入 → PR を確認 → マージ・ブランチ削除
 
-  1. `api/sync.js` の「TTL 90日」表記の修正（TTL表の移設に依存）
-  2. `api/premarket.js` の `PREMARKET_TTL` 行内コメントを「サーバー側キャッシュ（3分）」→「Vercel側キャッシュ（3分・サーバーレス関数インスタンスが生きている間のみ）」に修正。CLAUDE.md の用語法（サーバー側＝`tachibana-server`）だと現状の文言は逆に読める
-  3. その他の付随修正
+対象2件（いずれもコメントのみ。動作に影響なし）:
 
-- 注意: `api/premarket.js` を含めるとコードファイル変更となり Vercel 再デプロイが走る。マージ時刻はスキャンスロットの±5分を外す
+1. api/sync.js の寄り前ログ節のコメントが「8:31〜9:06」。実装は 8:45〜9:06
+2. api/premarket.js の PREMARKET_TTL 行内コメントが「サーバー側キャッシュ（3分）」。
+   CLAUDE.md の用語法では「サーバー側」は tachibana-server を指すため逆の意味に読める。
+   Vercel 側のメモリキャッシュだと分かる表現にする
 
-### `/api/daily` 連打の調査
+Vercel の再デプロイは無害なため時間帯制約なし。
 
-- 状態: 未着手
-- 触るファイル: 調査のみ。`src/App.js` の `PUSH_SYNC` には触らせない
-- 次の一手: 調査専用の指示文を作成（変更・commit・push・PR作成を一切行わない旨を明記）
+### /api/daily 連打の調査
 
-### `parts.ranking` の latency 計測
+- 状態: 未着手。未投入（PR番号なし）
+- 触るファイル: src/App.js（grep・範囲指定読みのみ。全体読み禁止）
+- 次の一手: useEffect 周辺を grep で特定。調査のみ・変更なしで指示。PUSH_SYNC には触らせない
 
-- 状態: 未着手。約5738ms を観測したのみで再現性は未確認
-- 触るファイル: 未定（計測のみ）
-- 次の一手: 再現条件の切り分け
+### parts.ranking の原因調査
 
-### README 更新
-
-- 状態: 未着手
-- 触るファイル: `README.md`
-- 次の一手: `PREMARKET_MAX=158` 到達後の構成に合わせて記述を更新
-
-### Phase 2B（ギャップ予測の気配ベース化）
-
-- 状態: 着手条件が整いつつある。158件体制でのデータ蓄積が 8/25 から開始
-- 触るファイル: `src/App.js`（`pm*` 系）／`api/premarket.js`
-- 次の一手: 数営業日ぶんの158件データが貯まるまで待機。`PM_SRC_BETA` に加えて `"quote"` を記録する形へ
+- 状態: 計測済み（8/24: 6016ms、totalMs 6754 の89%）。原因調査は未着手。未投入（PR番号なし）
+- 触るファイル: 未定（api/ranking.js / tachibana-server/webapi.js が候補）
+- 次の一手: Vercel → tachibana-server → 立花API のどの区間で時間を食っているかを分解する。
+  調査のみ・変更なしで指示
 
 ## 次にやること
 
-1. `CLAUDE.md` PR B
-2. `/api/daily` 連打の**調査のみ**
-3. `parts.ranking`（5738ms）の計測
+上から順に:
+
+1. PR D（api/ 配下のコメント修正2件）
+2. /api/daily 連打の調査のみ
+3. parts.ranking 6016ms の原因調査（調査のみ）
 4. README 更新
-5. Phase 2B
+5. Phase 2B（ギャップ予測を気配ベースへ）。158件のデータ蓄積が始まったところ
 
 ## 未決の判断
 
-- `PM_HIST_MAX`（現在90件）の引き上げ要否。Phase 2B で `src` が `beta` / `quote` の2種になると、保持できる日数が実質半分（45営業日）になる
+- 暫定保持に残る項目（premarketLogger.js の9前提、修正時に巻き込む恐れのある箇所7件、
+  組み立ての起動経路、PREMARKET_CODES 158件固定）の移設先。docs/OPERATIONS.md が候補だが未着手
+- CLAUDE.md のみの変更を ENV_CHANGELOG.md に記録するかどうか。同ファイルは本来
+  「環境変数の変更履歴」であり、ドキュメント修正は対象外という整理もあり得る
 
 ## 未確認の仮説
 
-- `validCount` は寄り付き時刻の代理指標の可能性（0/57/69/81 の4値・12刻み）。`validCount=81` と `open=null` が完全一致。例外: `5242`
-- `buyRatioLast` > `buyRatioAvg`（9銘柄で 7/9 vs 6/9）。サンプル不足。5変種（First / Last / Min / Max / Avg）を保存継続中
-- 101〜158番目の銘柄は板が薄いためデータ量が小さい、という推定（下記の実測差から導いたが、銘柄別の内訳では未検証）
+- 8/18 の気配データが 3.2KB と小さいのは初日の部分取得と見られるが、未確認。
+  8/19・8/20 が 27KB で一致しているため、12件時の定常値は 27KB
+- readBody() の {gz:"..."} 受信パスはどの送信側からも使われていない死んだ経路。害はないが未整理
+- 101〜158番目の銘柄が小型で板が薄いためデータ量が小さい、という POST サイズ予測外れの解釈。
+  銘柄ごとの内訳では未検証（推論のみ）
 
 ## 直近の実測値
 
-`PREMARKET_MAX=158`（8/25朝・全項目クリア・以後この値で確定）:
+### PREMARKET_MAX=158（8/25朝・全項目通過）
 
-- tick失敗 0件 / エラー 0件
-- POST 2352KB / 84レコード
-- tick 所要 439〜645ms・平均493ms・中央値483ms
-- 収集時間 1260秒（84ティック × 15秒。窓の取りこぼしなし）
-- 起動ログ 対象158件 / 受領158件 / 上限158件
-- 8:35 JST の日次再ログイン成功
-- `[scan] 0850 done 203件 / 4分9秒 / 失敗0件`
+| 項目 | 実測 | 判定 |
+|---|---|---|
+| tick失敗 | 0件 | 通過 |
+| エラー | 0件 | 通過 |
+| POST サイズ | 2352KB | 通過（WARN 3500KB まで 1148KB の余裕） |
+| レコード件数 | 84件 | 通過 |
+| tick 所要 | 439〜645ms / 平均493ms | 通過 |
+| 起動ログ 対象 | 158件 / 158件 / 158件 | 通過 |
 
-派生する事実:
+- 158 で確定。ロールバック先は 100
+- 収集時間 1260秒＝21分ちょうど。84ティック × 15秒と完全一致。窓の取りこぼしなし
+- 8:35 JST の日次再ログイン成功。メンテ明けの関門を通過
+- 8:50 スキャン 203件 / 4分9秒 / 失敗0件
+- 4:29・4:39 JST の watcher 読み込み失敗2件はメンテ帯（3:00〜8:30）内で想定内
 
-- **ペイロード線形性 19.58KB/銘柄は上位100銘柄限定の値**。全件では 14.89KB/銘柄。予測3093KBに対し実測2352KB（予測比76%・マイナス741KB）
-- Vercel 上限4.5MB に対して 52%。三段しきい値の WARN(3500KB) まで 1148KB の余裕
-- レコード件数84件は「窓21分 ÷ 取得間隔15秒」そのもの。1ティックが15秒を超えない限り件数は減らない
+### ペイロード線形性の前提が更新された
 
-参考（過去の値）:
+- 予測 3093KB（19.58KB/銘柄 × 158）に対し実測 2352KB（14.89KB/銘柄）。マイナス741KB、予測比76%
+- 19.58KB/銘柄は上位100銘柄に限った値であり、全件には適用できない。
+  PREMARKET_CODES は 7203 / 8306 / 9984 と大型株から並んでおり、
+  101番目以降は板が薄く1銘柄あたりのデータ量が小さい
+- Vercel 上限 4.5MB に対して 52%。当面の余裕は想定以上にある
 
-- `PREMARKET_MAX=100`（8/24朝・全項目クリア）… POST 1958KB / 84レコード / tick 432〜876ms 平均489ms
-- `PREMARKET_MAX=40`（8/21朝・全項目クリア）… POST 790KB / 84レコード / tick 444〜641ms
+### 気配データの日次サイズ（Upstash premarket:log:<日付>、gzip 後）
 
-ロールバック方針（現行）:
-
-- 一次退避 `PREMARKET_MAX=100`（8/24 に本番で全項目検証済み）
-- 二次退避 `PREMARKET_MAX=40`（8/21 に本番で全項目検証済み）
+| 日付 | Size | 銘柄数 | 1銘柄あたり |
+|---|---|---|---|
+| 8/18 | 3.2KB | 12 | — |
+| 8/19 | 27KB | 12 | — |
+| 8/20 | 26.7KB | 12 | — |
+| 8/21 | 91.5KB | 40 | 2.29KB |
+| 8/24 | 201KB | 100 | 2.01KB |
 
 ## 暫定保持（移設先が決まり次第、順次ここから削除する）
 
-未移設: `tachibana:watch` の TTL は CLAUDE.md 上 5分（`WATCH_TTL`）だが、実効は2分。判定しているのは `tachibana-server/config.js` の `watchStaleSeconds=120`。PR C で CLAUDE.md へ追記する
+premarketLogger.js の壊してはいけない前提:
 
-`premarketLogger.js` の壊してはいけない前提:
-
-1. `warn()` ヘルパーの内部は `console.log`。`console.warn` に戻さない（Railway で `[err]` 分類される）
-2. `running` の解除は `.finally()` のみ
-3. `lastSessionDate` ガードは維持
-4. `errorCount` と `tickErrorCount` を混ぜない
-5. `PREMARKET_CODES` のパースは `/^[0-9A-Z]{4}$/`
-6. `PREMARKET_MAX` は起動時に一度だけ確定。変更には再起動が必須
+1. warn() ヘルパーの内部は console.log。console.warn に戻さない（Railway で [err] 分類される）
+2. running の解除は .finally() のみ
+3. lastSessionDate ガードは維持
+4. errorCount と tickErrorCount を混ぜない
+5. PREMARKET_CODES のパースは /^[0-9A-Z]{4}$/
+6. PREMARKET_MAX は起動時に一度だけ確定。変更には再起動が必須
 7. 1ティック＝立花への POST 1回。ボトルネックは Vercel へのペイロードサイズ
 8. 検証窓は平日 8:45〜9:06 の21分のみ。失敗の検知は翌営業日
-9. POSTサイズ閾値は `POST_SIZE_WARN_KB=3500` / `POST_SIZE_ERROR_KB=4000` / `POST_SIZE_LIMIT_KB=4500`。`error()` は `console.error` のまま維持する
+9. POSTサイズ閾値は POST_SIZE_WARN_KB=3500 / POST_SIZE_ERROR_KB=4000 / POST_SIZE_LIMIT_KB=4500。
+   error() は console.error のまま維持する
 
-`tick失敗` と `エラー` は別カウンタ。必ず `tick失敗` を先に見る。
+tick失敗 と エラー は別カウンタ。必ず tick失敗 を先に見る。
 
 修正時に巻き込む恐れのある箇所:
 
-- `api/sync.js` — `lastSectors` 未送信時に既存値を維持
-- `api/_scan.js` — 組み立てはスロット先頭の1回だけ。マークが先に立つ
-- `api/_scan.js` `saveUniverse` — `source` が `"ranking"` 以外だと保存拒否
-- `api/_scan.js` `unpackSync()` — `sync.js` の `unpackFromRedis()` と意図的に二重実装（循環参照回避）。片方だけ直すと自動スキャンが同期データを読めない ※PR C で CLAUDE.md へ移設予定
-- `src/lib/analyze.js` — `App.js` と `api/_scan.js` の共有。変更すると自動スキャンの保存スコアも変わる
-- `src/App.js` `PUSH_SYNC` — 触るとお気に入りが巻き戻る
-- `src/App.js` `applySyncedData` — SyncPanel の ID 切り替え時に `last_sectors` を上書き
-- `api/sector.js` `sectorCache` と分岐 — 触ると AI 呼び出しが復活
-- `scan-run` の並列実行は絶対禁止（`mergeResults` が read-modify-write）※PR C で CLAUDE.md へ移設予定
+- api/sync.js — lastSectors 未送信時に既存値を維持
+- api/_scan.js — 組み立てはスロット先頭の1回だけ。マークが先に立つ
+- api/_scan.js の saveUniverse — source が "ranking" 以外だと保存拒否
+- src/lib/analyze.js — App.js と api/_scan.js の共有。変更すると自動スキャンの保存スコアも変わる
+- src/App.js の PUSH_SYNC — 触るとお気に入りが巻き戻る
+- src/App.js の applySyncedData — SyncPanel の ID 切り替え時に last_sectors を上書き
+- api/sector.js の sectorCache と分岐 — 触ると AI 呼び出しが復活
 
 組み立ての起動経路:
 
-- 唯一の入口: `POST /api/sync?resource=scan-run` → `runScanBatch` → `buildUniverse`
-- フロントの手動スキャンでは走らない（`buildStockUniverse` はブラウザ内組み立て）
-- `offset:0` かつ `scan:universe:built` のマークが無いときだけ組み立て
-- 組み立て回はスキャンせず `done:0 / nextOffset:0` で即返す
+- 唯一の入口: POST /api/sync?resource=scan-run → runScanBatch → buildUniverse
+- フロントの手動スキャンでは走らない（buildStockUniverse はブラウザ内組み立て）
+- offset:0 かつ scan:universe:built のマークが無いときだけ組み立て
+- 組み立て回はスキャンせず done:0 / nextOffset:0 で即返す
 
 固定事項:
 
-- `PREMARKET_CODES` は158件固定の定点観測（`scan:universe` と非連動）
+- PREMARKET_CODES は158件固定の定点観測（scan:universe と非連動）。
+  PREMARKET_MAX=158 により現在は全件を収集している
