@@ -32,7 +32,7 @@ const MARKET_INDICATORS = [
 ];
 
 const MARKET_BIAS_LIMIT = 3;         // marketBiasの上限・下限（±3%を超える想定はしない）
-const PREMARKET_TTL = 3 * 60 * 1000; // サーバー側キャッシュ（3分）
+const PREMARKET_TTL = 3 * 60 * 1000; // Vercel側のプロセス内メモリキャッシュ（3分）。対象はYahoo由来の地合いデータ（marketBias / indicators）のみで、立花の /market-price（寄り前気配）はキャッシュしない
 const FETCH_TIMEOUT = 8000;          // 1シンボルあたりの取得タイムアウト（ミリ秒）
 
 // ── Yahooから1シンボル分の前日比を取得 ────────────────────────────────

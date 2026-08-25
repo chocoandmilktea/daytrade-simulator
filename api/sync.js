@@ -114,7 +114,7 @@ async function handleTachibanaQuote(req, res) {
 }
 
 // ── 寄り前ログ（tachibana-server の premarketLogger.js から届く） ─────────
-// 8:31〜9:06の気配推移を、1回の記録セッション
+// 8:45〜9:06の気配推移を、1回の記録セッション
 // （{ date, codes, cols, startedAt, finishedAt, count, records }）ごとに
 // POSTで受け取り、日付キーの配列へ追記していく。30日保存。
 // 立花の戻り値をそのまま貯めたものなので、キー名の変換・整形は一切しない。
