@@ -358,6 +358,12 @@ async function fetchIntraday(ticker){
 // 直近1年分の日足終値・出来高。値の変化が緩やかなので30分キャッシュ、分足用の直列
 // キューとは別枠で（軽いデータなので待たせる必要が薄いため）直接取得する。
 var DAILY_CACHE={}, DAILY_TTL=30*60*1000, DAILY_INFLIGHT={};
+// ネガティブキャッシュ：取得に失敗した銘柄と、その失敗時刻を覚えておく。
+// DAILY_FAIL_TTL は「失敗を覚えておく時間」で、この間は同じ銘柄を再取得しない。
+// 失敗を覚えないと、429で空配列が返るたびに同じ銘柄を何度も取りに行き、429が429を呼ぶ
+var DAILY_FAIL={}, DAILY_FAIL_TTL=10*60*1000; // 失敗を覚えておく時間（10分）
+// 429を検知したら、この時刻までは日足の取得を一切行わない（intraday側の INTRADAY_PAUSED_UNTIL と同じ考え方）
+var DAILY_PAUSED_UNTIL=0;
 // ── ☀️ 日中型/夜間型の判定 ──────────────────────────────────────────────
 // 過去1年の値動きを「日中分（始値→終値）」と「夜間分（前日終値→始値）」に分解して累積する。
 // 検証（50銘柄・のべ23,105日）で、上昇銘柄でも寄り→引けの平均はマイナスと分かった。
@@ -387,18 +393,32 @@ async function fetchDaily(ticker){
   var now=Date.now();
   if(DAILY_CACHE[ticker]&&now-DAILY_CACHE[ticker].ts<DAILY_TTL) return DAILY_CACHE[ticker].data;
   if(DAILY_INFLIGHT[ticker]) return DAILY_INFLIGHT[ticker];
+  // 直近10分以内に失敗している銘柄は通信せず即nullを返す（同じ銘柄への再取得の連鎖を止める）
+  // 通信中のものには合流させるため INFLIGHT 判定の後ろに置く
+  if(DAILY_FAIL[ticker]&&now-DAILY_FAIL[ticker]<DAILY_FAIL_TTL) return null;
+  // 429で停止中も通信しない
+  if(now<DAILY_PAUSED_UNTIL) return null;
   var p=(async function(){
     try{
       var res=await fetch(DAILY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
       if(!res.ok) throw new Error("HTTP "+res.status);
       var json=await res.json();
-      if(!json||!json.closes||json.closes.length<2) return null;
+      if(json&&json.rateLimited){
+        // アクセス制限を検知：しばらく日足の取得全体を止めて様子を見る（intraday側と同じ2分）
+        var t=Date.now();
+        if(t>=DAILY_PAUSED_UNTIL) console.log("[daily] 429を検知したため2分間停止します"); // 停止に入った瞬間だけ出す
+        DAILY_PAUSED_UNTIL=t+120*1000;
+        DAILY_FAIL[ticker]=t;
+        return null;
+      }
+      if(!json||!json.closes||json.closes.length<2){DAILY_FAIL[ticker]=Date.now();return null;}
       var result={closes:json.closes,dates:json.dates||[],volumes:json.volumes||[],opens:json.opens||[],highs:json.highs||[],lows:json.lows||[]};
       DAILY_CACHE[ticker]={ts:now,data:result};
+      delete DAILY_FAIL[ticker]; // 成功したので失敗の印を消す
       try{var dn=computeDayNight(result);if(dn)DAYNIGHT[ticker]=dn;}catch(e){}
       try{updateForecastLog(ticker,result);}catch(e){}
       return result;
-    }catch(e){return null;}
+    }catch(e){DAILY_FAIL[ticker]=Date.now();return null;}
   })();
   DAILY_INFLIGHT[ticker]=p;
   p.finally(function(){delete DAILY_INFLIGHT[ticker];});
@@ -6085,11 +6105,21 @@ var PM_TODAY_CACHE={};
 async function pmFetchRecentDaily(ticker,force){
   var now=Date.now(),c=PM_TODAY_CACHE[ticker];
   if(!force&&c&&now-c.ts<PM_TODAY_TTL)return c.data;
+  // 429で停止中は通信しない（fetchDailyと同じ DAILY_PAUSED_UNTIL を共有する。
+  // この関数はfetchDailyを経由せず直接/api/dailyを叩くため、個別に見る必要がある）
+  if(now<DAILY_PAUSED_UNTIL)return null;
   try{
     var bucket=Math.floor(now/PM_TODAY_TTL);
     var res=await fetch(DAILY_API+"?ticker="+encodeURIComponent(ticker)+"&interval=1d&range=5d&_t="+bucket,{signal:AbortSignal.timeout(10000),cache:"no-store"});
     if(!res.ok)throw new Error("daily "+res.status);
     var json=await res.json();
+    if(json&&json.rateLimited){
+      // アクセス制限を検知：fetchDaily側と同じ変数へ停止時刻を書く（停止時間も同じ2分）
+      var t=Date.now();
+      if(t>=DAILY_PAUSED_UNTIL)console.log("[daily] 429を検知したため2分間停止します"); // 停止に入った瞬間だけ出す
+      DAILY_PAUSED_UNTIL=t+120*1000;
+      return null;
+    }
     if(!json||!json.closes||!json.closes.length)return null;
     var data={closes:json.closes,dates:json.dates||[],opens:json.opens||[],highs:json.highs||[],lows:json.lows||[]};
     PM_TODAY_CACHE[ticker]={ts:now,data:data};
