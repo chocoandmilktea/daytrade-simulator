@@ -96,3 +96,4 @@
 | 2026-08-2X | merge | daytrade-simulator | PR#43 CLAUDE.md 第1弾修正（記述誤り5点）。存在しない `api/index.js` の参照を削除、`src/App.js` の「単一ファイル」記述を訂正、`src/lib/analyze.js` を早見表に追加、5分タイムアウトを `WATCH_TTL` と `watchStaleSeconds` に分解、tachibana-server のエンドポイントを行単位に分割 | 無 |
 | 2026-08-2X | merge | daytrade-simulator | PR#44 CLAUDE.md の参照書式を統一（行番号より識別子名を優先）。Vercel関数枠の消費数 11/12 を明記 | 無 |
 | 2026-08-2X | merge | daytrade-simulator | PR#45 docs/OPERATIONS.md・docs/HANDOFF.md を新設（ドキュメント3層化） | 無 |
+| 2026-08-26 | merge | src/App.js | /api/daily の429自己増幅停止（ネガティブキャッシュ10分＋429検知2分停止）PR #50 | なし
