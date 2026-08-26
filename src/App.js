@@ -392,11 +392,12 @@ async function fillDayNightFor(list,onProgress){
 async function fetchDaily(ticker){
   var now=Date.now();
   if(DAILY_CACHE[ticker]&&now-DAILY_CACHE[ticker].ts<DAILY_TTL) return DAILY_CACHE[ticker].data;
+  if(DAILY_INFLIGHT[ticker]) return DAILY_INFLIGHT[ticker];
   // 直近10分以内に失敗している銘柄は通信せず即nullを返す（同じ銘柄への再取得の連鎖を止める）
+  // 通信中のものには合流させるため INFLIGHT 判定の後ろに置く
   if(DAILY_FAIL[ticker]&&now-DAILY_FAIL[ticker]<DAILY_FAIL_TTL) return null;
   // 429で停止中も通信しない
   if(now<DAILY_PAUSED_UNTIL) return null;
-  if(DAILY_INFLIGHT[ticker]) return DAILY_INFLIGHT[ticker];
   var p=(async function(){
     try{
       var res=await fetch(DAILY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
