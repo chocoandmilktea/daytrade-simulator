@@ -13,7 +13,19 @@
 - 日付は JST。時刻が判断に関わる場合のみ `内容` 欄に併記する
 - 実測値や根拠を伴うものは、表の下に `## 日付 — 件名` の詳述セクションを設ける。**表は一行サマリ（索引）として維持する**
 - 変更を伴わない判定結果・観測結果は表には載せず、詳述セクションのみに書く
-- 2026-08-22〜23 の PR#42〜#45（いずれもドキュメント変更）は当時記録漏れがあり、2026-08-24 に遡って追記した
+- 2026-08-22〜24 の PR#42〜#45（いずれもドキュメント変更）は当時記録漏れがあり、2026-08-24 に遡って追記した
+- 内容列は1文目に「何をどう変えたか」だけを書く。理由・判定基準・ロールバック条件・実測値は書かない
+- PR番号は内容列の文末に「PR #48」の形で置く。シャープの前に半角空白を1つ入れる。既存行の表記揺れは追記専用のため直さない
+- 内容列の目安は全角60字以内。超える情報は詳述セクションへ回し、表には見出しへの参照だけを残す
+- 判定基準や実測値を伴うものは、表の下に「## 日付 — 件名」の詳述セクションを設ける
+
+### 記入例
+
+| 日付 | 種別 | 対象 | 内容 | データ影響 |
+|---|---|---|---|---|
+| 2026-01-01 | env | Railway / EXAMPLE_VAR | 100 → 158 に変更。詳細は 2026-01-01 の詳述セクション参照。PR #99 | 有 |
+
+※実際の記録ではないため、この行は集計対象に含めない
 
 ## 記録
 
@@ -24,12 +36,17 @@
 | 2026-08-21 | env | Vercel: SCAN_SYNC_USER_ID | 値を u_25efafacb5d838b3 に上書き。業種絞り込みが効かず origin が ranking に落ちていた原因の対処 | 有 |
 | 2026-08-22 | config | Redis: scan:universe | 手動 scan-run (date=2026-08-21 / slot=1500 / offset=0) で組み立てを実行。origin が sector(精密機器/情報・通信業/海運業) となり業種絞り込みの復旧を確認。count=196（favAdded=134 + rankingCount=62） | 有 |
 | 2026-08-22 | merge | daytrade-simulator | PR#34 docs/ENV_AUDIT.md 追加（2026-08-20時点の環境変数棚卸し） | 無 |
+| 2026-08-22 | merge | daytrade-simulator | PR#42 CLAUDE.md に定時自動スキャンの記述を追加。`src/App.js` 行数を約6600→約7200に修正、`scan:universe:built` のTTLを7日と混同していた記述を2行に分離 | 無 |
+| 2026-08-23 | merge | daytrade-simulator | PR#43 CLAUDE.md 第1弾修正（記述誤り5点）。存在しない `api/index.js` の参照を削除、`src/App.js` の「単一ファイル」記述を訂正、`src/lib/analyze.js` を早見表に追加、5分タイムアウトを `WATCH_TTL` と `watchStaleSeconds` に分解、tachibana-server のエンドポイントを行単位に分割 | 無 |
+| 2026-08-23 | merge | daytrade-simulator | PR#44 CLAUDE.md の参照書式を統一（行番号より識別子名を優先）。Vercel関数枠の消費数 11/12 を明記 | 無 |
+| 2026-08-24 | merge | daytrade-simulator | PR#45 docs/OPERATIONS.md・docs/HANDOFF.md を新設（ドキュメント3層化） | 無 |
 | 2026-08-24 | merge | tachibana-server | PR#17 premarketLogger.js のログ分類整理（`warn()` を log 化・POSTサイズ閾値を1MB固定から3段階に） | 無 |
 | 2026-08-24 | deploy | tachibana-server | 上記マージに伴うコンテナ全体の自動再デプロイ（13:48 JST 起動）。`対象 100件 / 受領 158件 / 上限 100件`・起動時 `[err]` 0件を確認 | 無 |
 | 2026-08-25 | merge | daytrade-simulator | PR#48 CLAUDE.md 修正9件。立花API 5エンドポイントの Vercel側／サーバー側キャッシュ分離を明記、Redis 保存形式（gzip）と展開処理の二重実装を新設、TACHIBANA_MARKET_PRICE_API を環境変数一覧に追加 | 無 |
 | 2026-08-25 | env | Railway / PREMARKET_MAX | 100 → 158（全件・00:27 JST に実施）。当日朝に実測判定し、tick失敗10件以上・POSTサイズ4000KB超・レコード84件未満・tick 5000ms超のいずれかで 100 へ戻す。100 でも異常が出た場合のみ 40 まで戻す | 有 |
 | 2026-08-25 | deploy | tachibana-server | 上記 PREMARKET_MAX 変更に伴うコンテナ全体の自動再デプロイ。起動ログで「対象 158件 / 受領 158件 / 上限 158件」を確認済み | 無 |
 | 2026-08-25 | config | Railway / PREMARKET_MAX=158 | 当日朝の実測判定を全項目通過。tick失敗0件・エラー0件・POST 2352KB・84レコード・tick 439〜645ms 平均493ms・収集1260秒。158で確定。線形性19.58KB/銘柄は上位100銘柄限定の値と判明（全件では14.89KB/銘柄） | 無 |
+| 2026-08-26 | merge | daytrade-simulator | /api/daily の429自己増幅停止（ネガティブキャッシュ10分＋429検知2分停止）PR #50 | 無 |
 
 ## 2026-08-24（月）— `PREMARKET_MAX=100` 実測判定：通過
 
@@ -92,8 +109,3 @@
 - 起動ログ（13:48）で `対象 100件 / 受領 158件 / 上限 100件` を確認。起動時の `[err]` 0件
 - 切り捨てログ（`上限により58件を切り捨てました`）が `[inf]` 側に出力されることを確認
 - 翌営業日（8/25）の収集窓で `[err]` 0件を確認予定
-| 2026-08-2X | merge | daytrade-simulator | PR#42 CLAUDE.md に定時自動スキャンの記述を追加。`src/App.js` 行数を約6600→約7200に修正、`scan:universe:built` のTTLを7日と混同していた記述を2行に分離 | 無 |
-| 2026-08-2X | merge | daytrade-simulator | PR#43 CLAUDE.md 第1弾修正（記述誤り5点）。存在しない `api/index.js` の参照を削除、`src/App.js` の「単一ファイル」記述を訂正、`src/lib/analyze.js` を早見表に追加、5分タイムアウトを `WATCH_TTL` と `watchStaleSeconds` に分解、tachibana-server のエンドポイントを行単位に分割 | 無 |
-| 2026-08-2X | merge | daytrade-simulator | PR#44 CLAUDE.md の参照書式を統一（行番号より識別子名を優先）。Vercel関数枠の消費数 11/12 を明記 | 無 |
-| 2026-08-2X | merge | daytrade-simulator | PR#45 docs/OPERATIONS.md・docs/HANDOFF.md を新設（ドキュメント3層化） | 無 |
-| 2026-08-26 | merge | src/App.js | /api/daily の429自己増幅停止（ネガティブキャッシュ10分＋429検知2分停止）PR #50 | なし
