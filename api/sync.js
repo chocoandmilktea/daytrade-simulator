@@ -328,6 +328,193 @@ async function handlePremarketSummary(req, res) {
   }
 }
 
+// ── 寄り前気配の較正モード（mode=calib・読み取り専用） ──────────────────
+// 「買い比率が何%のとき、実際のギャップ（寄り値と前日終値の差）が何%になるか」の
+// 変換係数を求めるための集計。行の作成は summarizePremarketDate をそのまま使う
+// （買い比率・gapPct の算出をここで書き直すと mode未指定の明細と数字が食い違うため）。
+// 生ログは1日あたり展開後で数MBあるため、1日読むごとに集計値だけ残して生データは捨てる。
+// 保存・TTL延長は一切しない（redis.get のみ）。
+
+var CALIB_MAX_DAYS = 10; // 範囲の上限日数。これを超えるとVercelの実行時間とメモリを圧迫する
+var CALIB_VARIANTS = ['first', 'last', 'min', 'max', 'avg']; // 買い比率の5変種
+
+function round3(n) { return Math.round(n * 1000) / 1000; }
+// null をそのまま通す丸め（相関が計算できなかった場合に例外を投げないため）
+function r3(n) { return n == null ? null : round3(n); }
+
+// 変種名 → summarizePremarketDate の戻り値のキー名（first → buyRatioFirst）
+function buyRatioKey(variant) {
+  return 'buyRatio' + variant.charAt(0).toUpperCase() + variant.slice(1);
+}
+
+// from から to まで1日ずつのYYYY-MM-DD配列。UTCで進めるのでタイムゾーンの影響を受けない
+function calibDateRange(from, to) {
+  var out = [];
+  var cur = Date.parse(from + 'T00:00:00Z');
+  var end = Date.parse(to + 'T00:00:00Z');
+  while (cur <= end) {
+    out.push(new Date(cur).toISOString().slice(0, 10));
+    cur += 86400000;
+    if (out.length > 400) break; // 想定外の入力で無限ループしないための保険
+  }
+  return out;
+}
+
+// 相関・単回帰の積算器。行そのものは保持せず合計だけを持ち回る（メモリ節約）
+function newCalibAcc() {
+  return {
+    n: 0, sx: 0, sy: 0, sxx: 0, syy: 0, sxy: 0,
+    dirN: 0, dirHit: 0, // 買い比率50超の行数と、そのうち gapPct>0 だった行数
+    rankSum: 0, rankWeight: 0, // 日内順位相関の行数重み付き合計
+  };
+}
+
+function calibAccAdd(acc, x, y) {
+  acc.n++;
+  acc.sx += x; acc.sy += y;
+  acc.sxx += x * x; acc.syy += y * y; acc.sxy += x * y;
+  if (x > 50) { acc.dirN++; if (y > 0) acc.dirHit++; }
+}
+
+// ピアソンの相関係数。件数2未満・分散0のときは例外を投げず null を返す
+function pearsonFromSums(n, sx, sy, sxx, syy, sxy) {
+  if (n < 2) return null;
+  var vx = sxx - sx * sx / n;
+  var vy = syy - sy * sy / n;
+  if (!(vx > 0) || !(vy > 0)) return null;
+  var d = Math.sqrt(vx * vy);
+  if (!(d > 0)) return null;
+  return (sxy - sx * sy / n) / d;
+}
+
+// 配列2本から相関係数を出す（日内順位相関・日別相関で使う）
+function pearsonOf(xs, ys) {
+  var n = xs.length;
+  var sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+  for (var i = 0; i < n; i++) {
+    sx += xs[i]; sy += ys[i];
+    sxx += xs[i] * xs[i]; syy += ys[i] * ys[i]; sxy += xs[i] * ys[i];
+  }
+  return pearsonFromSums(n, sx, sy, sxx, syy, sxy);
+}
+
+// 昇順の順位（1始まり）に直す。同値には平均順位を与える
+function rankArray(values) {
+  var idx = values.map(function (v, i) { return i; });
+  idx.sort(function (a, b) { return values[a] - values[b]; });
+  var ranks = new Array(values.length);
+  var i = 0;
+  while (i < idx.length) {
+    var j = i;
+    while (j + 1 < idx.length && values[idx[j + 1]] === values[idx[i]]) j++;
+    var avg = (i + j) / 2 + 1; // 同値の平均順位
+    for (var k = i; k <= j; k++) ranks[idx[k]] = avg;
+    i = j + 1;
+  }
+  return ranks;
+}
+
+async function handlePremarketCalib(req, res) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
+  var from = req.query.from;
+  var to = req.query.to;
+  // Redisを触る前に入力を弾く（範囲が広いほど展開コストが跳ね上がるため）
+  if (!from || !to) return res.status(400).json({ error: 'from and to required' });
+  if (!isDateString(from) || !isDateString(to)) return res.status(400).json({ error: 'invalid date' });
+  if (from > to) return res.status(400).json({ error: 'from must not be after to' });
+  var dates = calibDateRange(from, to);
+  if (dates.length > CALIB_MAX_DAYS) return res.status(400).json({ error: 'range too wide (max 10 days)' });
+
+  try {
+    var accs = {};
+    CALIB_VARIANTS.forEach(function (v) { accs[v] = newCalibAcc(); });
+    var daily = []; // どの日が外れ値かを目視するための日別内訳
+    var used = []; // 実際に読めた日付
+    var totalRows = 0, noGap = 0, noRatio = 0;
+
+    for (var di = 0; di < dates.length; di++) {
+      var d = dates[di];
+      var parsed = unpackFromRedis(await redis.get(PREMARKET_LOG_PREFIX + d));
+      if (!Array.isArray(parsed)) continue; // 未保存の日付はスキップ（エラーにしない）
+      var rows = summarizePremarketDate(d, parsed);
+      parsed = null; // 生ログはここで捨てる（全日分を同時にメモリへ載せない）
+      used.push(d);
+      totalRows += rows.length;
+
+      rows.forEach(function (row) {
+        // 除外理由は独立に数える（両方nullの行は両方に計上される）
+        if (row.gapPct == null) noGap++;
+        // 買い比率5変種は validCount=0 のとき同時にnullになるため avg で代表させる
+        if (row.buyRatioAvg == null) noRatio++;
+      });
+
+      CALIB_VARIANTS.forEach(function (v) {
+        var key = buyRatioKey(v);
+        var acc = accs[v];
+        var xs = [], ys = [];
+        rows.forEach(function (row) {
+          var ratio = row[key];
+          if (ratio == null || row.gapPct == null) return; // どちらか欠けた行は対象外
+          calibAccAdd(acc, ratio, row.gapPct);
+          xs.push(ratio); ys.push(row.gapPct);
+        });
+        // 日内順位相関: 各日の中だけで順位に直す（日をまたいで順位を混ぜない）
+        if (xs.length >= 2) {
+          var rr = pearsonOf(rankArray(xs), rankArray(ys));
+          if (rr != null) { acc.rankSum += rr * xs.length; acc.rankWeight += xs.length; }
+        }
+        if (v === 'avg') {
+          var sumX = 0, sumY = 0;
+          for (var i = 0; i < xs.length; i++) { sumX += xs[i]; sumY += ys[i]; }
+          daily.push({
+            date: d,
+            n: xs.length,
+            buyRatioAvgMean: xs.length ? round3(sumX / xs.length) : null,
+            gapPctMean: xs.length ? round3(sumY / xs.length) : null,
+            r: r3(pearsonOf(xs, ys)),
+          });
+        }
+      });
+      rows = null; // 明細もここで捨てる
+    }
+
+    var ratios = {};
+    CALIB_VARIANTS.forEach(function (v) {
+      var a = accs[v];
+      // gapPct = slope × (買い比率 − 50) + intercept
+      // 傾きは平行移動で変わらないので、切片だけ50中心にずらして求める
+      var slope = null, intercept = null;
+      if (a.n >= 2) {
+        var vx = a.sxx - a.sx * a.sx / a.n;
+        if (vx > 0) {
+          slope = (a.sxy - a.sx * a.sy / a.n) / vx;
+          intercept = a.sy / a.n - slope * (a.sx / a.n - 50);
+        }
+      }
+      ratios[v] = {
+        n: a.n,
+        r: r3(pearsonFromSums(a.n, a.sx, a.sy, a.sxx, a.syy, a.sxy)),
+        rRank: a.rankWeight > 0 ? round3(a.rankSum / a.rankWeight) : null,
+        slope: r3(slope),
+        intercept: r3(intercept),
+        dirRate: a.dirN > 0 ? round3(a.dirHit / a.dirN) : null,
+      };
+    });
+
+    return res.status(200).json({
+      mode: 'calib',
+      from: from,
+      to: to,
+      dates: used,
+      ratios: ratios,
+      daily: daily,
+      excluded: { noGap: noGap, noRatio: noRatio, totalRows: totalRows },
+    });
+  } catch (e) {
+    return res.status(500).json({ error: 'load failed: ' + e.message });
+  }
+}
+
 // ── サーバー側スキャン（Phase 2）の窓口 ──────────────────────────────────
 // 実処理は api/_scan.js。ここは受け口だけ。立花中継と同じく、Vercel Hobbyの
 // 関数12個制限を消費しないよう sync.js に相乗りさせている。
@@ -415,7 +602,11 @@ export default async function handler(req, res) {
   if (resource === 'tachibana-watch') return handleTachibanaWatch(req, res);
   if (resource === 'tachibana-quote') return handleTachibanaQuote(req, res);
   if (resource === 'premarket-log') return handlePremarketLog(req, res);
-  if (resource === 'premarket-summary') return handlePremarketSummary(req, res);
+  // mode=calib のときだけ較正モードへ回す。それ以外は従来どおり date 指定の1日分明細
+  if (resource === 'premarket-summary') {
+    if (req.query.mode === 'calib') return handlePremarketCalib(req, res);
+    return handlePremarketSummary(req, res);
+  }
   if (resource === 'scan-universe') return handleScanUniverse(req, res);
   if (resource === 'scan-run') return handleScanRun(req, res);
   if (resource === 'scan-result') return handleScanResult(req, res);
