@@ -5787,10 +5787,27 @@ var PM_CONF_R2_BASE=0.3;             // ベータの当てはまり(r²)がこ�
 var PM_CONF_R2_GAIN=20;              // r²がPM_CONF_R2_BASEから1離れるごとの増減点
 var PM_CONF_MIN=5,PM_CONF_MAX=95;    // 確信度の下限・上限(%)
 var PM_DIR_DEADBAND=0.05;            // 予想ギャップがこの幅未満なら方向判定の対象外にする(%)
-var PM_HIST_MAX=90;                  // pm_<ticker> に残す件数
-                                     // ※「件数」の上限なので、srcが2種類（beta/quote）になると
-                                     // 　保持できる日数は実質半分（45営業日）になる。
-                                     // 　Phase 2でquoteを併走させる時点で引き上げを検討すること
+var PM_HIST_MAX=180;                 // pm_<ticker> に残す件数
+                                     // ※「件数」の上限。srcがbeta/quoteの2種になり1日2件消費するため、
+                                     // 　180件で従来どおり約90営業日ぶんを保持できる（90件のままなら45営業日に半減する）
+// ── 寄り前気配ベースの予想（src="quote"）で使う定数 ────────────────────
+// 段Aの実測（4営業日・457件）で得た、買い比率（買気配数量 ÷ (売気配+買気配) の%）と
+// 実際の寄り付きギャップ%の関係。ベータ推定とは別srcとして並走させる
+var PM_Q_SRC="quote";                // 予想の出どころ名（pm_<ticker> の src に入る）
+var PM_Q_SLOPE=0.058;                // 買い比率1ptあたりの予想ギャップ%（段Aの実測）
+var PM_Q_INTERCEPT=-0.105;           // 買い比率50%（売り買い拮抗）のときの予想ギャップ%（段Aの実測）
+var PM_Q_EXP_LIMIT=3;                // 予想ギャップの絶対値の上限%（買い一色などで値が暴走しないように）
+var PM_Q_START_MIN=8*60+45;          // 気配データの収集開始時刻（8:45 JST。これより前は気配が無い）
+var PM_Q_MIN_TICKS=5;                // その朝の有効観測回数がこれ未満なら予想を出さない
+var PM_Q_CONF_BASE=45;               // 確信度の基準値(%)
+var PM_Q_CONF_ONESIDE=12;            // 買い比率が片側に偏り続けた場合の加点
+var PM_Q_CONF_RANGE_PENALTY=15;      // 買い比率の振れ幅100ptあたりの減点（迷っている銘柄は下げる）
+var PM_Q_CONF_MIN=25;                // 確信度の下限(%)
+var PM_Q_CONF_MAX=60;                // 確信度の上限(%)。根拠が4営業日457件しかないため控えめに置く
+var PM_QSUM_TTL=60*1000;             // 気配サマリーの端末側キャッシュ(60秒)
+// SYNC_API はAppコンポーネント内のローカル変数でモジュール直下からは参照できないため、
+// 既存の TACHIBANA_WATCH_API 等と同じ書き方でURLを持つ
+var PM_QSUM_API="https://daytrade-simulator.vercel.app/api/sync?resource=premarket-summary";
 var PM_STATS_TTL=15*60*1000;         // 的中率集計のキャッシュ(15分)
 var PM_OPEN_MIN=9*60;                // 9:00 JST（これ以降は「答え合わせ」表示に自動で切り替える）
 var PM_BIAS_TTL=3*60*1000;           // 地合いの端末側キャッシュ(3分・サーバー側と同じ長さ)
@@ -5970,7 +5987,7 @@ function pmLoadHist(t){
 }
 function pmSaveHist(t,list){
   try{
-    localStorage.setItem(pmHistKey(t),JSON.stringify(list.slice(-PM_HIST_MAX))); // 直近90件だけ残す
+    localStorage.setItem(pmHistKey(t),JSON.stringify(list.slice(-PM_HIST_MAX))); // 直近 PM_HIST_MAX 件だけ残す
     PM_STATS_CACHE=null;                                                          // 集計キャッシュを捨てる
   }catch(e){}
 }
@@ -6147,6 +6164,84 @@ async function pmMapLimit(items,limit,worker){
   return out;
 }
 
+// ── (d) 寄り前気配ベースの予想（src="quote"）──────────────────────────
+// 予想を作れる時間帯かどうか。8:45〜9:00 JSTの間だけtrue。
+// 気配データは8:45以降にしか貯まらず、9:00を過ぎると pmTargetDate() が翌営業日に
+// 変わってしまい、その日の予想として記録できなくなるため、両側で閉じている
+function pmQuoteWindowOpen(){
+  var m=pmNowJstMin();
+  return m>=PM_Q_START_MIN&&m<PM_OPEN_MIN;
+}
+
+// その日の寄り前気配サマリー（銘柄コード → 集計1行）を取ってくる。
+// 取れなくてもベータ推定は動き続ける必要があるため、失敗時は例外を投げずnullを返す
+var PM_QSUM_CACHE=null,PM_QSUM_TS=0,PM_QSUM_DATE="";
+async function pmFetchQuoteSummary(force){
+  if(!pmQuoteWindowOpen())return null;                      // 時間外は通信しない
+  var date=pmTargetDate(),now=Date.now();
+  if(!force&&PM_QSUM_CACHE&&PM_QSUM_DATE===date&&now-PM_QSUM_TS<PM_QSUM_TTL)return PM_QSUM_CACHE;
+  try{
+    var url=PM_QSUM_API+"&date="+encodeURIComponent(date);
+    var res=await fetch(url,{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    if(!res.ok)throw new Error("premarket-summary "+res.status);
+    var json=await res.json();
+    if(!json||!Array.isArray(json.rows))throw new Error("bad summary");
+    var map={};
+    for(var i=0;i<json.rows.length;i++){
+      var r=json.rows[i];
+      if(!r||r.code==null)continue;
+      map[String(r.code)]=r;
+    }
+    PM_QSUM_CACHE=map;PM_QSUM_TS=now;PM_QSUM_DATE=date;
+    return map;
+  }catch(e){return null;}
+}
+
+// 気配サマリー1行から予想ギャップ%と確信度を出す。
+// 戻り値: { expectedGapPct, confidence, reasons[], ... } / 判断材料が足りなければnull
+function pmPredictGapByQuote(row){
+  if(!row||row.buyRatioLast==null)return null;
+  if(!(row.validCount>=PM_Q_MIN_TICKS))return null;         // 観測が少なすぎる朝は出さない
+
+  var last=row.buyRatioLast,lo=row.buyRatioMin,hi=row.buyRatioMax;
+  // 予想ギャップ ＝ 傾き×(買い比率-50) ＋ 切片。上限で丸めて暴走を止める
+  var exp=PM_Q_SLOPE*(last-50)+PM_Q_INTERCEPT;
+  if(exp>PM_Q_EXP_LIMIT)exp=PM_Q_EXP_LIMIT;
+  if(exp<-PM_Q_EXP_LIMIT)exp=-PM_Q_EXP_LIMIT;
+  exp=Math.round(exp*100)/100;
+
+  // 確信度：朝じゅう片側に張り付いていた銘柄は上げ、行ったり来たりした銘柄は下げる
+  var conf=PM_Q_CONF_BASE;
+  if(exp>0&&lo!=null&&lo>=50)conf+=PM_Q_CONF_ONESIDE;
+  if(exp<0&&hi!=null&&hi<=50)conf+=PM_Q_CONF_ONESIDE;
+  if(lo!=null&&hi!=null)conf-=(hi-lo)/100*PM_Q_CONF_RANGE_PENALTY;
+  conf=Math.max(PM_Q_CONF_MIN,Math.min(PM_Q_CONF_MAX,Math.round(conf)));
+
+  // 段Dの表示で使う説明。今回は画面に出さないが、形式は既存のpmPredictGapに揃える
+  var reasons=[];
+  reasons.push({
+    label:"買い比率",
+    val:last.toFixed(1)+"%（最小"+(lo==null?"-":lo.toFixed(1))+"% / 最大"+(hi==null?"-":hi.toFixed(1))+"%）",
+    state:last>50?1:(last<50?-1:0)
+  });
+  reasons.push({
+    label:"観測回数",
+    val:row.validCount+"回",
+    state:0
+  });
+
+  return {
+    expectedGapPct:exp,
+    confidence:conf,
+    reasons:reasons,
+    buyRatioLast:last,
+    buyRatioMin:lo==null?null:lo,
+    buyRatioMax:hi==null?null:hi,
+    validCount:row.validCount,
+    prevClose:row.prevClose==null?null:row.prevClose
+  };
+}
+
 // お気に入り日本株ぶんの予想をまとめて作り、予想内容をlocalStorageに記録する
 async function pmBuildPredictions(favTickers,force){
   var tickers=(favTickers||[]).filter(pmIsJP);
@@ -6154,12 +6249,21 @@ async function pmBuildPredictions(favTickers,force){
   var market=await pmFetchMarketBias(force);
   var bias=market?market.marketBias:null;
   var benchDaily=await fetchDaily(PM_BENCH_TICKER); // ベータの基準となるTOPIX連動ETFの日足
+  // 対象銘柄が0件のときは無駄な通信になるので気配サマリーを取りに行かない
+  var qsum=tickers.length?await pmFetchQuoteSummary(force):null;
 
   var rows=await pmMapLimit(tickers,PM_FETCH_CONCURRENCY,async function(ticker){
     var daily=await fetchDaily(ticker);
     var pred=pmPredictGap(ticker,daily,benchDaily,bias,targetDate);
     if(pred)pmRecordPrediction(ticker,targetDate,pred.expectedGapPct,pred.confidence,pred.prevClose,PM_SRC_BETA);
-    return {ticker:ticker,name:jpNameOf(ticker,ticker.replace(".T","")),pred:pred};
+    // 気配ベースの予想はベータ推定とは別srcとして並走して記録する（並び順は従来どおりpred基準）
+    var quotePred=null;
+    if(qsum){
+      var qrow=qsum[ticker.replace(".T","")];
+      quotePred=pmPredictGapByQuote(qrow);
+      if(quotePred)pmRecordPrediction(ticker,targetDate,quotePred.expectedGapPct,quotePred.confidence,quotePred.prevClose,PM_Q_SRC);
+    }
+    return {ticker:ticker,name:jpNameOf(ticker,ticker.replace(".T","")),pred:pred,quotePred:quotePred};
   });
 
   // 予想ギャップ%の降順（計算できなかった銘柄は末尾へ）
