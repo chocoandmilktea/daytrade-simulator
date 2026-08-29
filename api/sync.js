@@ -515,6 +515,112 @@ async function handlePremarketCalib(req, res) {
   }
 }
 
+// ── 寄り前気配の収集カバレッジ（mode=coverage・読み取り専用） ──────────────
+// 「収集対象だったのに集計に1行も現れなかった銘柄」「始値が取れなかった銘柄」
+// 「買い比率が取れなかった銘柄」をコード一覧で返す調査用モード。
+// 寄り予想をサーバー側へ移すにあたり、答え合わせに使う始値をいつ取るべきかを
+// 判断するための材料であって、アプリからは呼ばない。
+// 行の作成は summarizePremarketDate をそのまま使う（欠測の判定基準をここで
+// 書き直すと mode未指定の明細と食い違うため）。
+// 対象は単一日のみ。保存・TTL延長は一切しない（redis.get のみ）。
+
+var COVERAGE_MAX_CODES = 200; // 1リストあたりの表示上限。超えた分は切って truncated を立てる
+
+// 立花の戻り値（sIssueCode）とセッションの codes を突き合わせるための正規化。
+// 278A のような英字入りコードで大文字小文字が食い違ったときに
+// 別銘柄として数えてしまわないよう、大文字に寄せてから比較する
+function normalizeCoverageCode(v) {
+  return String(v == null ? '' : v).trim().toUpperCase();
+}
+
+// コード一覧を昇順に並べ、上限で切って { count, truncated, codes } に整える。
+// count は切る前の実件数（切り捨てで総数が分からなくなると調査に使えないため）
+function coverageList(codes) {
+  var sorted = codes.slice().sort();
+  return {
+    count: sorted.length,
+    truncated: sorted.length > COVERAGE_MAX_CODES,
+    codes: sorted.slice(0, COVERAGE_MAX_CODES),
+  };
+}
+
+async function handlePremarketCoverage(req, res) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
+  var date = req.query.date;
+  // Redisを触る前に入力を弾く（生ログは1日ぶんでも展開後は数MBあるため）
+  if (!date) return res.status(400).json({ error: 'date required' });
+  if (!isDateString(date)) return res.status(400).json({ error: 'invalid date' });
+
+  try {
+    var parsed = unpackFromRedis(await redis.get(PREMARKET_LOG_PREFIX + date));
+    // 未保存の日付はエラーにせず found:false で返す（休日・収集前を区別するため）
+    if (!Array.isArray(parsed)) {
+      return res.status(200).json({
+        mode: 'coverage',
+        date: date,
+        found: false,
+        sessionCount: 0,
+        sessionsWithCodes: 0,
+        target: coverageList([]),
+        missing: coverageList([]),
+        noOpen: coverageList([]),
+        noBuyRatio: coverageList([]),
+        appearedCount: 0,
+      });
+    }
+
+    // 収集対象はセッションの codes フィールドから取る。同じ日に複数セッションが
+    // 貯まっている場合は和集合にする（途中で対象銘柄が入れ替わっても取りこぼさない）
+    var targetSeen = {};
+    var sessionsWithCodes = 0;
+    parsed.forEach(function (session) {
+      if (!session || !Array.isArray(session.codes)) return; // codes を持たない古い形式は無視
+      sessionsWithCodes++;
+      session.codes.forEach(function (c) {
+        var code = normalizeCoverageCode(c);
+        if (code) targetSeen[code] = true;
+      });
+    });
+    var sessionCount = parsed.length;
+
+    var rows = summarizePremarketDate(date, parsed);
+    parsed = null; // 生ログはここで捨てる（明細と同時にメモリへ載せない）
+
+    var appeared = {};
+    var noOpen = [];
+    var noBuyRatio = [];
+    rows.forEach(function (row) {
+      var code = normalizeCoverageCode(row.code);
+      if (!code) return;
+      appeared[code] = true;
+      // 始値: 収集中ずっと空文字だった銘柄は open が null のまま残る
+      if (row.open == null) noOpen.push(code);
+      // 買い比率: 売気配・買気配の数量が最後まで揃わないと5変種すべて null になるため avg で代表させる
+      if (row.buyRatioAvg == null) noBuyRatio.push(code);
+    });
+    rows = null;
+
+    // 集計に1行も現れなかった＝raw の中に一度も sIssueCode が出てこなかった銘柄。
+    // 始値・買い比率の欠測は「現れた銘柄の中での欠測」なので、この一覧とは重複しない
+    var missing = Object.keys(targetSeen).filter(function (code) { return !appeared[code]; });
+
+    return res.status(200).json({
+      mode: 'coverage',
+      date: date,
+      found: true,
+      sessionCount: sessionCount, // その日に貯まっているセッション数
+      sessionsWithCodes: sessionsWithCodes, // うち codes を持っていたセッション数
+      target: coverageList(Object.keys(targetSeen)),
+      missing: coverageList(missing),
+      noOpen: coverageList(noOpen),
+      noBuyRatio: coverageList(noBuyRatio),
+      appearedCount: Object.keys(appeared).length,
+    });
+  } catch (e) {
+    return res.status(500).json({ error: 'load failed: ' + e.message });
+  }
+}
+
 // ── サーバー側スキャン（Phase 2）の窓口 ──────────────────────────────────
 // 実処理は api/_scan.js。ここは受け口だけ。立花中継と同じく、Vercel Hobbyの
 // 関数12個制限を消費しないよう sync.js に相乗りさせている。
@@ -602,9 +708,10 @@ export default async function handler(req, res) {
   if (resource === 'tachibana-watch') return handleTachibanaWatch(req, res);
   if (resource === 'tachibana-quote') return handleTachibanaQuote(req, res);
   if (resource === 'premarket-log') return handlePremarketLog(req, res);
-  // mode=calib のときだけ較正モードへ回す。それ以外は従来どおり date 指定の1日分明細
+  // mode=calib / mode=coverage のときだけ専用モードへ回す。それ以外は従来どおり date 指定の1日分明細
   if (resource === 'premarket-summary') {
     if (req.query.mode === 'calib') return handlePremarketCalib(req, res);
+    if (req.query.mode === 'coverage') return handlePremarketCoverage(req, res);
     return handlePremarketSummary(req, res);
   }
   if (resource === 'scan-universe') return handleScanUniverse(req, res);
