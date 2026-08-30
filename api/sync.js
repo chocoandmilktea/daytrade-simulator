@@ -621,6 +621,161 @@ async function handlePremarketCoverage(req, res) {
   }
 }
 
+// ── 寄り前気配ベースの予想（premarket-prediction） ──────────────────────
+// これまで src/App.js（ブラウザ）でしか作れなかった src="quote" の予想を、
+// サーバー側でも作れるようにするための受け口。8:45〜9:06 に端末でタブを開いて
+// いなくても予想と答え合わせが残るようにするのが目的。
+// 行の作成は summarizePremarketDate をそのまま使う（買い比率・gapPct の算出を
+// ここで書き直すと mode=calib・mode=coverage の数字と食い違うため）。
+// 生ログ premarket:log:<日付> は redis.get で読むだけ。書き込み・TTL延長はしない。
+var PREMARKET_PRED_PREFIX = 'premarket:pred:';
+var PREMARKET_PRED_TTL = 60 * 60 * 24 * 30; // 30日（秒）。生ログと同じ長さに揃える
+
+// 較正係数（買い比率 → 予想ギャップ の変換係数）は運用しながら調整するため
+// 環境変数から読む。未設定・数値化できない値は src/App.js と同じ既定値に落とす
+function envNum(name, fallback) {
+  var n = toNum(process.env[name]);
+  return n == null ? fallback : n;
+}
+
+// 以下の定数名・値は src/App.js の同名の定数と一致させている。
+// 移植元を変更したときは必ず両方を直すこと（片方だけだと予想が食い違う）
+var PM_Q_SRC = 'quote';                             // 予想の出どころ名
+var PM_Q_SLOPE = envNum('PM_Q_SLOPE', 0.058);       // 買い比率1ptあたりの予想ギャップ%
+var PM_Q_INTERCEPT = envNum('PM_Q_INTERCEPT', -0.105); // 買い比率50%（拮抗）のときの予想ギャップ%
+var PM_Q_EXP_LIMIT = 3;              // 予想ギャップの絶対値の上限%（買い一色などで暴走させない）
+var PM_Q_MIN_TICKS = 5;              // その朝の有効観測回数がこれ未満なら予想を出さない
+var PM_Q_CONF_BASE = 45;             // 確信度の基準値(%)
+var PM_Q_CONF_ONESIDE = 12;          // 買い比率が片側に偏り続けた場合の加点
+var PM_Q_CONF_RANGE_PENALTY = 15;    // 買い比率の振れ幅100ptあたりの減点
+var PM_Q_CONF_MIN = 25;              // 確信度の下限(%)
+var PM_Q_CONF_MAX = 60;              // 確信度の上限(%)
+
+// 気配サマリー1行から予想ギャップ%と確信度を出す。
+// src/App.js の pmPredictGapByQuote をそのまま移植したもので、計算内容は同一。
+// 戻り値: { expectedGapPct, confidence, reasons[], ... } / 判断材料が足りなければ null
+function predictGapByQuote(row) {
+  if (!row || row.buyRatioLast == null) return null;
+  if (!(row.validCount >= PM_Q_MIN_TICKS)) return null; // 観測が少なすぎる朝は出さない
+
+  var last = row.buyRatioLast, lo = row.buyRatioMin, hi = row.buyRatioMax;
+  // 予想ギャップ ＝ 傾き×(買い比率-50) ＋ 切片。上限で丸めて暴走を止める
+  var exp = PM_Q_SLOPE * (last - 50) + PM_Q_INTERCEPT;
+  if (exp > PM_Q_EXP_LIMIT) exp = PM_Q_EXP_LIMIT;
+  if (exp < -PM_Q_EXP_LIMIT) exp = -PM_Q_EXP_LIMIT;
+  exp = Math.round(exp * 100) / 100;
+
+  // 確信度：朝じゅう片側に張り付いていた銘柄は上げ、行ったり来たりした銘柄は下げる
+  var conf = PM_Q_CONF_BASE;
+  if (exp > 0 && lo != null && lo >= 50) conf += PM_Q_CONF_ONESIDE;
+  if (exp < 0 && hi != null && hi <= 50) conf += PM_Q_CONF_ONESIDE;
+  if (lo != null && hi != null) conf -= (hi - lo) / 100 * PM_Q_CONF_RANGE_PENALTY;
+  conf = Math.max(PM_Q_CONF_MIN, Math.min(PM_Q_CONF_MAX, Math.round(conf)));
+
+  // 説明用。保存はしないが、移植元と同じ出力になることを保つためそのまま残す
+  var reasons = [];
+  reasons.push({
+    label: '買い比率',
+    val: last.toFixed(1) + '%（最小' + (lo == null ? '-' : lo.toFixed(1)) + '% / 最大' + (hi == null ? '-' : hi.toFixed(1)) + '%）',
+    state: last > 50 ? 1 : (last < 50 ? -1 : 0)
+  });
+  reasons.push({
+    label: '観測回数',
+    val: row.validCount + '回',
+    state: 0
+  });
+
+  return {
+    expectedGapPct: exp,
+    confidence: conf,
+    reasons: reasons,
+    buyRatioLast: last,
+    buyRatioMin: lo == null ? null : lo,
+    buyRatioMax: hi == null ? null : hi,
+    validCount: row.validCount,
+    prevClose: row.prevClose == null ? null : row.prevClose
+  };
+}
+
+async function handlePremarketPrediction(req, res) {
+  // POST: 指定日の生ログから予想を作って保存する（Railway から叩かれる想定）。
+  // 外部から自由に実行されると保存済みの予想を壊せてしまうため、
+  // 立花中継・scan-run と同じ X-Relay-Secret による認証を必須にする
+  if (req.method === 'POST') {
+    if (!isAuthed(req)) return res.status(401).json({ error: 'unauthorized' });
+    try {
+      var body = readBody(req);
+      // クエリ優先、無ければボディ、どちらも無ければサーバー側のJST当日
+      var date = req.query.date || body.date;
+      if (date == null || date === '') date = jstDateString();
+      if (!isDateString(date)) return res.status(400).json({ error: 'invalid date' });
+
+      var parsed = unpackFromRedis(await redis.get(PREMARKET_LOG_PREFIX + date));
+      var rows = Array.isArray(parsed) ? summarizePremarketDate(date, parsed) : [];
+      parsed = null; // 生ログはここで捨てる（予想と同時にメモリへ載せない）
+
+      var preds = {};
+      var count = 0;
+      var skipped = 0;
+      rows.forEach(function (row) {
+        var pred = predictGapByQuote(row);
+        // 買い比率が取れなかった銘柄・有効観測回数が5回未満の銘柄はどちらも
+        // predictGapByQuote が null を返すため、まとめて skipped に数える
+        if (!pred) { skipped++; return; }
+        preds[row.code] = {
+          expectedGapPct: pred.expectedGapPct,   // 予想ギャップ%
+          confidence: pred.confidence,           // 確信度%
+          buyRatioLast: pred.buyRatioLast,       // 予想に使った買い比率
+          buyRatioMin: pred.buyRatioMin,         // 確信度の加減点の根拠
+          buyRatioMax: pred.buyRatioMax,
+          validCount: pred.validCount,           // その朝の有効観測回数
+          // 実測ギャップは summarizePremarketDate が当日始値と前日終値から
+          // 算出済みの gapPct をそのまま使う（ここで計算し直すと明細と食い違う）。
+          // 始値が取れなかった銘柄は null になり、予想だけが残る
+          actualGapPct: row.gapPct == null ? null : row.gapPct,
+          prevClose: row.prevClose == null ? null : row.prevClose,
+          open: row.open == null ? null : row.open,
+          src: PM_Q_SRC
+        };
+        count++;
+      });
+
+      // 生ログが無い日に空の辞書で上書きすると、過去に保存した予想を消してしまう。
+      // 1銘柄も作れなかった場合は保存せずに件数だけ返す
+      if (count > 0) {
+        // 日付ごとに1キー。銘柄ごとに分けると1日158回の書き込みになる
+        await redis.set(PREMARKET_PRED_PREFIX + date, packForRedis(preds), { ex: PREMARKET_PRED_TTL });
+      }
+      return res.status(200).json({ ok: true, date: date, count: count, skipped: skipped });
+    } catch (e) {
+      return res.status(500).json({ error: 'save failed: ' + e.message });
+    }
+  }
+
+  // GET: 保存済みの予想を返すだけの読み取り専用（無認証。premarket-summary と同じ扱い）。
+  // 保存もTTLの延長も一切しない
+  if (req.method === 'GET') {
+    // date未指定だと保存済みの全日分を展開することになるため、Redisを触る前に弾く
+    if (!req.query.date) return res.status(400).json({ error: 'date required' });
+    try {
+      var target = req.query.date;
+      if (!isDateString(target)) return res.status(400).json({ error: 'invalid date' });
+      var stored = unpackFromRedis(await redis.get(PREMARKET_PRED_PREFIX + target));
+      if (!stored || typeof stored !== 'object') return res.status(200).json({ found: false, date: target });
+      return res.status(200).json({
+        found: true,
+        date: target,
+        count: Object.keys(stored).length,
+        predictions: stored,
+      });
+    } catch (e) {
+      return res.status(500).json({ error: 'load failed: ' + e.message });
+    }
+  }
+
+  return res.status(405).json({ error: 'method not allowed' });
+}
+
 // ── サーバー側スキャン（Phase 2）の窓口 ──────────────────────────────────
 // 実処理は api/_scan.js。ここは受け口だけ。立花中継と同じく、Vercel Hobbyの
 // 関数12個制限を消費しないよう sync.js に相乗りさせている。
@@ -714,6 +869,7 @@ export default async function handler(req, res) {
     if (req.query.mode === 'coverage') return handlePremarketCoverage(req, res);
     return handlePremarketSummary(req, res);
   }
+  if (resource === 'premarket-prediction') return handlePremarketPrediction(req, res);
   if (resource === 'scan-universe') return handleScanUniverse(req, res);
   if (resource === 'scan-run') return handleScanRun(req, res);
   if (resource === 'scan-result') return handleScanResult(req, res);
