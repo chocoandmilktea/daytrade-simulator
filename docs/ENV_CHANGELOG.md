@@ -52,6 +52,7 @@
 | 2026-08-30 | deploy | tachibana-server | 上記マージに伴うコンテナ全体の自動再デプロイ。土曜のため安全帯の制約なし（メンテ帯 3:00〜8:30 のみ回避）。起動ログで「分割 80件」と起動時 `[err]` 0件を確認 | 無 |
 | 2026-08-30 | merge | daytrade-simulator | PR#56 寄り前の気配ベース予想（src="quote"）の生成と答え合わせをサーバー側へ移行。api/sync.js に resource `premarket-prediction` を新設（POST=認証必須で生成・保存、GET=無認証の読み取り専用）。保存先は `premarket:pred:<日付>`・30日。較正係数 `PM_Q_SLOPE`（既定 0.058）・`PM_Q_INTERCEPT`（既定 -0.105）を新設。既定値は src/App.js の直書き値と同値のため Vercel 側の設定は不要 | 有 |
 | 2026-08-30 | merge | tachibana-server | PR#20 寄り前収集の終了後に予想生成を自動呼び出し。生ログ保存成功時のみ `POST /api/sync?resource=premarket-prediction&date=<当日>` を1回叩く（タイムアウト30秒・リトライなし）。失敗時は `[warn]` 1行のみで収集の成否に影響させず、`errorCount`・`tickErrorCount` にも加算しない。予想の計算は Vercel 側（PR#56）にあり本変更では行わない | 無 |
+| 2026-08-30 | deploy | tachibana-server | 上記マージに伴うコンテナ全体の自動再デプロイ。日曜のため安全帯の制約なし（メンテ帯 3:00〜8:30 のみ回避）。起動ログで「分割 80件」と起動時 `[err]` 0件を確認 | 無 |
 
 ## 2026-08-24（月）— `PREMARKET_MAX=100` 実測判定：通過
 
