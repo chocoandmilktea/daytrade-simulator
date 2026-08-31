@@ -44,7 +44,7 @@
 - `api/daily.js` … ミニチャート用の日足（直近3ヶ月・Yahoo）
 - `api/intraday.js` … 当日1分足（Yahoo）。銘柄選択時のみ呼ばれ、スキャン時は呼ばれない
 - `api/premarket.js` … 「今朝の地合い」を1レスポンスで返す。日経225先物・SOX・S&P500・NASDAQ・ドル円・VIX・NYダウの前日比をYahooから集め、加重平均して寄り付きの想定ギャップ `marketBias` を出す。`codes` 指定時のみ立花の `/market-price`（寄り前気配）も中継する
-- `api/sync.js` … 同期・中継の総合窓口。`resource` パラメータで7種に分岐（詳細は後述）。TTL は用途ごとに5種類あるため、単一の値では表せない
+- `api/sync.js` … 同期・中継の総合窓口。`resource` パラメータで8種に分岐（詳細は後述）。TTL は用途ごとに5種類あるため、単一の値では表せない
 - `api/ai.js` … Anthropic APIプロキシ（system prompt・web_search対応）
 - `api/news.js` … TDnet（適時開示）とYahooファイナンスの見出しを取得し、Anthropic APIで5カテゴリに要約する。**Web検索は使わず、取得した実データだけをAIに渡す**
 - `api/ipo.js` … 銘柄コード→会社名（立花・1時間キャッシュ）
@@ -162,6 +162,7 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 | `tachibana:quote:<ticker>` | 30秒 | 定数なし・直書き | `api/sync.js` |
 | `tachibana:quote:last:<ticker>` | 3日 | `QUOTE_SNAPSHOT_TTL` | `api/sync.js` |
 | `premarket:log:<YYYY-MM-DD>` | 30日 | `PREMARKET_LOG_TTL` | `api/sync.js` |
+| `premarket:pred:<YYYY-MM-DD>` | 30日 | `PREMARKET_PRED_TTL` | `api/sync.js` |
 | `user:<userId>` | 90日 | `TTL` | `api/sync.js` |
 | `scan:universe` | 7日 | `UNIVERSE_TTL` | `api/_scan.js` |
 | `scan:universe:meta` | 7日 | `UNIVERSE_TTL` を流用（キー名は直書き） | `api/_scan.js` |
@@ -176,7 +177,7 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 
 - `api/sync.js` の `packForRedis()` は、渡されたオブジェクトを**閾値なしで常に** gzip 圧縮し、base64 化して先頭に `gz:` を付けて保存する。「サイズが一定を超えたら圧縮する」という実装ではない
 - 展開は `unpackFromRedis()`。`gz:` で始まれば展開し、そうでなければ素の JSON として `JSON.parse` するため、圧縮導入前の古いデータも読める
-- 実際に `gz:` 付きで保存されるのは `user:<userId>` と `premarket:log:<日付>` の2つだけ。`api/_scan.js` 側（`scan:universe` など）は `JSON.stringify` の素の文字列で保存しており圧縮していない
+- 実際に `gz:` 付きで保存されるのは `user:<userId>` と `premarket:log:<日付>` と `premarket:pred:<日付>` の3つだけ。`api/_scan.js` 側（`scan:universe` など）は `JSON.stringify` の素の文字列で保存しており圧縮していない
 - 圧縮の設計理由である「Redis の1リクエストあたり1MB」という制限は、コード上に数値としては存在しない（`api/sync.js` 冒頭のブロックコメントに文章として記載があるのみ）。サイズチェックの実装もない
 - 別物として、`tachibana-server/premarketLogger.js` の `POST_SIZE_LIMIT_KB=4500` は Vercel のリクエストボディ上限であり、Redis の制限ではない。混同しないこと
 
@@ -198,6 +199,7 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 | `tachibana-quote` | POST・GET | POST=立花のリアルタイム値をライブ用（30秒）とスナップショット用（3日）へ同時に書く（認証必須）。GET=ライブ値、無ければスナップショットを `stale:true` 付きで返す |
 | `premarket-log` | POST・GET | POST=`premarketLogger.js` から届く寄り前気配の生ログを追記（認証必須）。GET=その日の生ログ。`date=list` で保存済み日付一覧 |
 | `premarket-summary` | GET のみ | 寄り前ログを日付×銘柄で1行に集計して返す読み取り専用。保存もTTL延長もしない |
+| `premarket-prediction` | POST・GET | POST=その日の寄り前ログから気配ベースの寄り予想を生成して保存（認証必須）。`tachibana-server` の収集終了後に自動で1回叩かれる。生ログが1件も無い日は保存せず件数だけ返す。GET=保存済みの予想を返す読み取り専用（無認証・`date` 必須） |
 | `scan-universe` | GET のみ | スキャン対象銘柄リストの現在値を返す。書き込み口は廃止済み（保存は `_scan.js` の `buildUniverse` がサーバー側で行う） |
 | `scan-run` | POST のみ | 定時スキャン1バッチの実行窓口。`_scan.js` を動的 import して `runScanBatch()` を呼ぶ（認証必須） |
 | `scan-result` | GET のみ | `date` 指定で全 slot の保存結果を `mget` してまとめて返す |
