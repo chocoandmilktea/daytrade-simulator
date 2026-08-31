@@ -39,7 +39,7 @@
 - `src/App.js` … フロント全体（React）。UI・状態管理・全API呼び出し・スキャンのキュー制御。**スコア計算の本体は `src/lib/analyze.js` に分離済み**
 - `src/lib/analyze.js` … スコア計算本体（約1050行）。`src/App.js` と `api/_scan.js` の両方が import する共有モジュール。変更するとフロント表示だけでなく自動スキャンの保存スコアも同時に変わる
 - `api/ranking.js` … 出来高／値上がりランキング生成（日本株のみ・立花）。米国株ランキング（Yahooのスクリーナー）は削除済み
-- `api/sector.js` … AI選定業種で絞ったランキング（`ranking.js` の関数を再利用）
+- `api/sector.js` … AI選定業種で絞ったランキング（`ranking.js` の関数を再利用）。キャッシュと分岐の扱いは「開発ルール・よくある落とし穴」の節を参照
 - `api/stock.js` … 個別銘柄の詳細（分足: Yahoo、財務指標/TOPIX: 立花）。内部は並列取得
 - `api/daily.js` … ミニチャート用の日足（直近3ヶ月・Yahoo）
 - `api/intraday.js` … 当日1分足（Yahoo）。銘柄選択時のみ呼ばれ、スキャン時は呼ばれない
@@ -150,6 +150,15 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 - `userId` はリクエストから受け取らず、環境変数 `SCAN_SYNC_USER_ID` で固定
 - 業種絞り込みは同期データの `lastSectors` を参照し、無い場合は `/api/ranking` にフォールバックする
 
+### 銘柄リストの組み立て
+
+- **組み立ての唯一の入口は `POST /api/sync?resource=scan-run` → `runScanBatch()` → `buildUniverse()` の経路だけ。** ほかに `scan:universe` を書く経路は存在しない
+- **フロントのスキャンボタンでは組み立ては走らない。** `src/App.js` の `buildStockUniverse()` はブラウザ内でランキングを組んで画面に出すだけで、`scan:universe` には保存しない（保存口を外部に晒さないため）
+- 組み立てが走るのは、`offset` が0で、**かつ組み立て済みマークの値が「今日の日付とスロットの組み合わせ」と一致しないとき**だけ。「マークが存在しないとき」ではない。マークが残っていても日付やスロットが変われば走る（スロットごとに最新のランキングで組み直すため）
+- **マークは組み立ての前に立てる。** 関数が時間切れで落ちても同一スロットで組み立てを繰り返さず、前回のリストでスキャンへ進めるようにするため
+- 組み立てを行った回はスキャンせず、処理件数0・次のオフセット0で即座に返す。呼び出し側はもう一度同じ `offset` で呼び直すことになる（組み立てとスキャンを1回に詰めると Vercel の10秒制限を超えるため）
+- `saveUniverse()` は `source` が `ranking` 以外のとき保存を拒否する。意図しない経路から銘柄リストが上書きされるのを防ぐため
+
 ## Redis キーと TTL 一覧
 
 以下はすべて Redis（Upstash）に保存されるキー。前述の「Vercel側メモリキャッシュ」とは別物なので混同しないこと。
@@ -170,7 +179,8 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 | `scan:<YYYY-MM-DD>:<slot>` | 30日 | `RESULT_TTL` | `api/_scan.js` |
 
 - `scan:universe` と `scan:universe:meta` は同じ `UNIVERSE_TTL`（7日）だが、`scan:universe:built` だけは別定数 `UNIVERSE_BUILD_TTL`（3日）である。混同しないこと
-- `scan:universe:built` が残っている間は自動スキャン時のユニバース組み立てがスキップされる。手動テストで組み立てを走らせたい場合は Upstash Data Browser でこのキーを削除する
+- `scan:universe:built` の**値**が「今日の日付とスロットの組み合わせ」と一致する間は、自動スキャン時のユニバース組み立てがスキップされる。キーが残っているだけではスキップされない（日付やスロットが変われば組み立てが走る）。手動テストで組み立てを走らせたい場合は Upstash Data Browser でこのキーを削除する
+- 寄り予想の記録は2系統ある。サーバー側は `premarket:pred:<日付>`（全端末共通）、ブラウザ側は `localStorage` の `pm_<ticker>`（端末間同期の対象外）。移行期間中は併存しているため、的中率の集計がどちらを見ているかを確認してから触ること
 - `tachibana:watch` の TTL は5分だが、購読が有効とみなされる実効時間は2分。判定しているのは `tachibana-server/config.js` の `watchStaleSeconds`（120秒）で、Vercel 側の `WATCH_TTL` とは別の値。CLAUDE.md 上の5分だけを見て「2分以上前の購読も有効」と判断しないこと
 
 ## Redis への保存形式（gzip）
@@ -206,6 +216,8 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 | （`resource` 無し・未知の値） | POST・GET | デバイス間同期にフォールバック。`userId` 必須。`user:<userId>` を読み書き（90日、GET時に延長） |
 
 - `premarket-summary` は `date` 未指定だと Redis に触る前に `400 date required` を返す。これは意図的な仕様で、日付を省くと保存済み全日分（最大30日）を展開して応答が数十MBに達し、Vercel の上限と実行時間を圧迫するため。`date` が `YYYY-MM-DD` 形式でない場合も `400 invalid date`。`premarket-log` で使える `date=list` は `premarket-summary` では使えない
+- `summarizePremarketDate()` は **`premarket-summary` 本体・`mode=calib`・`mode=coverage`・`premarket-prediction` の4箇所が共有している。** ここで行の作り方を変えると4つの出力が同時に変わる。片方だけを書き直すと数字が食い違う
+- `resource` 無しのデバイス間同期は、`lastSectors` が送られてこなかった場合に**既存の値を維持する**（未送信を「空で上書き」と解釈しない）。古い版のアプリからの同期で業種選定が消えるのを防ぐため
 
 ## 開発ルール・よくある落とし穴
 
@@ -214,3 +226,6 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 - 外部API呼び出しには必ずタイムアウトとエラーハンドリングを付ける。変更後は「何をどう変えたか」を日本語で要約する
 - 日本株の前日比は `PrevC`（前日終値）を優先。無い場合のみ始値比で代用する
 - 銘柄コードは4桁。`ticker` は `"7203.T"` 形式、立花APIへは `.T` を外して渡す。スキャン時は `CACHE` をクリアして必ず最新データを取る
+- **`src/App.js` の `PUSH_SYNC` を触るとお気に入りが巻き戻る。** スキャン処理が `useCallback` のため、その中で掴む値は初回描画のまま古くなる。これを避けるため、描画のたびに最新の同期関数を `PUSH_SYNC` へ書き写している（`FAV_GROUP_CACHE` と同じ方式）
+- **`src/App.js` の `applySyncedData()` は、同期パネルで ID を切り替えたときに `last_sectors` を上書きする。** 受け取った `lastSectors` が空でない場合に `localStorage` を書き換えるため、ID を切り替えた直後は業種選定が切替先のものに変わる
+- **`api/sector.js` の `sectorCache` と分岐を触ると AI 呼び出しが増える。** `?sectors=` が付かない呼び出しは `getPromisingSectors()` → `askAIForSectors()` で `/api/ai` を叩く実装が現役で、回数を抑えているのは `sectorCache`（24時間・プロセス内メモリ）だけ。キャッシュの条件を緩める（保持時間の短縮・判定の削除）と課金が発生する。なおフロントは前回の業種を `?sectors=` で渡すため通常運用では AI 選定に入らないが、業種が空のときは入る。「今はAIを呼んでいない」を前提に条件を書き換えないこと
