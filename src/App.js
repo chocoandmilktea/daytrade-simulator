@@ -5798,7 +5798,6 @@ var PM_Q_SLOPE=0.058;                // 買い比率1ptあたりの予想ギャ�
 var PM_Q_INTERCEPT=-0.105;           // 買い比率50%（売り買い拮抗）のときの予想ギャップ%（段Aの実測）
 var PM_Q_EXP_LIMIT=3;                // 予想ギャップの絶対値の上限%（買い一色などで値が暴走しないように）
 var PM_Q_START_MIN=8*60+45;          // 気配データの収集開始時刻（8:45 JST。これより前は気配が無い）
-var PM_Q_MIN_TICKS=5;                // その朝の有効観測回数がこれ未満なら予想を出さない
 var PM_Q_CONF_BASE=45;               // 確信度の基準値(%)
 var PM_Q_CONF_ONESIDE=12;            // 買い比率が片側に偏り続けた場合の加点
 var PM_Q_CONF_RANGE_PENALTY=15;      // 買い比率の振れ幅100ptあたりの減点（迷っている銘柄は下げる）
@@ -6201,7 +6200,7 @@ async function pmFetchQuoteSummary(force){
 // 戻り値: { expectedGapPct, confidence, reasons[], ... } / 判断材料が足りなければnull
 function pmPredictGapByQuote(row){
   if(!row||row.buyRatioLast==null)return null;
-  if(!(row.validCount>=PM_Q_MIN_TICKS))return null;         // 観測が少なすぎる朝は出さない
+  if(row.validCount==null)return null;                      // validCount が入っていない行は予想を出さない
 
   var last=row.buyRatioLast,lo=row.buyRatioMin,hi=row.buyRatioMax;
   // 予想ギャップ ＝ 傾き×(買い比率-50) ＋ 切片。上限で丸めて暴走を止める
