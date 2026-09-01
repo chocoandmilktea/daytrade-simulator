@@ -1,5 +1,13 @@
 # 環境変数 全件調査レポート
 
+> **このファイルは 2026-08-20 時点の調査記録として凍結した。**
+> 現行の環境変数一覧は `CLAUDE.md` の「環境変数」の節を参照すること。
+> 凍結時点で判明している現行との相違は次の3点。
+>
+> - `ファイル:行` の列は `api/sync.js` のリファクタによりズレている。認証の判定は `isAuthed()` に集約された
+> - 依存が `@upstash/redis` 1.38.2 に更新されたため、`UPSTASH_REDIS_REST_` 系が未設定のときに即座に例外となるという本書の記述は現行の挙動と異なる。現行は警告を出して処理を続け、最初の Redis 呼び出しで失敗する
+> - 2026-08-30 の PR #56 で `PM_Q_SLOPE` と `PM_Q_INTERCEPT` が追加されたが、本書には含まれていない
+
 対象: `daytrade-simulator`（Vercel）/ `tachibana-server`（Railway）
 調査日: 2026-08-20
 調査時点のコミット: daytrade-simulator `6d7a706` / tachibana-server `a192288`
