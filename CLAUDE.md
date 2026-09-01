@@ -65,6 +65,45 @@
   - 既存エンドポイントに `resource` パラメータで相乗りさせる（`sync.js?resource=scan-run` と同じ方式）
   - `_` 接頭辞の共通モジュールとして実装し、呼び出しは既存エンドポイントから行う
 
+## 環境変数
+
+値はここに書かない。既定値はコード上の定数のため記載する。実際に設定されている値は Vercel の Environment Variables 画面で確認する。
+
+### Vercel Functions
+
+| 変数名 | 必須・任意 | 用途 |
+| --- | --- | --- |
+| `UPSTASH_REDIS_REST_URL` | 必須 | Upstash Redis の REST 接続先。`Redis.fromEnv()` が読む。未設定でも起動は継続し、Redis を使う経路が最初のアクセスで失敗する |
+| `UPSTASH_REDIS_REST_TOKEN` | 必須 | 同上のトークン。未設定時の挙動も同じ |
+| `TACHIBANA_RELAY_SECRET` | 必須 | `tachibana-server` との共有の合言葉。受信側は `api/sync.js` の `isAuthed()` で照合し、未設定だと認証が要る5経路（`tachibana-watch` の GET、`tachibana-quote` の POST、`premarket-log` の POST、`premarket-prediction` の POST、`scan-run` の POST）がすべて 401 になる。送信側は未設定でもヘッダを付けずに動く |
+| `TACHIBANA_RANKING_API` | 任意 | 立花の `ranking-data` の中継先URL。未設定なら例外になるが `withFallback` が Redis の前回成功データを返す。`TACHIBANA_MARKET_PRICE_API` の導出元も兼ねる |
+| `TACHIBANA_ISSUE_DETAIL_API` | 任意 | 立花の `issue-detail` の中継先URL。未設定時は `withFallback` が肩代わりする |
+| `TACHIBANA_TOPIX_API` | 任意 | 立花の `topix` の中継先URL。未設定時は `withFallback` が肩代わりする |
+| `TACHIBANA_NAMES_API` | 任意 | 立花の `names` の中継先URL。未設定時は `withFallback` が肩代わりする |
+| `TACHIBANA_MARKET_PRICE_API` | 任意（既定は `TACHIBANA_RANKING_API` から導出） | 寄り前気配の `market-price` の中継先URL。既定値は `TACHIBANA_RANKING_API` の `ranking-data` の部分を `market-price` に置き換えたもの。両方とも未設定の場合は `quotes` にエラーを載せた 200 を返す |
+| `ANTHROPIC_API_KEY` | 必須（`api/ai.js` と `api/news.js` のみ） | Anthropic API プロキシの認証。未設定なら即 500 を返す |
+| `PUSHOVER_TOKEN` | 必須（通知を使う場合） | Pushover のアプリトークン。未設定チェックが無いため、未設定でも API は 200 を返すが通知は届かない |
+| `PUSHOVER_USER` | 必須（通知を使う場合） | Pushover の宛先ユーザーキー。未設定時の挙動は上と同じ |
+| `SCAN_SYNC_USER_ID` | 任意（既定は空文字） | 自動スキャンの銘柄リスト組み立て時に、お気に入り・トレード中銘柄を読むための固定ユーザーID。未設定でも警告ログが出るだけで処理は続き、お気に入りが銘柄リストに加わらなくなる |
+| `VERCEL_URL` | 自動注入 | 自分自身の `/api/sector` と `/api/ranking` を叩くためのホスト名。Vercel が自動で入れるため人は設定しない。既定は `daytrade-simulator.vercel.app` |
+| `PM_Q_SLOPE` | 任意（既定 0.058） | 寄り前予想の較正係数。買い比率1ポイントあたりの予想ギャップの大きさ。**当面は設定しないこと。** 設定するとサーバー側だけが変わり、`src/App.js` にある同名の直書き定数と食い違う |
+| `PM_Q_INTERCEPT` | 任意（既定 -0.105） | 寄り前予想の較正係数。買い比率50%のときの予想ギャップ。注意点は `PM_Q_SLOPE` と同じ |
+
+※ `KV_REST_API_URL` と `KV_REST_API_TOKEN` は当リポジトリのコードには書かれていないが、`@upstash/redis` が `UPSTASH_REDIS_REST_` 系の代替名として読む。Vercel の Upstash 連携がこの名前を注入することがあり、コードを `grep` しても出てこないのに効く場合がある
+※ `TACHIBANA_WATCH_API` と `TACHIBANA_QUOTE_API` は `tachibana-server` 側の環境変数。`src/App.js` にも同名の定数があるが、そちらは直書きの JS 定数であり環境変数ではない
+
+### GitHub Actions
+
+| 変数名 | 必須・任意 | 用途 |
+| --- | --- | --- |
+| `SYNC_URL` | 必須 | 予測バッチが同期APIを読むためのアプリURL。未設定なら `KeyError` で即失敗する |
+| `USER_ID` | 必須 | 予測対象のお気に入りを引くデバイス同期ID。未設定なら `KeyError` で即失敗する |
+| `MODEL` | 任意（既定 `amazon/chronos-bolt-small`） | 予測モデル名。`forecast.yml` が渡していないため現状は常に既定値で動く |
+
+※ `forecast.yml` の `Commit result` ステップの push は、明示的なトークン参照を持たず、`actions/checkout` が埋め込む既定のトークン（`permissions` の `contents: write`）に依存する
+
+変数ごとの参照箇所の詳細は `docs/ENV_AUDIT.md` にある（2026-08-20 時点で凍結）。
+
 ## 構成・データ源
 
 - バックエンド: Vercel Functions（`api/`）／ストア: Upstash Redis（同期データ・フォールバック用スナップショット）／リアルタイム中継: Railway上の別リポジトリ `tachibana-server`（常時起動）
