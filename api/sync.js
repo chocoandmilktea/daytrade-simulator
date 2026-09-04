@@ -121,6 +121,13 @@ async function handleTachibanaQuote(req, res) {
 const PREMARKET_LOG_PREFIX = 'premarket:log:';
 const PREMARKET_LOG_TTL = 60 * 60 * 24 * 30; // 30日（秒）
 
+// 収集の途中経過（暫定）を置く別キー。本番の生ログとは保存先を完全に分ける。
+// 端末側が気配サマリーを見るのは 8:45〜9:00 だが、本番の生ログが書かれるのは
+// 収集ループを抜けたあと（9:06前後）のため、その時間帯に読める材料が無い。
+// 途中経過は「最新の1件」だけあればよいので追記せず上書きし、当日中に消える短いTTLにする。
+const PREMARKET_LOG_PARTIAL_PREFIX = 'premarket:log:partial:';
+const PREMARKET_LOG_PARTIAL_TTL = 60 * 60 * 6; // 6時間（秒）
+
 // JSTの当日（YYYY-MM-DD）。VercelはUTCで動くため、+9時間してから日付部分を取る
 function jstDateString() {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -135,6 +142,8 @@ async function listPremarketDates() {
   const keys = await redis.keys(PREMARKET_LOG_PREFIX + '*');
   return (keys || [])
     .map(function (k) { return String(k).slice(PREMARKET_LOG_PREFIX.length); })
+    // premarket:log:partial:<日付> も同じ前方一致で拾ってしまうため、日付形式だけを残す
+    .filter(isDateString)
     .sort()
     .reverse();
 }
@@ -146,6 +155,19 @@ async function handlePremarketLog(req, res) {
       const body = readBody(req);
       // 送信側が付けてきた日付を優先し、無ければサーバー側のJST当日にする
       const date = isDateString(body.date) ? body.date : jstDateString();
+
+      // 収集途中の暫定POST。本番キーには一切書かず、専用キーへ最新の1件だけを上書きする。
+      // 判定はボディの印だけで行う（POST側は req.query を読まない方針を崩さないため）
+      if (body.partial === true) {
+        await redis.set(
+          PREMARKET_LOG_PARTIAL_PREFIX + date,
+          packForRedis(body),
+          { ex: PREMARKET_LOG_PARTIAL_TTL }
+        );
+        // 応答の形は本番側と揃える。count は上書き保存のため常に1件
+        return res.status(200).json({ ok: true, count: 1, partial: true });
+      }
+
       const key = PREMARKET_LOG_PREFIX + date;
 
       // 既存の配列を読み、無ければ（過去の別形式だった場合も含め）空配列から始める
