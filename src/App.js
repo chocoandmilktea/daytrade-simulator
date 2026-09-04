@@ -5807,6 +5807,9 @@ var PM_QSUM_TTL=60*1000;             // 気配サマリーの端末側キャッ�
 // SYNC_API はAppコンポーネント内のローカル変数でモジュール直下からは参照できないため、
 // 既存の TACHIBANA_WATCH_API 等と同じ書き方でURLを持つ
 var PM_QSUM_API="https://daytrade-simulator.vercel.app/api/sync?resource=premarket-summary";
+var PM_PRED_TTL=3*60*1000;           // サーバー保存ぶんの気配予想の端末側キャッシュ(3分)
+// 同じ理由でURLを直書きする。resource=premarket-prediction のGETは無認証・date必須
+var PM_PRED_API="https://daytrade-simulator.vercel.app/api/sync?resource=premarket-prediction";
 var PM_STATS_TTL=15*60*1000;         // 的中率集計のキャッシュ(15分)
 var PM_OPEN_MIN=9*60;                // 9:00 JST（これ以降は「答え合わせ」表示に自動で切り替える）
 var PM_BIAS_TTL=3*60*1000;           // 地合いの端末側キャッシュ(3分・サーバー側と同じ長さ)
@@ -5815,7 +5818,7 @@ var PM_FETCH_CONCURRENCY=4;          // 日足まとめ取得の同時実行数�
 // 予想の出どころ。今はベータ推定のみ。Phase 2で寄り前気配ベースに切り替えたら "quote" を記録する
 var PM_SRC_BETA="beta";
 var PM_SRC_LABELS={beta:"ベータ推定",quote:"寄り前気配"};
-var PM_SRC_PRIORITY=["quote","beta"];// 同じ日に複数srcの予想がある時、画面に出す優先順
+var PM_SRC_PRIORITY=["quote","beta"];// 予想を画面に縦に並べるときの順番（1件に絞る用途ではない）
 
 // ── 時刻・日付まわり ──────────────────────────────────────────────────
 function pmSign(v){return v>0?"+":"";}                       // 表示用の符号（マイナスはtoFixedが付ける）
@@ -5995,7 +5998,9 @@ function pmFindRec(list,dateStr,src){
   for(var i=0;i<list.length;i++){if(list[i].d===dateStr&&list[i].src===src)return list[i];}
   return null;
 }
-// 同じ日に複数srcの予想がある時、PM_SRC_PRIORITYの順で1件だけ選ぶ（画面の重複を防ぐため）
+// 同じ日に複数srcの予想がある時、PM_SRC_PRIORITYの順で1件だけ選ぶ。
+// 段D-1で画面が2手法を並べる形になったため、現在この関数の呼び出し元は無い。
+// 端末内の記録から「代表の1件」を取り出す用途は段D-2で使う見込みのため残してある
 function pmPickRec(list,dateStr){
   for(var i=0;i<PM_SRC_PRIORITY.length;i++){
     var hit=pmFindRec(list,dateStr,PM_SRC_PRIORITY[i]);
@@ -6196,6 +6201,52 @@ async function pmFetchQuoteSummary(force){
   }catch(e){return null;}
 }
 
+// サーバーに保存済みの気配ベース予想（premarket:pred:<日付>）を銘柄コード→予想 の形で取る。
+// サーバーは寄り前気配の収集が終わる9:06前後に保存するため、9:00より前は当日ぶんが
+// 原理的に存在しない。したがって呼ぶのは答え合わせ（pmBuildResults）からだけにしている。
+// これにより 8:45〜9:00 にタブを開いていなかった日でも気配ベースの答え合わせができる。
+// 取れなくてもベータ推定と答え合わせは動き続ける必要があるため、失敗時は例外を投げずnullを返す
+var PM_PRED_CACHE=null,PM_PRED_TS=0,PM_PRED_DATE="";
+async function pmFetchServerPredictions(dateStr,force){
+  if(!dateStr)return null;
+  var now=Date.now();
+  if(!force&&PM_PRED_CACHE&&PM_PRED_DATE===dateStr&&now-PM_PRED_TS<PM_PRED_TTL)return PM_PRED_CACHE;
+  try{
+    var url=PM_PRED_API+"&date="+encodeURIComponent(dateStr);
+    var res=await fetch(url,{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    if(!res.ok)throw new Error("premarket-prediction "+res.status);
+    var json=await res.json();
+    // found:false は「その日の予想がまだ保存されていない」状態。異常ではないので
+    // エラー扱いにせず、端末内の記録だけで表示する従来の動きへ落とす
+    if(!json||!json.found||!json.predictions)return null;
+    PM_PRED_CACHE=json.predictions;PM_PRED_TS=now;PM_PRED_DATE=dateStr;
+    return json.predictions;
+  }catch(e){return null;}
+}
+
+// 気配ベース予想の理由バッジ（label / val / state）を作る。
+// フロントで計算した予想（pmPredictGapByQuote）と、サーバーから受け取った予想の
+// 両方が同じ文言を出す必要があるため、2箇所に書かずここへ集約している。
+// サーバーは理由の文言自体を返さず数値だけを返すので、組み立てはフロント側で行う
+function pmQuoteReasons(last,lo,hi,validCount){
+  var reasons=[];
+  if(last!=null){
+    reasons.push({
+      label:"買い比率",
+      val:last.toFixed(1)+"%（最小"+(lo==null?"-":lo.toFixed(1))+"% / 最大"+(hi==null?"-":hi.toFixed(1))+"%）",
+      state:last>50?1:(last<50?-1:0)
+    });
+  }
+  if(validCount!=null){
+    reasons.push({
+      label:"観測回数",
+      val:validCount+"回",
+      state:0
+    });
+  }
+  return reasons;
+}
+
 // 気配サマリー1行から予想ギャップ%と確信度を出す。
 // 戻り値: { expectedGapPct, confidence, reasons[], ... } / 判断材料が足りなければnull
 function pmPredictGapByQuote(row){
@@ -6216,18 +6267,8 @@ function pmPredictGapByQuote(row){
   if(lo!=null&&hi!=null)conf-=(hi-lo)/100*PM_Q_CONF_RANGE_PENALTY;
   conf=Math.max(PM_Q_CONF_MIN,Math.min(PM_Q_CONF_MAX,Math.round(conf)));
 
-  // 段Dの表示で使う説明。今回は画面に出さないが、形式は既存のpmPredictGapに揃える
-  var reasons=[];
-  reasons.push({
-    label:"買い比率",
-    val:last.toFixed(1)+"%（最小"+(lo==null?"-":lo.toFixed(1))+"% / 最大"+(hi==null?"-":hi.toFixed(1))+"%）",
-    state:last>50?1:(last<50?-1:0)
-  });
-  reasons.push({
-    label:"観測回数",
-    val:row.validCount+"回",
-    state:0
-  });
+  // 表示で使う説明。形式は既存のpmPredictGapに揃える（組み立ては共通関数へ切り出し済み）
+  var reasons=pmQuoteReasons(last,lo,hi,row.validCount);
 
   return {
     expectedGapPct:exp,
@@ -6279,23 +6320,61 @@ async function pmBuildPredictions(favTickers,force){
 async function pmBuildResults(favTickers,force){
   var tickers=(favTickers||[]).filter(pmIsJP);
   var today=fcTodayJST(); // 既存のJST日付ヘルパーを再利用
+  // サーバー保存ぶんの気配予想（9:06前後に保存される）。対象銘柄が0件のときは通信しない。
+  // 取れなければnullが返り、端末内の記録だけを見る従来どおりの表示になる
+  var serverPreds=tickers.length?await pmFetchServerPredictions(today,force):null;
   var rows=await pmMapLimit(tickers,PM_FETCH_CONCURRENCY,async function(ticker){
-    // 同じ日に複数srcの予想があっても、画面には優先順の1件だけを出す
-    var rec=pmPickRec(pmLoadHist(ticker),today);
+    var hist=pmLoadHist(ticker);
     var recent=await pmFetchRecentDaily(ticker,force);
     var act=pmActualGap(recent,today);
     var actPct=act?Math.round(act.actPct*100)/100:null;
-    // 答え合わせは表示に選ばれなかったsrcのレコードにも入る（画面は1行でも集計は全srcぶん貯まる）
+    // 答え合わせは端末内にあるその日の全srcのレコードに入る。
+    // サーバーから取った予想は端末内へ書き戻さない（書き戻すと的中率で二重に数えられる）
     if(actPct!=null)pmRecordActual(ticker,today,actPct);
+    var srv=serverPreds?serverPreds[ticker.replace(".T","")]:null;
+
+    // 出どころごとに1件ずつ、PM_SRC_PRIORITYの順で並べる。
+    // 以前は pmPickRec で1件に絞っていたため、両方ある日はベータ推定が画面から消えていた。
+    // 記録が無いsrcも exp:null の行として残す（今日どちらが欠けたのかを画面で分かるようにするため）
+    var preds=[],fallbackAct=null,fallbackPrev=null,i,s,rec;
+    for(i=0;i<PM_SRC_PRIORITY.length;i++){
+      s=PM_SRC_PRIORITY[i];
+      rec=pmFindRec(hist,today,s);
+      if(rec){
+        if(fallbackAct==null&&rec.act!=null)fallbackAct=rec.act;
+        if(fallbackPrev==null&&rec.prevClose!=null)fallbackPrev=rec.prevClose;
+      }
+      // 気配ベースはサーバー保存ぶんを優先する（端末に記録が無い日でも埋まるため）
+      if(s===PM_Q_SRC&&srv&&srv.expectedGapPct!=null){
+        preds.push({
+          src:s,
+          label:PM_SRC_LABELS[s]||s,
+          exp:srv.expectedGapPct,
+          conf:srv.confidence==null?null:srv.confidence,
+          // 理由はサーバーが返す数値からフロント側で組み立て直す（文言はサーバーから来ない）
+          reasons:pmQuoteReasons(srv.buyRatioLast,srv.buyRatioMin,srv.buyRatioMax,srv.validCount),
+          fromServer:true
+        });
+        continue;
+      }
+      preds.push({
+        src:s,
+        label:PM_SRC_LABELS[s]||s,
+        exp:rec&&rec.exp!=null?rec.exp:null,
+        conf:rec&&rec.conf!=null?rec.conf:null,
+        reasons:null,          // 端末内の記録は理由を保存していないのでバッジは出さない
+        fromServer:false
+      });
+    }
     return {
       ticker:ticker,
       name:jpNameOf(ticker,ticker.replace(".T","")),
-      src:rec?rec.src:null,
-      exp:rec?rec.exp:null,
-      conf:rec?rec.conf:null,
-      act:actPct!=null?actPct:(rec?rec.act:null),
+      preds:preds,
+      // 実測・始値・前日終値は銘柄に1つ。従来どおり日足（pmActualGap）から取る。
+      // サーバーの actualGapPct は9:06までに寄らなかった銘柄が空のままなので読まない
+      act:actPct!=null?actPct:fallbackAct,
       open:act?act.open:null,
-      prevClose:act?act.prevClose:(rec?rec.prevClose:null)
+      prevClose:act?act.prevClose:fallbackPrev
     };
   });
   // 実際のギャップ%の降順（まだ寄っていない銘柄は末尾へ）
@@ -6488,35 +6567,61 @@ function PremarketPanel(p){
           /* 答え合わせ表示 */
           <div>
             {(results&&results.rows?results.rows:[]).map(function(r){
-              var diff=(r.exp!=null&&r.act!=null)?r.act-r.exp:null;
-              var hit=(r.exp!=null&&r.act!=null&&Math.abs(r.exp)>=PM_DIR_DEADBAND)?((r.exp>0)===(r.act>0)):null;
               return(
-                <div key={r.ticker} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"10px 14px",borderBottom:"1px solid #0a1828"}}>
-                  <div style={{minWidth:0}}>
-                    <div style={{fontSize:14,fontWeight:700,color:"#d8eeff"}}>
-                      {r.ticker.replace(".T","")} <span style={{fontSize:11,color:"#4a7090",fontWeight:400}}>{r.name}</span>
+                <div key={r.ticker} style={{padding:"10px 14px",borderBottom:"1px solid #0a1828"}}>
+                  {/* 共通部分：銘柄・前日終値→始値・実測ギャップ。銘柄に1つなので手法ごとに繰り返さない */}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                    <div style={{minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:700,color:"#d8eeff"}}>
+                        {r.ticker.replace(".T","")} <span style={{fontSize:11,color:"#4a7090",fontWeight:400}}>{r.name}</span>
+                      </div>
+                      <div style={{fontSize:10,color:"#2a6090",marginTop:2,fontFamily:"monospace"}}>
+                        {r.prevClose?("前日終値 "+r.prevClose):""}{r.open?" → 始値 "+r.open:""}
+                      </div>
                     </div>
-                    <div style={{fontSize:10,color:"#2a6090",marginTop:2,fontFamily:"monospace"}}>
-                      {r.prevClose?("前日終値 "+r.prevClose):""}{r.open?" → 始値 "+r.open:""}
-                    </div>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:10,whiteSpace:"nowrap"}}>
-                    <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:9,color:"#4a7090"}}>予想</div>
-                      <div style={{fontSize:12,fontWeight:700,color:pctCol(r.exp),fontFamily:"monospace"}}>{fmtPm(r.exp)}</div>
-                    </div>
-                    <div style={{textAlign:"right"}}>
+                    <div style={{textAlign:"right",whiteSpace:"nowrap"}}>
                       <div style={{fontSize:9,color:"#4a7090"}}>実際</div>
-                      <div style={{fontSize:14,fontWeight:700,color:pctCol(r.act),fontFamily:"monospace"}}>{r.act==null?"待機中":fmtPm(r.act)}</div>
+                      <div style={{fontSize:16,fontWeight:700,color:pctCol(r.act),fontFamily:"monospace"}}>{r.act==null?"待機中":fmtPm(r.act)}</div>
                     </div>
-                    <div style={{textAlign:"right",minWidth:52}}>
-                      <div style={{fontSize:9,color:"#4a7090"}}>誤差</div>
-                      <div style={{fontSize:11,color:"#7ab0d8",fontFamily:"monospace"}}>{diff==null?"—":(Math.abs(diff).toFixed(2)+"%")}</div>
-                    </div>
-                    <span style={hit==null?bStyle("#0a1828","#1e3050","#4a7090"):(hit?bStyle("#04241a","#22d3a0","#22d3a0"):bStyle("#3a0a0a","#f43f5e","#f87171"))}>
-                      {hit==null?"—":(hit?"方向◯":"方向✕")}
-                    </span>
                   </div>
+                  {/* 手法ごと：予想・誤差・方向の当たり外れ。誤差と方向は手法ごとに計算する */}
+                  {(r.preds||[]).map(function(x){
+                    var diff=(x.exp!=null&&r.act!=null)?r.act-x.exp:null;
+                    var hit=(x.exp!=null&&r.act!=null&&Math.abs(x.exp)>=PM_DIR_DEADBAND)?((x.exp>0)===(r.act>0)):null;
+                    return(
+                      <div key={x.src} style={{marginTop:6,paddingTop:6,borderTop:"1px solid #0a1828"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                          <div style={{minWidth:0,fontSize:11,fontWeight:700,color:x.exp==null?"#4a7090":"#7ab0d8"}}>
+                            {x.label}
+                            {x.fromServer&&<span style={{fontSize:9,color:"#2a6090",fontWeight:400}}> ・サーバー保存ぶん</span>}
+                            {x.exp==null&&<span style={{fontSize:10,color:"#4a7090",fontWeight:400}}> ・この日の記録なし</span>}
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:10,whiteSpace:"nowrap"}}>
+                            <div style={{textAlign:"right"}}>
+                              <div style={{fontSize:9,color:"#4a7090"}}>予想</div>
+                              <div style={{fontSize:13,fontWeight:700,color:pctCol(x.exp),fontFamily:"monospace"}}>{x.exp==null?"データなし":fmtPm(x.exp)}</div>
+                            </div>
+                            <div style={{textAlign:"right",minWidth:52}}>
+                              <div style={{fontSize:9,color:"#4a7090"}}>誤差</div>
+                              <div style={{fontSize:11,color:"#7ab0d8",fontFamily:"monospace"}}>{diff==null?"—":(Math.abs(diff).toFixed(2)+"%")}</div>
+                            </div>
+                            <span style={hit==null?bStyle("#0a1828","#1e3050","#4a7090"):(hit?bStyle("#04241a","#22d3a0","#22d3a0"):bStyle("#3a0a0a","#f43f5e","#f87171"))}>
+                              {hit==null?"—":(hit?"方向◯":"方向✕")}
+                            </span>
+                          </div>
+                        </div>
+                        {/* 理由バッジはサーバーから取れた予想にだけ付く（端末内の記録は理由を保存していない） */}
+                        {x.reasons&&x.reasons.length>0&&
+                          <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:5}}>
+                            {x.reasons.map(function(rs,i){
+                              var st=rs.state;
+                              var sty=st>0?bStyle("#04241a","#22d3a0","#22d3a0"):(st<0?bStyle("#3a0a0a","#f43f5e","#f87171"):bStyle("#0a1828","#1e3050","#7ab0d8"));
+                              return <span key={i} style={sty}>{rs.label}: {rs.val}</span>;
+                            })}
+                          </div>}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -6525,45 +6630,70 @@ function PremarketPanel(p){
           /* 予想一覧 */
           <div>
             {(data&&data.rows?data.rows:[]).map(function(r){
-              var pred=r.pred;
+              // 出どころごとに1件ずつ、PM_SRC_PRIORITYの順で縦に並べる。
+              // 9:00前はサーバーに当日ぶんの予想がまだ無いため、気配ベースは
+              // pmBuildPredictions がその場で作った quotePred をそのまま使う
+              var list=PM_SRC_PRIORITY.map(function(s){
+                return {
+                  src:s,
+                  label:PM_SRC_LABELS[s]||s,
+                  pred:s===PM_Q_SRC?r.quotePred:(s===PM_SRC_BETA?r.pred:null),
+                  // 算出できなかった理由は手法ごとに違うので、それぞれの文言を出す
+                  note:s===PM_Q_SRC
+                    ?"寄り前気配がまだ取得できていません（8:45〜9:00に貯まります）"
+                    :"日足のサンプルが足りないか、地合いが取得できないため算出できません"
+                };
+              });
+              // 前日終値は銘柄に1つ。日付も持っているベータ推定側を優先して出す
+              var head=r.pred||r.quotePred;
               return(
                 <div key={r.ticker} style={{padding:"10px 14px",borderBottom:"1px solid #0a1828"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                    <div style={{minWidth:0}}>
-                      <div style={{fontSize:14,fontWeight:700,color:"#d8eeff"}}>
-                        {r.ticker.replace(".T","")} <span style={{fontSize:11,color:"#4a7090",fontWeight:400}}>{r.name}</span>
-                      </div>
-                      {pred&&pred.prevClose&&
-                        <div style={{fontSize:10,color:"#2a6090",marginTop:2,fontFamily:"monospace"}}>前日終値 {pred.prevClose}（{pred.prevDate}）</div>}
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:14,fontWeight:700,color:"#d8eeff"}}>
+                      {r.ticker.replace(".T","")} <span style={{fontSize:11,color:"#4a7090",fontWeight:400}}>{r.name}</span>
                     </div>
-                    <div style={{display:"flex",alignItems:"center",gap:12,whiteSpace:"nowrap"}}>
-                      <div style={{textAlign:"right"}}>
-                        <div style={{fontSize:9,color:"#4a7090"}}>予想ギャップ</div>
-                        <div style={{fontSize:16,fontWeight:700,color:pctCol(pred?pred.expectedGapPct:null),fontFamily:"monospace"}}>
-                          {pred?fmtPm(pred.expectedGapPct):"—"}
-                        </div>
-                      </div>
-                      <div style={{textAlign:"right",minWidth:44}}>
-                        <div style={{fontSize:9,color:"#4a7090"}}>確信度</div>
-                        <div style={{fontSize:13,fontWeight:700,color:pred?(pred.confidence>=60?"#22d3a0":(pred.confidence>=40?"#fbbf24":"#4a7090")):"#4a7090",fontFamily:"monospace"}}>
-                          {pred?pred.confidence+"%":"—"}
-                        </div>
-                      </div>
-                    </div>
+                    {head&&head.prevClose&&
+                      <div style={{fontSize:10,color:"#2a6090",marginTop:2,fontFamily:"monospace"}}>
+                        前日終値 {head.prevClose}{head.prevDate?"（"+head.prevDate+"）":""}
+                      </div>}
                   </div>
-                  {pred?(
-                    <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6}}>
-                      {pred.reasons.map(function(rs,i){
-                        var st=rs.state;
-                        var sty=st>0?bStyle("#04241a","#22d3a0","#22d3a0"):(st<0?bStyle("#3a0a0a","#f43f5e","#f87171"):bStyle("#0a1828","#1e3050","#7ab0d8"));
-                        return <span key={i} style={sty}>{rs.label}: {rs.val}</span>;
-                      })}
-                    </div>
-                  ):(
-                    <div style={{fontSize:11,color:"#4a7090",marginTop:4}}>
-                      日足のサンプルが足りないか、地合いが取得できないため算出できません
-                    </div>
-                  )}
+                  {list.map(function(x){
+                    var pred=x.pred;
+                    return(
+                      <div key={x.src} style={{marginTop:6,paddingTop:6,borderTop:"1px solid #0a1828"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                          <div style={{minWidth:0,fontSize:11,fontWeight:700,color:pred?"#7ab0d8":"#4a7090"}}>
+                            {x.label}{!pred&&<span style={{fontSize:10,fontWeight:400}}> ・データなし</span>}
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:12,whiteSpace:"nowrap"}}>
+                            <div style={{textAlign:"right"}}>
+                              <div style={{fontSize:9,color:"#4a7090"}}>予想ギャップ</div>
+                              <div style={{fontSize:16,fontWeight:700,color:pctCol(pred?pred.expectedGapPct:null),fontFamily:"monospace"}}>
+                                {pred?fmtPm(pred.expectedGapPct):"—"}
+                              </div>
+                            </div>
+                            <div style={{textAlign:"right",minWidth:44}}>
+                              <div style={{fontSize:9,color:"#4a7090"}}>確信度</div>
+                              <div style={{fontSize:13,fontWeight:700,color:pred?(pred.confidence>=60?"#22d3a0":(pred.confidence>=40?"#fbbf24":"#4a7090")):"#4a7090",fontFamily:"monospace"}}>
+                                {pred?pred.confidence+"%":"—"}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        {pred?(
+                          <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:5}}>
+                            {(pred.reasons||[]).map(function(rs,i){
+                              var st=rs.state;
+                              var sty=st>0?bStyle("#04241a","#22d3a0","#22d3a0"):(st<0?bStyle("#3a0a0a","#f43f5e","#f87171"):bStyle("#0a1828","#1e3050","#7ab0d8"));
+                              return <span key={i} style={sty}>{rs.label}: {rs.val}</span>;
+                            })}
+                          </div>
+                        ):(
+                          <div style={{fontSize:11,color:"#4a7090",marginTop:4}}>{x.note}</div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
