@@ -339,12 +339,26 @@ async function handlePremarketSummary(req, res) {
 
     var values = await redis.mget(...dates.map(function (d) { return PREMARKET_LOG_PREFIX + d; }));
     var rows = [];
-    dates.forEach(function (d, i) {
+    // 暫定キーへ退避したかどうか。1件でも暫定を読んだら true にする
+    var usedPartial = false;
+    // forEach だと await が効かないため for ループにしている（暫定キーの読み取りが非同期のため）
+    for (var i = 0; i < dates.length; i++) {
+      var d = dates[i];
       var parsed = unpackFromRedis(values[i]);
-      if (!Array.isArray(parsed)) return; // 未保存の日付は飛ばす
+      if (!Array.isArray(parsed)) {
+        // 本番の生ログが書かれるのは収集終了後（9:06前後）なので、それ以前は必ずここに来る。
+        // その時間帯だけ収集途中の暫定キーで代用する（本番キーがあるときは触らない）
+        var partial = unpackFromRedis(await redis.get(PREMARKET_LOG_PARTIAL_PREFIX + d));
+        // 暫定キーは記録セッション1件をそのまま保存しているため、
+        // 本番キー（セッションの配列）と形を揃えてから渡す
+        if (!partial || !Array.isArray(partial.records)) continue; // 暫定も無ければ従来どおり空で返す
+        usedPartial = true;
+        rows = rows.concat(summarizePremarketDate(d, [partial]));
+        continue;
+      }
       rows = rows.concat(summarizePremarketDate(d, parsed));
-    });
-    return res.status(200).json({ count: rows.length, rows: rows });
+    }
+    return res.status(200).json({ count: rows.length, rows: rows, partial: usedPartial });
   } catch (e) {
     return res.status(500).json({ error: 'load failed: ' + e.message });
   }

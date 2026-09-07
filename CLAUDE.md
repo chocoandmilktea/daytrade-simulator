@@ -210,6 +210,7 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 | `tachibana:quote:<ticker>` | 30秒 | 定数なし・直書き | `api/sync.js` |
 | `tachibana:quote:last:<ticker>` | 3日 | `QUOTE_SNAPSHOT_TTL` | `api/sync.js` |
 | `premarket:log:<YYYY-MM-DD>` | 30日 | `PREMARKET_LOG_TTL` | `api/sync.js` |
+| `premarket:log:partial:<YYYY-MM-DD>` | 6時間 | `PREMARKET_LOG_PARTIAL_TTL` | `api/sync.js` |
 | `premarket:pred:<YYYY-MM-DD>` | 30日 | `PREMARKET_PRED_TTL` | `api/sync.js` |
 | `user:<userId>` | 90日 | `TTL` | `api/sync.js` |
 | `scan:universe` | 7日 | `UNIVERSE_TTL` | `api/_scan.js` |
@@ -219,6 +220,15 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 
 - `scan:universe` と `scan:universe:meta` は同じ `UNIVERSE_TTL`（7日）だが、`scan:universe:built` だけは別定数 `UNIVERSE_BUILD_TTL`（3日）である。混同しないこと
 - `scan:universe:built` の**値**が「今日の日付とスロットの組み合わせ」と一致する間は、自動スキャン時のユニバース組み立てがスキップされる。キーが残っているだけではスキップされない（日付やスロットが変われば組み立てが走る）。手動テストで組み立てを走らせたい場合は Upstash Data Browser でこのキーを削除する
+- `premarket:log:partial:<日付>` は寄り前収集の**途中経過**を置く暫定キー。本番の生ログ `premarket:log:<日付>` とは保存先も入れ物の形も別物なので混同しないこと
+  - 用途: 本番の生ログが書かれるのは収集ループを抜けた 9:06 前後だが、端末が気配サマリーを見るのは 8:45〜9:00 である。その時間帯に読める材料を用意するために、収集の途中で1回だけ保存する
+  - TTL は6時間（`PREMARKET_LOG_PARTIAL_TTL`）。当日中に消えれば十分で、翌日以降に暫定データが残ると本番データと取り違えるため短くしてある
+  - **追記ではなく上書き。** 保持するのは常に最新の1件だけ（`handlePremarketLog()` の POST で `body.partial === true` のときの分岐）。本番キーのような配列にはしない
+  - 入れ物の形が違う: 本番キーは記録セッションの**配列**、暫定キーは記録セッション**1件そのもの**。`summarizePremarketDate()` へ渡すときは要素1件の配列に包む必要がある
+  - 読むのは `handlePremarketSummary()` だけで、**本番キーの読み取り結果が配列でなかったときに限り**参照する。本番キーがあるときは触らない。暫定を読んだ場合は応答の `partial` が `true` になる
+  - **`mode=calib` と `mode=coverage`（`handlePremarketCalib()` / `handlePremarketCoverage()`）はこの退避経路を持たない。** 較正係数と欠測件数は確定データだけで判断すべきもので、暫定データが混ざると数字が狂う。ここに退避を足さないこと
+  - 保存形式は本番キーと同じく `packForRedis()` の gzip。読み出しも `unpackFromRedis()` を通す
+  - `listPremarketDates()` は `premarket:log:*` の前方一致で拾うため暫定キーも引っかかる。日付形式（`isDateString`）で除外している。この絞り込みを外すと `date=list` に `partial:...` が並ぶ
 - 寄り予想の記録は2系統ある。サーバー側は `premarket:pred:<日付>`（全端末共通）、ブラウザ側は `localStorage` の `pm_<ticker>`（端末間同期の対象外）。移行期間中は併存しているため、的中率の集計がどちらを見ているかを確認してから触ること
 - `tachibana:watch` の TTL は5分だが、購読が有効とみなされる実効時間は2分。判定しているのは `tachibana-server/config.js` の `watchStaleSeconds`（120秒）で、Vercel 側の `WATCH_TTL` とは別の値。CLAUDE.md 上の5分だけを見て「2分以上前の購読も有効」と判断しないこと
 
