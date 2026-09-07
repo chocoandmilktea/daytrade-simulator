@@ -28,6 +28,22 @@ function setLayoutMode(m){
   window.dispatchEvent(new Event("layoutmodechange")); // 画面全体に切替を知らせる
 }
 
+// ── 最後に選んでいたタブの記憶 ───────────────────────────────────────────
+// 各タブの中身は選ばれている間だけ画面に置かれるため、開き直すたびにメインへ戻ると
+// 他タブの定期処理（寄り予想の取得など）がそもそも動き出さない。前回のタブから始める。
+var ACTIVE_TAB_KEY="active_tab";
+// 有効なタブ名。Appコンポーネント内の TABS と同じ並び。TABS はコンポーネント内の変数で
+// ここからは参照できないため別に持つ（TABS を増減したらこちらも合わせること）
+var ACTIVE_TAB_IDS=["fav","trade","premarket","event","index","market","news","sync","guide"];
+function loadActiveTab(){
+  try{
+    var v=localStorage.getItem(ACTIVE_TAB_KEY);
+    if(v&&ACTIVE_TAB_IDS.indexOf(v)>=0)return v;
+  }catch(e){}
+  return "fav"; // 未保存・壊れた値・廃止済みのタブ名は従来どおりメインへ落とす
+}
+function saveActiveTab(t){try{localStorage.setItem(ACTIVE_TAB_KEY,t);}catch(e){}}
+
 // ── 端末に記憶する状態（useStateと同じ使い方）─────────────────────────────
 // タブを切り替えると部品が一度消えて状態がリセットされるため、選んだ内容を
 // localStorageに保存しておき、戻ってきた時・アプリを開き直した時に復元する。
@@ -5810,6 +5826,8 @@ var PM_QSUM_API="https://daytrade-simulator.vercel.app/api/sync?resource=premark
 var PM_PRED_TTL=3*60*1000;           // サーバー保存ぶんの気配予想の端末側キャッシュ(3分)
 // 同じ理由でURLを直書きする。resource=premarket-prediction のGETは無認証・date必須
 var PM_PRED_API="https://daytrade-simulator.vercel.app/api/sync?resource=premarket-prediction";
+var PM_PRED_RETRY_MS=75*1000;        // サーバー予想が空振りしたときの再取得間隔(75秒)。PM_PRED_TTLより短いのでforce付きで呼ぶ
+var PM_PRED_RETRY_UNTIL_MIN=9*60+12; // 再取得を打ち切るJST時刻(9:12)。サーバー保存は9:06前後に終わるため、それでも空なら諦める
 var PM_STATS_TTL=15*60*1000;         // 的中率集計のキャッシュ(15分)
 var PM_OPEN_MIN=9*60;                // 9:00 JST（これ以降は「答え合わせ」表示に自動で切り替える）
 var PM_BIAS_TTL=3*60*1000;           // 地合いの端末側キャッシュ(3分・サーバー側と同じ長さ)
@@ -6384,7 +6402,10 @@ async function pmBuildResults(favTickers,force){
     if(b.act==null)return -1;
     return b.act-a.act;
   });
-  return {date:today,rows:rows};
+  // serverOk はサーバー保存ぶんの気配予想が取れたかどうか。9:00〜9:06はまだ保存前で必ず
+  // 空振りするため、呼び出し側が「あとで取り直すべきか」を判断できるように返す。
+  // 対象銘柄が0件のときは通信していないので false（再取得の対象にもならない）
+  return {date:today,rows:rows,serverOk:!!serverPreds};
 }
 
 // ── 🌅 寄り予想タブ ───────────────────────────────────────────────────
@@ -6462,6 +6483,35 @@ function PremarketPanel(p){
     })();
     return function(){alive=false;};
   },[favKey,afterOpen]);
+
+  // 9:00〜9:06 にこのタブを開くと、サーバー側の気配予想がまだ保存されておらず空振りする。
+  // 空振りしたときだけ一定間隔で取り直し、9:12を過ぎたら打ち切る（延々と叩き続けないため）。
+  // 上の1分タイマーは「9:00をまたいだか」を見るだけで間隔も固定のため、別タイマーにした
+  var pmNeedPredRetry=!!(afterOpen&&favKey&&results&&results.serverOk===false);
+  useEffect(function(){
+    if(!pmNeedPredRetry)return;
+    if(pmNowJstMin()>=PM_PRED_RETRY_UNTIL_MIN)return; // 打ち切り時刻を過ぎていれば張らない
+    var alive=true,busy=false;
+    var t=setInterval(function(){
+      if(!alive||busy)return;                        // 前回の取得が終わるまで重ねて投げない
+      if(pmNowJstMin()>=PM_PRED_RETRY_UNTIL_MIN){clearInterval(t);return;}
+      var list=favKey?favKey.split(","):[];
+      if(!list.length)return;
+      busy=true;
+      (async function(){
+        try{
+          // force付き。再取得間隔がPM_PRED_TTL(3分)より短いため、
+          // forceを付けないと端末側キャッシュに阻まれて実質再取得にならない
+          var r=await pmBuildResults(list,true);
+          if(!alive)return;
+          setResults(r);
+          setLastUpd(new Date().toLocaleTimeString("ja-JP"));
+        }catch(e){/* 再取得の失敗は画面に出さない。次の周期かユーザーの更新操作に任せる */}
+        busy=false;
+      })();
+    },PM_PRED_RETRY_MS);
+    return function(){alive=false;clearInterval(t);};
+  },[pmNeedPredRetry,favKey]);
 
   async function refresh(){
     var list=favKey?favKey.split(","):[];
@@ -6792,7 +6842,9 @@ export default function App(){
   var predResS=useState("");var predictionResult=predResS[0],setPredictionResult=predResS[1];
   var predLoadS=useState(false);var predictionLoading=predLoadS[0],setPredictionLoading=predLoadS[1];
   var selStockS=useState(null);var selectedStock=selStockS[0],setSelectedStock=selStockS[1];
-  var k=useState("fav");var activeTab=k[0],setActiveTab=k[1];
+  var k=useState(loadActiveTab);var activeTab=k[0],setActiveTab=k[1];
+  // タブを切り替えるたびに記憶する（次に開いたとき同じタブから始めるため）
+  useEffect(function(){saveActiveTab(activeTab);},[activeTab]);
   var isMobile=useIsMobile(); // スマホ幅（768px未満）判定
 
   // ── 起動時の業種選択（おまかせ／業種一覧／前回の業種） ──────────────────────
