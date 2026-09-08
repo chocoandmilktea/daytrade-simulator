@@ -44,6 +44,145 @@ function loadActiveTab(){
 }
 function saveActiveTab(t){try{localStorage.setItem(ACTIVE_TAB_KEY,t);}catch(e){}}
 
+// ── 観測ログ（obslog_*）──────────────────────────────────────────────────
+// 寄り前の処理は 8:45〜9:06 の21分にしか動かず、その場でDevToolsを開いていないと
+// 何が起きたのか後から分からない。在席していない朝でも動きを検証できるよう、
+// 通信・イベント・心拍を端末内に貯めておく。
+// 記録専用であり、既存の予想計算・通信内容・画面表示には一切影響させない。
+// 書き込みが失敗しても本体を止めないため、読み書きとも例外は全て握りつぶす
+var OBS_NET_KEY="obslog_net";     // 寄り前系（premarket-summary / premarket-prediction）の通信ログ
+var OBS_EVENT_KEY="obslog_event"; // JSエラー・画面の表示切替・予想の描画件数・日足の取得回数
+var OBS_BEAT_KEY="obslog_beat";   // 心拍。アプリが動き続けていた時刻だけを残す
+// 通信とイベントは件数で切るリングバッファ、心拍だけは件数ではなく直近60分で切る。
+// 心拍は30秒間隔なので60分＝約120件になり、100件だと1時間ぶん残らないため
+var OBS_NET_MAX=100,OBS_EVENT_MAX=100,OBS_BEAT_MIN=60;
+
+// 記録用のJST時刻。端末の時刻設定（タイムゾーン）に左右されないよう、
+// 既存の pmNowJstMin と同じくUTCに9時間を足して作る
+function obsNowHms(){
+  var jst=new Date(Date.now()+9*3600000);
+  var p=function(n){return (n<10?"0":"")+n;};
+  return p(jst.getUTCHours())+":"+p(jst.getUTCMinutes())+":"+p(jst.getUTCSeconds());
+}
+function obsTodayJst(){return new Date(Date.now()+9*3600000).toISOString().slice(0,10);}
+// "HH:MM:SS" を0時からの分に直す。心拍の切り捨て判定にだけ使う
+function obsHmsToMin(s){
+  var m=/^(\d{2}):(\d{2}):(\d{2})$/.exec(String(s||""));
+  return m?Number(m[1])*60+Number(m[2]):null;
+}
+function obsRead(key){
+  try{var v=JSON.parse(localStorage.getItem(key)||"[]");return Array.isArray(v)?v:[];}catch(e){return[];}
+}
+// 古いものから押し出すリングバッファ
+function obsPush(key,rec,max){
+  try{
+    var list=obsRead(key);
+    list.push(rec);
+    if(list.length>max)list=list.slice(list.length-max);
+    localStorage.setItem(key,JSON.stringify(list));
+  }catch(e){}
+}
+function obsEvent(type,detail){
+  obsPush(OBS_EVENT_KEY,Object.assign({t:obsNowHms(),type:type},detail||{}),OBS_EVENT_MAX);
+}
+// 寄り前パネルが最後に描いた予想の行数。描画のたびに記録するとイベントログが同じ値で
+// 埋まるため、この値と変わったときだけ残す。タブを開き直しても数え直さないよう
+// コンポーネントの外（モジュールスコープ）に置く
+var OBS_LAST_ROWS=null;
+// 心拍は件数ではなく時間で切る。日付をまたぐと分の値が巻き戻るため、
+// 「今より未来の時刻」に見えるレコードは前日ぶんとみなして落とす
+function obsBeat(){
+  try{
+    var hms=obsNowHms(),nowMin=obsHmsToMin(hms);
+    var list=obsRead(OBS_BEAT_KEY);
+    list.push({t:hms});
+    var kept=[];
+    for(var i=0;i<list.length;i++){
+      var m=obsHmsToMin(list[i]&&list[i].t);
+      if(m==null)continue;
+      var d=nowMin-m;
+      if(d<0||d>OBS_BEAT_MIN)continue;
+      kept.push(list[i]);
+    }
+    localStorage.setItem(OBS_BEAT_KEY,JSON.stringify(kept));
+  }catch(e){}
+}
+
+// 寄り前系の通信を1件記録する。応答の中身まで数えておくと、
+// 「通信は成功したのに予想が出ない」場面で原因を切り分けられる。
+// premarket-prediction は predictions が銘柄コードをキーにした辞書で返り rows を持たないため、
+// rows・open欠測・買い比率あり の3項目は null になる。代わりに呼び出し側が
+// obsPredExtra() で found / 予想の件数 / 応答の日付 を extra として渡す
+function obsNetLog(resource,date,status,ms,json,errMsg,extra){
+  var rows=(json&&Array.isArray(json.rows))?json.rows:null;
+  var noOpen=null,withRatio=null;
+  if(rows){
+    noOpen=0;withRatio=0;
+    for(var i=0;i<rows.length;i++){
+      var r=rows[i]||{};
+      if(r.open==null)noOpen++;
+      if(r.buyRatioAvg!=null)withRatio++;
+    }
+  }
+  var rec={
+    t:obsNowHms(),
+    res:resource,
+    date:date||null,
+    status:(status==null?null:status),
+    ms:ms,
+    rows:(rows?rows.length:null),
+    partial:(json&&json.partial!==undefined?json.partial:null),
+    noOpen:noOpen,
+    withRatio:withRatio
+  };
+  // 長い例外メッセージで端末の保存容量を食わないよう要旨だけ残す
+  if(errMsg)rec.err=String(errMsg).slice(0,120);
+  if(extra)rec=Object.assign(rec,extra);
+  obsPush(OBS_NET_KEY,rec,OBS_NET_MAX);
+}
+
+// premarket-prediction 専用の追加項目。rows で数えられないぶんをここで補う。
+// 応答の date は rec.date（リクエストに乗せた日付）と食い違うことがあるため resDate として別に持つ
+function obsPredExtra(json){
+  var p=(json&&json.predictions&&typeof json.predictions==="object"&&!Array.isArray(json.predictions))?json.predictions:null;
+  return {
+    found:(json&&json.found!==undefined)?json.found:null,
+    predCount:(p?Object.keys(p).length:null),
+    resDate:(json&&json.date!==undefined)?json.date:null
+  };
+}
+
+// 9:00〜9:12 JSTの日足取得回数。寄り直後に何回取りに行ったかを後から数えるためだけの記録で、
+// 取得処理そのものには手を入れず呼び出し口で1つ増やすだけにしている。
+// 増えるたびに追記すると12分でイベントログ100件を埋め尽くし、同じ時間帯のエラー記録を
+// 押し出してしまうため、同じ日のレコードを書き換える形にして1日1件だけ残す
+// 経路は2つあり、合算すると区別できなくなるため別々に数える。
+//   "fetchDaily"        … 画面全体で使う日足（30分キャッシュ）
+//   "pmFetchRecentDaily"… 答え合わせ用に取り直す直近5日ぶん（別枠・短いキャッシュ）
+// どちらも /api/daily を直接叩くため、片方だけを見ても寄り直後の負荷は分からない
+var OBS_DAILY_START_MIN=540,OBS_DAILY_END_MIN=552; // 9:00〜9:12（0時からの分）
+var OBS_DAILY_COUNTS={},OBS_DAILY_DATE="";
+function obsCountDaily(src){
+  try{
+    var jst=new Date(Date.now()+9*3600000);
+    var min=jst.getUTCHours()*60+jst.getUTCMinutes();
+    if(min<OBS_DAILY_START_MIN||min>=OBS_DAILY_END_MIN)return; // 窓の外は数えない
+    var d=obsTodayJst();
+    if(OBS_DAILY_DATE!==d){OBS_DAILY_DATE=d;OBS_DAILY_COUNTS={};} // 日付が変わったら数え直す
+    OBS_DAILY_COUNTS[src]=(OBS_DAILY_COUNTS[src]||0)+1;
+    var list=obsRead(OBS_EVENT_KEY);
+    // 同じ日・同じ経路のレコードを書き換える（経路ごとに1日1件だけ残す）
+    var at=-1;
+    for(var i=list.length-1;i>=0;i--){
+      if(list[i]&&list[i].type==="daily"&&list[i].date===d&&list[i].src===src){at=i;break;}
+    }
+    var rec={t:obsNowHms(),type:"daily",date:d,src:src,count:OBS_DAILY_COUNTS[src]};
+    if(at>=0)list[at]=rec; else list.push(rec);
+    if(list.length>OBS_EVENT_MAX)list=list.slice(list.length-OBS_EVENT_MAX);
+    localStorage.setItem(OBS_EVENT_KEY,JSON.stringify(list));
+  }catch(e){}
+}
+
 // ── 端末に記憶する状態（useStateと同じ使い方）─────────────────────────────
 // タブを切り替えると部品が一度消えて状態がリセットされるため、選んだ内容を
 // localStorageに保存しておき、戻ってきた時・アプリを開き直した時に復元する。
@@ -416,6 +555,7 @@ async function fetchDaily(ticker){
   if(now<DAILY_PAUSED_UNTIL) return null;
   var p=(async function(){
     try{
+      obsCountDaily("fetchDaily"); // 観測ログ：9:00〜9:12の取得回数を数えるだけ。取得処理そのものは変えない
       var res=await fetch(DAILY_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(10000)});
       if(!res.ok) throw new Error("HTTP "+res.status);
       var json=await res.json();
@@ -6149,6 +6289,7 @@ async function pmFetchRecentDaily(ticker,force){
   if(now<DAILY_PAUSED_UNTIL)return null;
   try{
     var bucket=Math.floor(now/PM_TODAY_TTL);
+    obsCountDaily("pmFetchRecentDaily"); // 観測ログ：9:00〜9:12の取得回数を数えるだけ。取得処理そのものは変えない
     var res=await fetch(DAILY_API+"?ticker="+encodeURIComponent(ticker)+"&interval=1d&range=5d&_t="+bucket,{signal:AbortSignal.timeout(10000),cache:"no-store"});
     if(!res.ok)throw new Error("daily "+res.status);
     var json=await res.json();
@@ -6202,11 +6343,15 @@ async function pmFetchQuoteSummary(force){
   if(!pmQuoteWindowOpen())return null;                      // 時間外は通信しない
   var date=pmTargetDate(),now=Date.now();
   if(!force&&PM_QSUM_CACHE&&PM_QSUM_DATE===date&&now-PM_QSUM_TS<PM_QSUM_TTL)return PM_QSUM_CACHE;
+  // 観測ログ用の控え。既存の処理では一切参照しない（失敗時も同じ形で1件残すために持つ）
+  var obsT0=Date.now(),obsStatus=null,obsJson=null;
   try{
     var url=PM_QSUM_API+"&date="+encodeURIComponent(date);
     var res=await fetch(url,{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    obsStatus=res.status;
     if(!res.ok)throw new Error("premarket-summary "+res.status);
     var json=await res.json();
+    obsJson=json;
     if(!json||!Array.isArray(json.rows))throw new Error("bad summary");
     var map={};
     for(var i=0;i<json.rows.length;i++){
@@ -6215,8 +6360,14 @@ async function pmFetchQuoteSummary(force){
       map[String(r.code)]=r;
     }
     PM_QSUM_CACHE=map;PM_QSUM_TS=now;PM_QSUM_DATE=date;
+    obsNetLog("premarket-summary",date,obsStatus,Date.now()-obsT0,obsJson,null);
     return map;
-  }catch(e){return null;}
+  }catch(e){
+    // 失敗時のステータスは null 固定。非200のときは投げた例外の文言に status が入るため、
+    // ここで数値を残さなくても err から追える
+    obsNetLog("premarket-summary",date,null,Date.now()-obsT0,obsJson,(e&&e.message)||e);
+    return null;
+  }
 }
 
 // サーバーに保存済みの気配ベース予想（premarket:pred:<日付>）を銘柄コード→予想 の形で取る。
@@ -6229,17 +6380,26 @@ async function pmFetchServerPredictions(dateStr,force){
   if(!dateStr)return null;
   var now=Date.now();
   if(!force&&PM_PRED_CACHE&&PM_PRED_DATE===dateStr&&now-PM_PRED_TS<PM_PRED_TTL)return PM_PRED_CACHE;
+  // 観測ログ用の控え。既存の処理では一切参照しない（失敗時も同じ形で1件残すために持つ）
+  var obsT0=Date.now(),obsStatus=null,obsJson=null;
   try{
     var url=PM_PRED_API+"&date="+encodeURIComponent(dateStr);
     var res=await fetch(url,{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    obsStatus=res.status;
     if(!res.ok)throw new Error("premarket-prediction "+res.status);
     var json=await res.json();
+    obsJson=json;
+    obsNetLog("premarket-prediction",dateStr,obsStatus,Date.now()-obsT0,obsJson,null,obsPredExtra(obsJson));
     // found:false は「その日の予想がまだ保存されていない」状態。異常ではないので
     // エラー扱いにせず、端末内の記録だけで表示する従来の動きへ落とす
     if(!json||!json.found||!json.predictions)return null;
     PM_PRED_CACHE=json.predictions;PM_PRED_TS=now;PM_PRED_DATE=dateStr;
     return json.predictions;
-  }catch(e){return null;}
+  }catch(e){
+    // 失敗時のステータスは null 固定（summary 側と同じ扱い）
+    obsNetLog("premarket-prediction",dateStr,null,Date.now()-obsT0,obsJson,(e&&e.message)||e,obsPredExtra(obsJson));
+    return null;
+  }
 }
 
 // 気配ベース予想の理由バッジ（label / val / state）を作る。
@@ -6419,6 +6579,9 @@ function PremarketPanel(p){
   var updS=useState("");var lastUpd=updS[0],setLastUpd=updS[1];
   var afterS=useState(pmIsAfterOpen());var afterOpen=afterS[0],setAfterOpen=afterS[1];
   var pqCopyS=useState(false);var pqCopied=pqCopyS[0],setPqCopied=pqCopyS[1];
+  var obsCopyS=useState(false);var obsCopied=obsCopyS[0],setObsCopied=obsCopyS[1];
+  var obsOpenS=useState(false);var obsOpen=obsOpenS[0],setObsOpen=obsOpenS[1];   // 観測ログ（既定は閉じる）
+  var obsTickS=useState(0);var obsTick=obsTickS[0],setObsTick=obsTickS[1];       // クリア後に件数表示を描き直すためだけの値
   // 各カードの開閉。銘柄が多いとスクロールが長くなるため、下段の的中率は既定で閉じておく
   var opMkS=useState(true);var opMk=opMkS[0],setOpMk=opMkS[1];    // 🌅今朝の地合い
   var opLsS=useState(true);var opLs=opLsS[0],setOpLs=opLsS[1];    // 予想一覧／答え合わせ
@@ -6453,6 +6616,55 @@ function PremarketPanel(p){
       else legacy();
     }catch(e){legacy();}
   }
+
+  // 観測ログ（obslog_*）をまとめてクリップボードへ。上のコピーと同じ3段構えにしてある
+  function copyObsAll(){
+    var text="{}";
+    try{
+      text=JSON.stringify({
+        net:obsRead(OBS_NET_KEY),
+        event:obsRead(OBS_EVENT_KEY),
+        beat:obsRead(OBS_BEAT_KEY)
+      });
+    }catch(e){}
+    var done=function(){setObsCopied(true);setTimeout(function(){setObsCopied(false);},2000);};
+    var legacy=function(){
+      try{
+        var ta=document.createElement("textarea");
+        ta.value=text;ta.style.position="fixed";ta.style.top="0";ta.style.opacity="0";
+        document.body.appendChild(ta);ta.focus();ta.select();ta.setSelectionRange(0,text.length);
+        var ok=document.execCommand("copy");
+        document.body.removeChild(ta);
+        if(ok){done();return;}
+      }catch(e){}
+      prompt("観測ログ（手動でコピーしてください）",text);
+    };
+    try{
+      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(legacy);
+      else legacy();
+    }catch(e){legacy();}
+  }
+  // 3種類とも消す。日足の累計は端末内の変数にも持っているため合わせて0へ戻す
+  function clearObsAll(){
+    try{
+      localStorage.removeItem(OBS_NET_KEY);
+      localStorage.removeItem(OBS_EVENT_KEY);
+      localStorage.removeItem(OBS_BEAT_KEY);
+    }catch(e){}
+    OBS_DAILY_COUNTS={};OBS_DAILY_DATE="";OBS_LAST_ROWS=null;
+    setObsTick(function(n){return n+1;}); // 件数表示を描き直すためだけの更新
+  }
+
+  // 予想の描画件数。9:00前は予想一覧、9:00以降は答え合わせの行数がそのまま画面の件数になる
+  var pmRowCount=afterOpen
+    ?((results&&results.rows)?results.rows.length:0)
+    :((data&&data.rows)?data.rows.length:0);
+  // 件数が前回と変わったときだけ記録する（描画のたびだと同じ値でログが埋まる）
+  useEffect(function(){
+    if(OBS_LAST_ROWS===pmRowCount)return;
+    OBS_LAST_ROWS=pmRowCount;
+    obsEvent("render",{count:pmRowCount,mode:afterOpen?"result":"pred"});
+  },[pmRowCount,afterOpen]);
 
   // 9:00をまたいだら自動で「答え合わせ」表示へ切り替える（1分ごとに確認）
   useEffect(function(){
@@ -6549,6 +6761,29 @@ function PremarketPanel(p){
             <button onClick={copyPqAll} disabled={c.total===0} style={{marginLeft:"auto",background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:c.total===0?"#2a4560":"#b8cce0",padding:"4px 9px",fontSize:11,fontWeight:700,cursor:c.total===0?"default":"pointer",fontFamily:"monospace",flexShrink:0}}>
               {pqCopied?"✅ コピーしました":"📋 コピー"}
             </button>
+          </div>
+        );
+      })()}
+
+      {/* 観測ログ（obslog_*）。朝に在席していなくても寄り前の動きを後から追うための出口。
+          件数はクリア後にも描き直したいので obsTick を式の中で参照している */}
+      {(function(){
+        var nNet=obsRead(OBS_NET_KEY).length,nEv=obsRead(OBS_EVENT_KEY).length,nBeat=obsRead(OBS_BEAT_KEY).length;
+        var btn={background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"4px 9px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",flexShrink:0};
+        return(
+          <div key={obsTick} style={{border:"1px solid #0f2040",borderRadius:8,marginBottom:10,overflow:"hidden"}}>
+            <div onClick={function(){setObsOpen(!obsOpen);}}
+              style={{background:"#071428",padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:"#b8cce0"}}>
+              {obsOpen?"▼":"▶"} 観測ログ
+            </div>
+            {obsOpen&&
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:"#4a7090",padding:"8px 12px"}}>
+                <span>通信 {nNet}件 / イベント {nEv}件 / 心拍 {nBeat}件</span>
+                <button onClick={copyObsAll} style={Object.assign({},btn,{marginLeft:"auto"})}>
+                  {obsCopied?"✅ コピーしました":"📋 コピー"}
+                </button>
+                <button onClick={clearObsAll} style={btn}>🗑 クリア</button>
+              </div>}
           </div>
         );
       })()}
@@ -6846,6 +7081,39 @@ export default function App(){
   // タブを切り替えるたびに記憶する（次に開いたとき同じタブから始めるため）
   useEffect(function(){saveActiveTab(activeTab);},[activeTab]);
   var isMobile=useIsMobile(); // スマホ幅（768px未満）判定
+
+  // ── 観測ログ：JSエラー・画面の表示切替・心拍 ─────────────────────────────
+  // アプリ全体で1本だけ動かす。寄り前タブを開いていない時間帯（バックグラウンドで
+  // 放置している朝など）も記録し続けたいので、タブの選択状態には依存させない
+  useEffect(function(){
+    function onErr(e){
+      obsEvent("error",{
+        msg:String((e&&e.message)||"error").slice(0,160),
+        at:String((e&&e.filename)||"")+((e&&e.lineno)?":"+e.lineno:"")
+      });
+    }
+    function onRej(e){
+      var r=e?e.reason:null;
+      // Promiseの拒否には発生元の行が付かないことがあるため、あればstackの先頭2行から拾う
+      var st=(r&&r.stack)?String(r.stack).split("\n"):[];
+      obsEvent("reject",{
+        msg:String((r&&r.message)||r||"rejection").slice(0,160),
+        at:String(st[1]||st[0]||"").trim().slice(0,120)
+      });
+    }
+    function onVis(){obsEvent("visibility",{state:document.visibilityState});}
+    window.addEventListener("error",onErr);
+    window.addEventListener("unhandledrejection",onRej);
+    document.addEventListener("visibilitychange",onVis);
+    obsBeat();                            // 起動直後に1回打ってから30秒間隔へ
+    var beat=setInterval(obsBeat,30000);
+    return function(){
+      window.removeEventListener("error",onErr);
+      window.removeEventListener("unhandledrejection",onRej);
+      document.removeEventListener("visibilitychange",onVis);
+      clearInterval(beat);
+    };
+  },[]);
 
   // ── 起動時の業種選択（おまかせ／業種一覧／前回の業種） ──────────────────────
   var JP_33_SECTORS=["水産・農林業","鉱業","建設業","食料品","繊維製品","パルプ・紙","化学","医薬品","石油・石炭製品","ゴム製品","ガラス・土石製品","鉄鋼","非鉄金属","金属製品","機械","電気機器","輸送用機器","精密機器","その他製品","電気・ガス業","陸運業","海運業","空運業","倉庫・運輸関連業","情報・通信業","卸売業","小売業","銀行業","証券、商品先物取引業","保険業","その他金融業","不動産業","サービス業"];
