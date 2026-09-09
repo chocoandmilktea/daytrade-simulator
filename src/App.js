@@ -5973,6 +5973,7 @@ var PM_OPEN_MIN=9*60;                // 9:00 JST（これ以降は「答え合�
 var PM_BIAS_TTL=3*60*1000;           // 地合いの端末側キャッシュ(3分・サーバー側と同じ長さ)
 var PM_TODAY_TTL=5*60*1000;          // 答え合わせ用の当日日足キャッシュ(5分)
 var PM_FETCH_CONCURRENCY=4;          // 日足まとめ取得の同時実行数（Yahooに負担をかけない）
+var PM_MISS_CODES_MAX=10;            // 観測ログに載せる「サーバー予想が無かった銘柄」の上限件数。イベントログが100件のリングバッファのため長い配列は載せない
 // 予想の出どころ。今はベータ推定のみ。Phase 2で寄り前気配ベースに切り替えたら "quote" を記録する
 var PM_SRC_BETA="beta";
 var PM_SRC_LABELS={beta:"ベータ推定",quote:"寄り前気配"};
@@ -6562,10 +6563,35 @@ async function pmBuildResults(favTickers,force){
     if(b.act==null)return -1;
     return b.act-a.act;
   });
+  // 画面の行数はお気に入りの日本株の数で決まり、サーバー予想の件数には影響されない。
+  // そのため行数だけを見てもサーバー予想が反映されたかは判定できない。
+  // ここで「サーバー予想が乗った行の本数」と「乗らなかった銘柄」を数えて呼び出し側へ渡す
+  var srvCount=0,missCodes=[],ri,rj,rrow,hasSrv;
+  for(ri=0;ri<rows.length;ri++){
+    rrow=rows[ri];hasSrv=false;
+    for(rj=0;rj<rrow.preds.length;rj++){
+      if(rrow.preds[rj].fromServer){hasSrv=true;break;}
+    }
+    if(hasSrv)srvCount++;
+    // イベントログは100件のリングバッファなので、長い配列を載せるとエラー記録を押し出す。
+    // 食い違いの銘柄を特定できれば足りるため先頭10件で打ち切る
+    else if(missCodes.length<PM_MISS_CODES_MAX)missCodes.push(rrow.ticker.replace(".T",""));
+  }
   // serverOk はサーバー保存ぶんの気配予想が取れたかどうか。9:00〜9:06はまだ保存前で必ず
   // 空振りするため、呼び出し側が「あとで取り直すべきか」を判断できるように返す。
   // 対象銘柄が0件のときは通信していないので false（再取得の対象にもならない）
-  return {date:today,rows:rows,serverOk:!!serverPreds};
+  return {date:today,rows:rows,serverOk:!!serverPreds,srvCount:srvCount,missCodes:missCodes};
+}
+
+// 答え合わせを画面へ渡した直後に観測ログを1件だけ残す。取得の直後ではなく setResults の後に
+// 置くのは、見たいのが「通信できたか」ではなく「サーバー予想が画面へ反映されたか」だから。
+// 1回の答え合わせにつき1件（ループの中では呼ばない）。イベントログは100件のリングバッファで、
+// 増やしすぎるとエラー記録を押し出すため。via は経路の区別（init/retry/manual）
+function pmObsApplied(via,r){
+  try{
+    if(!r||!r.rows)return;
+    obsEvent("applied",{via:via,srv:r.srvCount,rows:r.rows.length,miss:r.missCodes});
+  }catch(e){} // 観測ログの失敗で画面を壊さない（既存の観測ログと同じ扱い）
 }
 
 // ── 🌅 寄り予想タブ ───────────────────────────────────────────────────
@@ -6687,6 +6713,7 @@ function PremarketPanel(p){
           var r=await pmBuildResults(list,false);
           if(!alive)return;
           setResults(r);
+          pmObsApplied("init",r);
         }else setResults(null);
         setStats(calcFavPremarketAccuracy());
         setLastUpd(new Date().toLocaleTimeString("ja-JP"));
@@ -6717,6 +6744,7 @@ function PremarketPanel(p){
           var r=await pmBuildResults(list,true);
           if(!alive)return;
           setResults(r);
+          pmObsApplied("retry",r);
           setLastUpd(new Date().toLocaleTimeString("ja-JP"));
         }catch(e){/* 再取得の失敗は画面に出さない。次の周期かユーザーの更新操作に任せる */}
         busy=false;
@@ -6735,6 +6763,7 @@ function PremarketPanel(p){
       if(pmIsAfterOpen()){
         var r=await pmBuildResults(list,true);
         setResults(r);
+        pmObsApplied("manual",r);
       }else setResults(null);
       setStats(calcFavPremarketAccuracy());
       setLastUpd(new Date().toLocaleTimeString("ja-JP"));
