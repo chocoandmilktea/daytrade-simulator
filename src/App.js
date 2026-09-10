@@ -5978,6 +5978,21 @@ var PM_MISS_CODES_MAX=10;            // 観測ログに載せる「サーバー�
 var PM_SRC_BETA="beta";
 var PM_SRC_LABELS={beta:"ベータ推定",quote:"寄り前気配"};
 var PM_SRC_PRIORITY=["quote","beta"];// 予想を画面に縦に並べるときの順番（1件に絞る用途ではない）
+var PM_BIAS_MIN=10;                  // 買い比率が50%からこのポイント以上離れていたら「偏り大」とみなす
+var PM_LOWPRICE_MAX=500;             // 前日終値がこの円未満なら「低位」の注記を添える（値動きの荒さの目安）
+// 「偏り大」バッジの見た目。緑=上下方向・赤=外れ・黄=確信度で既に埋まっているため、
+// 意味の衝突を避けて色は使わず枠線とグレー文字だけで表す
+var PM_BIAS_BADGE_STYLE={marginLeft:6,display:"inline-block",border:"1px solid #2a4560",color:"#8a9aa8",fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:4,whiteSpace:"nowrap"};
+var PM_LOW_NOTE_STYLE={marginLeft:4,fontSize:9,fontWeight:400,color:"#6a7a88"};
+// 買い比率の最新値が50%から大きく離れているか。数値でなければnull（バッジも注記も出さない）
+function pmBuyBias(last){
+  if(last==null||typeof last!=="number"||!isFinite(last))return null;
+  return Math.abs(last-50)>=PM_BIAS_MIN;
+}
+// 前日終値が低位株の目安を下回るか。数値でなければfalse（注記なし・バッジ自体は出す）
+function pmIsLowPrice(prevClose){
+  return typeof prevClose==="number"&&isFinite(prevClose)&&prevClose<PM_LOWPRICE_MAX;
+}
 
 // ── 時刻・日付まわり ──────────────────────────────────────────────────
 function pmSign(v){return v>0?"+":"";}                       // 表示用の符号（マイナスはtoFixedが付ける）
@@ -6532,6 +6547,8 @@ async function pmBuildResults(favTickers,force){
           conf:srv.confidence==null?null:srv.confidence,
           // 理由はサーバーが返す数値からフロント側で組み立て直す（文言はサーバーから来ない）
           reasons:pmQuoteReasons(srv.buyRatioLast,srv.buyRatioMin,srv.buyRatioMax,srv.validCount),
+          // 「偏り大」バッジの判定に使う最新の買い比率。最小・最大は今回は通さない
+          buyRatioLast:srv.buyRatioLast==null?null:srv.buyRatioLast,
           fromServer:true
         });
         continue;
@@ -6909,6 +6926,9 @@ function PremarketPanel(p){
                             {x.label}
                             {x.fromServer&&<span style={{fontSize:9,color:"#2a6090",fontWeight:400}}> ・サーバー保存ぶん</span>}
                             {x.exp==null&&<span style={{fontSize:10,color:"#4a7090",fontWeight:400}}> ・この日の記録なし</span>}
+                            {/* 買い比率が50%から大きく離れていた銘柄の目印。前日終値は銘柄に1つなのでr側から見る */}
+                            {pmBuyBias(x.buyRatioLast)===true&&<span style={PM_BIAS_BADGE_STYLE}>偏り大</span>}
+                            {pmBuyBias(x.buyRatioLast)===true&&pmIsLowPrice(r.prevClose)&&<span style={PM_LOW_NOTE_STYLE}>低位</span>}
                           </div>
                           <div style={{display:"flex",alignItems:"center",gap:10,whiteSpace:"nowrap"}}>
                             <div style={{textAlign:"right"}}>
@@ -6978,6 +6998,9 @@ function PremarketPanel(p){
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
                           <div style={{minWidth:0,fontSize:11,fontWeight:700,color:pred?"#7ab0d8":"#4a7090"}}>
                             {x.label}{!pred&&<span style={{fontSize:10,fontWeight:400}}> ・データなし</span>}
+                            {/* 買い比率が50%から大きく離れていた銘柄の目印。判定は必ずpmBuyBiasに任せる */}
+                            {pred&&pmBuyBias(pred.buyRatioLast)===true&&<span style={PM_BIAS_BADGE_STYLE}>偏り大</span>}
+                            {pred&&pmBuyBias(pred.buyRatioLast)===true&&pmIsLowPrice(pred.prevClose)&&<span style={PM_LOW_NOTE_STYLE}>低位</span>}
                           </div>
                           <div style={{display:"flex",alignItems:"center",gap:12,whiteSpace:"nowrap"}}>
                             <div style={{textAlign:"right"}}>
