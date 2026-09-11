@@ -5980,6 +5980,8 @@ var PM_SRC_LABELS={beta:"ベータ推定",quote:"寄り前気配"};
 var PM_SRC_PRIORITY=["quote","beta"];// 予想を画面に縦に並べるときの順番（1件に絞る用途ではない）
 var PM_BIAS_MIN=10;                  // 買い比率が50%からこのポイント以上離れていたら「偏り大」とみなす
 var PM_LOWPRICE_MAX=500;             // 前日終値がこの円未満なら「低位」の注記を添える（値動きの荒さの目安）
+var PM_DIRSTATS_KEY="dirstats_hist"; // 日ごとの方向成績（localStorage）。1日1件の配列。pm_* とは別物
+var PM_DIRSTATS_MAX=30;              // 上の保持件数。超えたら日付の古いほうから捨てる
 // 「偏り大」バッジの見た目。緑=上下方向・赤=外れ・黄=確信度で既に埋まっているため、
 // 意味の衝突を避けて色は使わず枠線とグレー文字だけで表す
 var PM_BIAS_BADGE_STYLE={marginLeft:6,display:"inline-block",border:"1px solid #2a4560",color:"#8a9aa8",fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:4,whiteSpace:"nowrap"};
@@ -5992,6 +5994,13 @@ function pmBuyBias(last){
 // 前日終値が低位株の目安を下回るか。数値でなければfalse（注記なし・バッジ自体は出す）
 function pmIsLowPrice(prevClose){
   return typeof prevClose==="number"&&isFinite(prevClose)&&prevClose<PM_LOWPRICE_MAX;
+}
+// 方向の当たり外れ。true=当たり / false=外れ / null=判定不能（予想か実測が無い・予想がデッドバンド内）。
+// 答え合わせ表示に直書きしてあった3分岐をここへ出し、集計帯と同じ条件を共有させている
+// （片方だけ書き換えると画面のバッジと集計の数字が食い違うため）
+function pmDirHit(exp,act){
+  if(exp==null||act==null||Math.abs(exp)<PM_DIR_DEADBAND)return null;
+  return (exp>0)===(act>0);
 }
 
 // ── 時刻・日付まわり ──────────────────────────────────────────────────
@@ -6600,6 +6609,58 @@ async function pmBuildResults(favTickers,force){
   return {date:today,rows:rows,serverOk:!!serverPreds,srvCount:srvCount,missCodes:missCodes};
 }
 
+// ── その日の方向成績の集計（集計帯・日ごとの記録で共用）───────────────
+// 入力は pmBuildResults が返したオブジェクト。対象はサーバー予想が乗った行だけで、
+// 買い比率が数値で取れない行は全項目から除外する（偏りの有無を判定できないため）。
+// 数値は丸めずに返す（表示側で1桁へ丸める）
+function pmBuildDirStats(res){
+  if(!res||!res.rows)return null;
+  var st={date:res.date||null,total:0,biasTotal:0,buyWin:0,buyLose:0,sellWin:0,sellLose:0,plainWin:0,plainLose:0,brAvg:null,brMed:null};
+  var brs=[],i,j,row,preds,pred,br,bias,hit,sum;
+  for(i=0;i<res.rows.length;i++){
+    row=res.rows[i];preds=row.preds||[];pred=null;
+    for(j=0;j<preds.length;j++){if(preds[j].fromServer){pred=preds[j];break;}}
+    if(!pred)continue;
+    br=pred.buyRatioLast;
+    if(typeof br!=="number"||!isFinite(br))continue;
+    st.total++;
+    brs.push(br);
+    bias=pmBuyBias(br); // 50との比較は直接書かず、必ずバッジと同じ判定に任せる
+    if(bias===true)st.biasTotal++;
+    hit=pmDirHit(pred.exp,row.act);
+    if(hit==null)continue;                                    // 判定不能は勝敗のどちらにも数えない
+    if(bias===true&&br>50){if(hit)st.buyWin++;else st.buyLose++;}
+    else if(bias===true&&br<50){if(hit)st.sellWin++;else st.sellLose++;}
+    else if(bias!==true){if(hit)st.plainWin++;else st.plainLose++;}
+    // 残るのは「偏り大なのに買い比率がちょうど50.0」の場合だけ。買い側・売り側の
+    // どちらに入れても偏りの向きを誤って表すため、勝敗にはどこにも数えない（平均・中央値には含む）
+  }
+  if(brs.length){
+    sum=0;
+    for(i=0;i<brs.length;i++)sum+=brs[i];
+    st.brAvg=sum/brs.length;
+    brs.sort(function(a,b){return a-b;});
+    st.brMed=brs.length%2?brs[(brs.length-1)/2]:(brs[brs.length/2-1]+brs[brs.length/2])/2;
+  }
+  return st;
+}
+// 日ごとの方向成績の読み書き（localStorage: dirstats_hist）。同じ日付は上書きし、
+// 日付の新しい順に PM_DIRSTATS_MAX 件だけ残す。失敗しても画面は壊さない
+function pmLoadDirStats(){
+  try{var v=JSON.parse(localStorage.getItem(PM_DIRSTATS_KEY)||"[]");return Array.isArray(v)?v:[];}catch(e){return[];}
+}
+function pmSaveDirStats(st){
+  if(!st||!st.date)return;
+  try{
+    var list=pmLoadDirStats(),i,found=false;
+    for(i=0;i<list.length;i++){if(list[i]&&list[i].date===st.date){list[i]=st;found=true;break;}}
+    if(!found)list.push(st);
+    list.sort(function(a,b){return String(b.date).localeCompare(String(a.date));});
+    if(list.length>PM_DIRSTATS_MAX)list=list.slice(0,PM_DIRSTATS_MAX);
+    localStorage.setItem(PM_DIRSTATS_KEY,JSON.stringify(list));
+  }catch(e){}
+}
+
 // 答え合わせを画面へ渡した直後に観測ログを1件だけ残す。取得の直後ではなく setResults の後に
 // 置くのは、見たいのが「通信できたか」ではなく「サーバー予想が画面へ反映されたか」だから。
 // 1回の答え合わせにつき1件（ループの中では呼ばない）。イベントログは100件のリングバッファで、
@@ -6625,6 +6686,8 @@ function PremarketPanel(p){
   var obsCopyS=useState(false);var obsCopied=obsCopyS[0],setObsCopied=obsCopyS[1];
   var obsOpenS=useState(false);var obsOpen=obsOpenS[0],setObsOpen=obsOpenS[1];   // 観測ログ（既定は閉じる）
   var obsTickS=useState(0);var obsTick=obsTickS[0],setObsTick=obsTickS[1];       // クリア後に件数表示を描き直すためだけの値
+  var dsOpenS=useState(false);var dsOpen=dsOpenS[0],setDsOpen=dsOpenS[1];        // 方向成績の過去ぶん（既定は閉じる）
+  var dsCopyS=useState(false);var dsCopied=dsCopyS[0],setDsCopied=dsCopyS[1];
   // 各カードの開閉。銘柄が多いとスクロールが長くなるため、下段の的中率は既定で閉じておく
   var opMkS=useState(true);var opMk=opMkS[0],setOpMk=opMkS[1];    // 🌅今朝の地合い
   var opLsS=useState(true);var opLs=opLsS[0],setOpLs=opLsS[1];    // 予想一覧／答え合わせ
@@ -6681,6 +6744,36 @@ function PremarketPanel(p){
         if(ok){done();return;}
       }catch(e){}
       prompt("観測ログ（手動でコピーしてください）",text);
+    };
+    try{
+      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(legacy);
+      else legacy();
+    }catch(e){legacy();}
+  }
+
+  // 方向成績の記録（dirstats_hist）を全件テキストでクリップボードへ。上の2つと同じ3段構え。
+  // 表計算へそのまま貼れるようにタブ区切りの1日1行にしてある
+  function copyDirStatsAll(){
+    var text="";
+    try{
+      var rows=pmLoadDirStats().map(function(s){
+        return [s.date,s.total,s.biasTotal,s.buyWin,s.buyLose,s.sellWin,s.sellLose,s.plainWin,s.plainLose,
+          s.brAvg==null?"":s.brAvg.toFixed(1),s.brMed==null?"":s.brMed.toFixed(1)].join("\t");
+      });
+      rows.unshift("date\ttotal\tbiasTotal\tbuyWin\tbuyLose\tsellWin\tsellLose\tplainWin\tplainLose\tbrAvg\tbrMed");
+      text=rows.join("\n");
+    }catch(e){}
+    var done=function(){setDsCopied(true);setTimeout(function(){setDsCopied(false);},2000);};
+    var legacy=function(){
+      try{
+        var ta=document.createElement("textarea");
+        ta.value=text;ta.style.position="fixed";ta.style.top="0";ta.style.opacity="0";
+        document.body.appendChild(ta);ta.focus();ta.select();ta.setSelectionRange(0,text.length);
+        var ok=document.execCommand("copy");
+        document.body.removeChild(ta);
+        if(ok){done();return;}
+      }catch(e){}
+      prompt("方向成績の記録（手動でコピーしてください）",text);
     };
     try{
       if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done).catch(legacy);
@@ -6897,6 +6990,51 @@ function PremarketPanel(p){
         ):afterOpen?(
           /* 答え合わせ表示 */
           <div>
+            {/* その日の方向成績の集計帯。答え合わせのときだけ出す（9:00前の予想一覧には実測が無い）。
+                緑・赤・黄は既に別の意味で埋まっているため、ここは枠線とグレー文字だけで表す */}
+            {(function(){
+              var st=pmBuildDirStats(results);
+              if(!st||st.total===0)return null;   // 集計対象が0件なら帯ごと出さない
+              pmSaveDirStats(st);                 // 保存は描画と同じタイミング。専用の取得やタイマーは持たない
+              var hist=pmLoadDirStats();
+              var f1=function(v){return v==null?"—":v.toFixed(1);};
+              var wl=function(w,l){return w+"勝"+l+"敗";};
+              var box={border:"1px solid #1e3050",borderRadius:8,margin:"10px 14px",padding:"8px 10px",color:"#8a9aa8",fontSize:11,fontFamily:"monospace"};
+              var lab={color:"#6a7a88",marginRight:4};
+              var btn={background:"#050f20",border:"1px solid #1e3050",borderRadius:6,color:"#b8cce0",padding:"3px 8px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"monospace"};
+              return(
+                <div style={box}>
+                  <div><span style={lab}>偏り大</span>{st.biasTotal} / {st.total}</div>
+                  <div style={{marginTop:3}}>
+                    <span style={lab}>買い側</span>{wl(st.buyWin,st.buyLose)}
+                    <span style={Object.assign({},lab,{marginLeft:10})}>売り側</span>{wl(st.sellWin,st.sellLose)}
+                    <span style={Object.assign({},lab,{marginLeft:10})}>偏りなし</span>{wl(st.plainWin,st.plainLose)}
+                  </div>
+                  <div style={{marginTop:3}}><span style={lab}>日平均</span>{f1(st.brAvg)}（中央値 {f1(st.brMed)}）</div>
+                  <div onClick={function(){setDsOpen(!dsOpen);}} style={{marginTop:6,cursor:"pointer",color:"#6a7a88"}}>
+                    {dsOpen?"▼":"▶"} 過去の記録（{hist.length}日分）
+                  </div>
+                  {dsOpen&&
+                    <div style={{marginTop:5,borderTop:"1px solid #1e3050",paddingTop:5}}>
+                      {hist.map(function(s){
+                        return(
+                          <div key={s.date} style={{display:"flex",flexWrap:"wrap",gap:8,padding:"2px 0",whiteSpace:"nowrap"}}>
+                            <span style={{color:"#b8cce0"}}>{s.date}</span>
+                            <span>偏り大 {s.biasTotal}/{s.total}</span>
+                            <span>買い {wl(s.buyWin,s.buyLose)}</span>
+                            <span>売り {wl(s.sellWin,s.sellLose)}</span>
+                            <span>なし {wl(s.plainWin,s.plainLose)}</span>
+                            <span>平均 {f1(s.brAvg)}（中 {f1(s.brMed)}）</span>
+                          </div>
+                        );
+                      })}
+                      <button onClick={copyDirStatsAll} style={Object.assign({},btn,{marginTop:6})}>
+                        {dsCopied?"✅ コピーしました":"📋 全件コピー"}
+                      </button>
+                    </div>}
+                </div>
+              );
+            })()}
             {(results&&results.rows?results.rows:[]).map(function(r){
               return(
                 <div key={r.ticker} style={{padding:"10px 14px",borderBottom:"1px solid #0a1828"}}>
@@ -6918,7 +7056,7 @@ function PremarketPanel(p){
                   {/* 手法ごと：予想・誤差・方向の当たり外れ。誤差と方向は手法ごとに計算する */}
                   {(r.preds||[]).map(function(x){
                     var diff=(x.exp!=null&&r.act!=null)?r.act-x.exp:null;
-                    var hit=(x.exp!=null&&r.act!=null&&Math.abs(x.exp)>=PM_DIR_DEADBAND)?((x.exp>0)===(r.act>0)):null;
+                    var hit=pmDirHit(x.exp,r.act); // 集計帯と同じ判定を使う（条件を二重に書かない）
                     return(
                       <div key={x.src} style={{marginTop:6,paddingTop:6,borderTop:"1px solid #0a1828"}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
