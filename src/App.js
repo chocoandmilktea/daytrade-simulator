@@ -1560,14 +1560,19 @@ function getUniverseBandStats(){
 }
 
 // ── 時間帯別（セッション別）の的中率集計（Dの機能・sh_intraday_*横断）─────
-// 「その時間帯にスコア60点以上だった銘柄が、その日の（記録された最後の＝引けに近い）
-// 時点までに上がっていたか」を集計する。翌営業日ではなく“その日の中”の答え合わせ。
+// 「その時間帯にスコア60点以上だった銘柄が、その後どうなったか」を終点3系統で集計する。
+// 終点は 11:00時点（前場）／13:00時点（後場前半）／引け（その日の最後の記録）の3つ。
+// デイトレでは「前場のうちに切るか・昼をまたぐか・引けまで持つか」を分けて見る必要があるため。
+// 翌営業日ではなく“その日の中”の答え合わせであることは従来どおり。
 var INTRADAY_ACC_CACHE=null,INTRADAY_ACC_TS=0;
 function calcIntradayAccuracy(){
   var now=Date.now();
   if(INTRADAY_ACC_CACHE&&now-INTRADAY_ACC_TS<UNIVERSE_STATS_TTL) return INTRADAY_ACC_CACHE;
-  var scoreStats={};
-  INTRADAY_SESSIONS.forEach(function(s){scoreStats[s]={w:0,t:0};});
+  var scoreStats={}; // scoreStats[終点key][始点セッション]={w,t}
+  INTRADAY_END_DEFS.forEach(function(def){
+    scoreStats[def.key]={};
+    INTRADAY_SESSIONS.forEach(function(s){scoreStats[def.key][s]={w:0,t:0};});
+  });
   try{
     Object.keys(localStorage).forEach(function(k){
       if(k.indexOf("sh_intraday_")!==0) return;
@@ -1575,27 +1580,47 @@ function calcIntradayAccuracy(){
       var byDate={};
       hist.forEach(function(e){(byDate[e.d]=byDate[e.d]||[]).push(e);});
       Object.keys(byDate).forEach(function(d){
-        var entries=byDate[d],ei=entries.length-1;
-        if(ei<1) return;
-        // 終点はその日の最後の記録。ただし後場後半か引け後で終わっていない日は「当日終値」と呼べない
-        var closeEntry=entries[ei],endRank=sessionRankAt(entries,ei);
-        if(closeEntry.p==null||endRank==null||endRank<SESSION_RANK["後場後半"]) return;
-        entries.forEach(function(e,idx){
-          if(idx>=ei||e.p==null||e.s<60) return;
-          if(INTRADAY_SESSIONS.indexOf(e.session)===-1) return;
-          if(!isFarEnoughPair(e,closeEntry,sessionRankAt(entries,idx),endRank)) return; // 近すぎる比較は除外
-          var move=priceMoveState(e.p,closeEntry.p);
-          if(move===0) return; // 誤差レベルの値動きは集計対象外
-          scoreStats[e.session].t++;
-          if(move>0) scoreStats[e.session].w++;
+        var entries=byDate[d];
+        if(entries.length<2) return;
+        INTRADAY_END_DEFS.forEach(function(def){
+          var ei=findIntradayEndIdx(entries,def);
+          if(ei<1) return;
+          var endEntry=entries[ei],endRank=sessionRankAt(entries,ei);
+          if(endRank==null) return;
+          entries.forEach(function(e,idx){
+            if(idx>=ei||e.p==null||e.s<60) return;
+            if(INTRADAY_SESSIONS.indexOf(e.session)===-1) return;
+            var startRank=sessionRankAt(entries,idx);
+            if(startRank==null||startRank>=endRank) return; // 同じ時間帯どうし・逆順の組み合わせは集計しない
+            // 近すぎる比較の除外。終点が中間時刻のときはランク差2を求めない（足切りが厳しくなりすぎるため）
+            var farEnough=def.session?isFarEnoughMidPair(e,endEntry):isFarEnoughPair(e,endEntry,startRank,endRank);
+            if(!farEnough) return;
+            var move=priceMoveState(e.p,endEntry.p);
+            if(move===0) return; // 誤差レベルの値動きは集計対象外
+            scoreStats[def.key][e.session].t++;
+            if(move>0) scoreStats[def.key][e.session].w++;
+          });
         });
       });
     });
   }catch(e){}
-  INTRADAY_ACC_CACHE=INTRADAY_SESSIONS.map(function(s){
-    var v=scoreStats[s];
-    return{session:s,winRate:v.t>0?Math.round(v.w/v.t*100):null,total:v.t};
-  });
+  var grand=0;
+  INTRADAY_ACC_CACHE={
+    ends:INTRADAY_END_DEFS.map(function(def){return{key:def.key,label:def.label};}),
+    rows:INTRADAY_SESSIONS.map(function(s){
+      var cells={};
+      INTRADAY_END_DEFS.forEach(function(def){
+        // 始点が終点と同じかそれより後になるセルは、組み合わせ自体が成立しない（表示側は空欄）
+        if(SESSION_RANK[s]==null||SESSION_RANK[s]>=def.rank){cells[def.key]=null;return;}
+        var v=scoreStats[def.key][s];
+        grand+=v.t;
+        cells[def.key]={winRate:v.t>0?Math.round(v.w/v.t*100):null,total:v.t};
+      });
+      return{session:s,cells:cells};
+    }),
+    total:0
+  };
+  INTRADAY_ACC_CACHE.total=grand;
   INTRADAY_ACC_TS=now;
   return INTRADAY_ACC_CACHE;
 }
@@ -1920,6 +1945,36 @@ function isFarEnoughPair(a,b,ra,rb){
   var ma=hhmmToMin(a.t),mb=hhmmToMin(b.t);
   if(ma!=null&&mb!=null) return (mb-ma)>=MIN_PAIR_GAP_MIN;
   return (ra!=null&&rb!=null)&&(rb-ra)>=MIN_PAIR_GAP_RANK;
+}
+// 終点が「引け」ではなく途中の時刻（11:00 / 13:00）のときの間隔チェック。
+// 時刻が両方ある記録は60分で足切りするが、時刻のない古い記録にランク差2を求めると
+// 隣り合う時間帯の組み合わせが全滅するため、そこはセッションの前後関係だけで通す
+function isFarEnoughMidPair(a,b){
+  var ma=hhmmToMin(a.t),mb=hhmmToMin(b.t);
+  if(ma!=null&&mb!=null) return (mb-ma)>=MIN_PAIR_GAP_MIN;
+  return true;
+}
+// 当日の的中率を測る終点の定義（列の並びと見出しを兼ねる）。
+// rank は「その終点に対して始点になれる時間帯の上限」＝始点rank<終点rank のときだけ集計する
+var INTRADAY_END_DEFS=[
+  {key:"m11",label:"11:00時点",session:"前場",rank:SESSION_RANK["前場"]},
+  {key:"a13",label:"13:00時点",session:"後場前半",rank:SESSION_RANK["後場前半"]},
+  {key:"close",label:"引け",session:null,rank:AFTER_CLOSE_RANK}
+];
+// 終点の記録が同じ日の記録リストの何番目かを返す（見つからなければ-1）。
+// 中間の終点は該当セッションの最後の記録、引けは現行どおりその日の最後の記録
+function findIntradayEndIdx(entries,def){
+  var i;
+  if(def.session){
+    for(i=entries.length-1;i>=0;i--){
+      if(entries[i]&&entries[i].session===def.session&&entries[i].p!=null) return i;
+    }
+    return -1;
+  }
+  i=entries.length-1;
+  if(i<0||entries[i].p==null) return -1;
+  var r=sessionRankAt(entries,i);
+  return(r!=null&&r>=SESSION_RANK["後場後半"])?i:-1; // 後場後半より前で終わる日は「当日終値」と呼べない
 }
 function calcVerdictAccuracy(){
   var now=Date.now();
@@ -5563,27 +5618,44 @@ function SignalAccuracyContent(p){
         )}
       </div>
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
-        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>⏰ 時間帯別 的中率（当日終値との比較）</div>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>⏰ 時間帯別 的中率（終点別）</div>
         {/* サーバー自動スキャンの取り込み状況（Phase 4）。失敗時は理由まで出す */}
         <div style={{fontSize:11,color:(scanBusy||!scanImp)?"#4a7090":(scanImp.err?"#fbbf24":"#22d3a0"),marginBottom:4}}>
           {scanBusy?"取り込み中…":
             (scanImp?("最終取り込み: "+scanImp.at+" / 直近 "+scanImp.total.toLocaleString()+"件 / 保持 "+scanImp.days+"日"+
               (scanImp.err?(" ／ ⚠️ 取り込み失敗: "+scanImp.err):"")):"自動収集データがまだありません（起動時に取り込みます）")}
         </div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>その時間帯にスコア60点以上だった銘柄が、その日の引け（後場後半か引け後の最後のスキャン）までに上がっていたかを集計。始点と1時間以上離れたペアのみ対象です。翌営業日ではなく“当日中”の答え合わせです</div>
-        {intradayAcc.every(function(s){return s.total===0;})?(
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>その時間帯にスコア60点以上だった銘柄が、11:00時点・13:00時点・引け（後場後半か引け後の最後のスキャン）のそれぞれで上がっていたかを集計。始点と1時間以上離れたペアのみ対象です。翌営業日ではなく“当日中”の答え合わせです</div>
+        {intradayAcc.total===0?(
           <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。1日に複数回スキャンすると溜まっていきます</div>
         ):(
-          intradayAcc.map(function(s,i){
-            var reliable=s.total>=5;
-            return(
-              <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:i<intradayAcc.length-1?"1px solid #0a1830":"none",opacity:reliable?1:0.5}}>
-                <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{s.session}</div>
-                <div style={{width:52,textAlign:"right",color:cellColor(s.winRate),fontWeight:700}}>{s.winRate!=null?s.winRate+"%":"-"}</div>
-                {cntCell(s)}
-              </div>
-            );
-          })
+          <div>
+            <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
+              <div style={{flex:1,minWidth:0}}>時間帯</div>
+              {intradayAcc.ends.map(function(d){
+                return <div key={d.key} style={{width:98,flexShrink:0,textAlign:"right"}}>{d.label}</div>;
+              })}
+            </div>
+            {intradayAcc.rows.map(function(r,i){
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:i<intradayAcc.rows.length-1?"1px solid #0a1830":"none"}}>
+                  <div style={{flex:1,minWidth:0,color:"#b8cce0",fontFamily:"monospace"}}>{r.session}</div>
+                  {intradayAcc.ends.map(function(d){
+                    var c=r.cells[d.key];
+                    // 始点が終点より後になる組み合わせは成立しないのでハイフンで埋める
+                    if(!c) return <div key={d.key} style={{width:98,flexShrink:0,textAlign:"right",color:"#2a6090"}}>-</div>;
+                    return(
+                      <div key={d.key} style={{width:98,flexShrink:0,display:"flex",justifyContent:"flex-end",opacity:c.total>=5?1:0.5}}>
+                        <div style={{width:52,textAlign:"right",color:cellColor(c.winRate),fontWeight:700}}>{c.winRate!=null?c.winRate+"%":"-"}</div>
+                        {cntCell(c)}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+            <div style={{fontSize:11,color:"#4a7090",marginTop:8}}>集計に使える日数が少ないうちは数字が大きく振れます。件数が30件未満のセルは参考値として扱ってください。</div>
+          </div>
         )}
       </div>
       {bandInv.length>0&&(
