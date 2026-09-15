@@ -1559,20 +1559,66 @@ function getUniverseBandStats(){
   return UNIVERSE_BAND_CACHE;
 }
 
+// ── 日付ごとの地合い（順風日/逆風日）判定 ──────────────────────────────────
+// 判定そのものは getRegimeSignalStats() と共有する regimeOfTopix() に寄せている（別実装を作らない）。
+// 時間帯別履歴(sh_intraday_*)には地合いが入っていないため、日次履歴(sh_*)の ctx.topix を
+// 日付で引ける形に組み直す。TOPIX前日比は市場全体の値なので銘柄によらず同じはずだが、
+// 記録時刻の違いで符号が食い違う場合に備えて多数決を取り、同数の日は判定不能(null)とする
+function regimeOfTopix(topix){
+  if(topix==null) return null;
+  return topix>=0?"up":"down";
+}
+var REGIME_BY_DATE_CACHE=null,REGIME_BY_DATE_TS=0;
+function getRegimeByDate(){
+  var now=Date.now();
+  if(REGIME_BY_DATE_CACHE&&now-REGIME_BY_DATE_TS<UNIVERSE_STATS_TTL) return REGIME_BY_DATE_CACHE;
+  var votes={};
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_")!==0||k.indexOf("sh_intraday_")===0) return;
+      if(!/\.T$/.test(k.slice(3))) return; // JP銘柄のみ（getRegimeSignalStats と同じ絞り込み）
+      var hist;try{hist=JSON.parse(localStorage.getItem(k)||"[]");}catch(e){hist=[];}
+      hist.forEach(function(e){
+        if(!e||!e.d||!e.ctx) return;
+        var r=regimeOfTopix(e.ctx.topix);
+        if(!r) return;
+        if(!votes[e.d])votes[e.d]={up:0,down:0};
+        votes[e.d][r]++;
+      });
+    });
+  }catch(e){}
+  var map={};
+  Object.keys(votes).forEach(function(d){
+    var v=votes[d];
+    if(v.up===v.down) return; // 食い違いが同数の日はどちらの地合いにも入れない
+    map[d]=v.up>v.down?"up":"down";
+  });
+  REGIME_BY_DATE_CACHE=map;REGIME_BY_DATE_TS=now;
+  return map;
+}
 // ── 時間帯別（セッション別）の的中率集計（Dの機能・sh_intraday_*横断）─────
 // 「その時間帯にスコア60点以上だった銘柄が、その後どうなったか」を終点3系統で集計する。
 // 終点は 11:00時点（前場）／13:00時点（後場前半）／引け（その日の最後の記録）の3つ。
 // デイトレでは「前場のうちに切るか・昼をまたぐか・引けまで持つか」を分けて見る必要があるため。
 // 翌営業日ではなく“その日の中”の答え合わせであることは従来どおり。
+// さらに、その営業日の地合い（順風日=TOPIXプラス / 逆風日=TOPIXマイナス）で2系統に分ける。
+// 地合いの異なる日を混ぜると上昇日と下落日の的中が打ち消し合い、どの時間帯も50%付近に
+// 潰れてしまうため（PR #78 の結果がこれに当たる）。地合いが引けない日は両方から除外する
 var INTRADAY_ACC_CACHE=null,INTRADAY_ACC_TS=0;
+var INTRADAY_REGIMES=["up","down"];
 function calcIntradayAccuracy(){
   var now=Date.now();
   if(INTRADAY_ACC_CACHE&&now-INTRADAY_ACC_TS<UNIVERSE_STATS_TTL) return INTRADAY_ACC_CACHE;
-  var scoreStats={}; // scoreStats[終点key][始点セッション]={w,t}
-  INTRADAY_END_DEFS.forEach(function(def){
-    scoreStats[def.key]={};
-    INTRADAY_SESSIONS.forEach(function(s){scoreStats[def.key][s]={w:0,t:0};});
+  var regimeByDate=getRegimeByDate();
+  var scoreStats={}; // scoreStats[地合い][終点key][始点セッション]={w,t}
+  INTRADAY_REGIMES.forEach(function(rg){
+    scoreStats[rg]={};
+    INTRADAY_END_DEFS.forEach(function(def){
+      scoreStats[rg][def.key]={};
+      INTRADAY_SESSIONS.forEach(function(s){scoreStats[rg][def.key][s]={w:0,t:0};});
+    });
   });
+  var unknownDates={}; // 地合いが判定できず集計から外した営業日（重複しないよう日付をキーにする）
   try{
     Object.keys(localStorage).forEach(function(k){
       if(k.indexOf("sh_intraday_")!==0) return;
@@ -1580,6 +1626,8 @@ function calcIntradayAccuracy(){
       var byDate={};
       hist.forEach(function(e){(byDate[e.d]=byDate[e.d]||[]).push(e);});
       Object.keys(byDate).forEach(function(d){
+        var regime=regimeByDate[d];
+        if(!regime){unknownDates[d]=1;return;} // TOPIXの記録が無い日はどちらの地合いにも入れない
         var entries=byDate[d];
         if(entries.length<2) return;
         INTRADAY_END_DEFS.forEach(function(def){
@@ -1597,30 +1645,35 @@ function calcIntradayAccuracy(){
             if(!farEnough) return;
             var move=priceMoveState(e.p,endEntry.p);
             if(move===0) return; // 誤差レベルの値動きは集計対象外
-            scoreStats[def.key][e.session].t++;
-            if(move>0) scoreStats[def.key][e.session].w++;
+            scoreStats[regime][def.key][e.session].t++;
+            if(move>0) scoreStats[regime][def.key][e.session].w++;
           });
         });
       });
     });
   }catch(e){}
-  var grand=0;
   INTRADAY_ACC_CACHE={
     ends:INTRADAY_END_DEFS.map(function(def){return{key:def.key,label:def.label};}),
-    rows:INTRADAY_SESSIONS.map(function(s){
+    regimes:{},
+    unknownDays:Object.keys(unknownDates).length,
+    total:0
+  };
+  INTRADAY_REGIMES.forEach(function(rg){
+    var grand=0;
+    var rows=INTRADAY_SESSIONS.map(function(s){
       var cells={};
       INTRADAY_END_DEFS.forEach(function(def){
         // 始点が終点と同じかそれより後になるセルは、組み合わせ自体が成立しない（表示側は空欄）
         if(SESSION_RANK[s]==null||SESSION_RANK[s]>=def.rank){cells[def.key]=null;return;}
-        var v=scoreStats[def.key][s];
+        var v=scoreStats[rg][def.key][s];
         grand+=v.t;
         cells[def.key]={winRate:v.t>0?Math.round(v.w/v.t*100):null,total:v.t};
       });
       return{session:s,cells:cells};
-    }),
-    total:0
-  };
-  INTRADAY_ACC_CACHE.total=grand;
+    });
+    INTRADAY_ACC_CACHE.regimes[rg]={rows:rows,total:grand};
+    INTRADAY_ACC_CACHE.total+=grand;
+  });
   INTRADAY_ACC_TS=now;
   return INTRADAY_ACC_CACHE;
 }
@@ -1643,7 +1696,7 @@ function getRegimeSignalStats(){
         if(bizDayDiff(cur.d,nxt.d,true)!==1) continue; // 上でJP銘柄のみに絞り込み済み
         var move=priceMoveState(cur.p,nxt.p);
         if(move===0) continue;
-        var bucket=cur.ctx.topix>=0?stats.up:stats.down;
+        var bucket=regimeOfTopix(cur.ctx.topix)==="up"?stats.up:stats.down; // 判定は日付別集計と共有（上の topix==null は除外済み）
         cur.sig.forEach(function(key){
           if(!bucket[key])bucket[key]={w:0,t:0};
           bucket[key].t++;
@@ -5415,6 +5468,9 @@ function SignalAccuracyContent(p){
     window.addEventListener("scanimport",onImported);
     return function(){window.removeEventListener("scanimport",onImported);};
   },[]);
+  // 時間帯別 的中率の地合い切り替え（"up"=順風日 / "down"=逆風日）。初期表示は順風日
+  var intraRegS=useState("up");var intraRegime=intraRegS[0],setIntraRegime=intraRegS[1];
+  var intraRows=(intradayAcc.regimes[intraRegime]||{rows:[]}).rows;
   var regime=getRegimeSignalStats();
   var phase=getTrendPhaseSignalStats();
   // トレンド局面別：初動・過熱の両方で5件以上あるシグナルを、差が大きい順に最大12件
@@ -5630,15 +5686,21 @@ function SignalAccuracyContent(p){
           <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。1日に複数回スキャンすると溜まっていきます</div>
         ):(
           <div>
+            {/* 地合いの切り替え。地合いの違う日を混ぜると的中が打ち消し合うため、順風日・逆風日を別々に見る */}
+            <div style={{display:"flex",gap:6,marginBottom:8}}>
+              <TabBtn active={intraRegime==="up"} color="#22d3a0" label="🟢 順風日" onClick={function(){setIntraRegime("up");}}/>
+              <TabBtn active={intraRegime==="down"} color="#f43f5e" label="⚠️ 逆風日" onClick={function(){setIntraRegime("down");}}/>
+              <span style={{marginLeft:"auto",fontSize:11,color:"#4a7090",alignSelf:"center"}}>{intraRegime==="up"?"TOPIXプラスの日":"TOPIXマイナスの日"} / {(intradayAcc.regimes[intraRegime]||{total:0}).total.toLocaleString()}件</span>
+            </div>
             <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
               <div style={{flex:1,minWidth:0}}>時間帯</div>
               {intradayAcc.ends.map(function(d){
                 return <div key={d.key} style={{width:98,flexShrink:0,textAlign:"right"}}>{d.label}</div>;
               })}
             </div>
-            {intradayAcc.rows.map(function(r,i){
+            {intraRows.map(function(r,i){
               return(
-                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:i<intradayAcc.rows.length-1?"1px solid #0a1830":"none"}}>
+                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:i<intraRows.length-1?"1px solid #0a1830":"none"}}>
                   <div style={{flex:1,minWidth:0,color:"#b8cce0",fontFamily:"monospace"}}>{r.session}</div>
                   {intradayAcc.ends.map(function(d){
                     var c=r.cells[d.key];
@@ -5655,6 +5717,9 @@ function SignalAccuracyContent(p){
               );
             })}
             <div style={{fontSize:11,color:"#4a7090",marginTop:8}}>集計に使える日数が少ないうちは数字が大きく振れます。件数が30件未満のセルは参考値として扱ってください。</div>
+            {intradayAcc.unknownDays>0&&(
+              <div style={{fontSize:11,color:"#4a7090",marginTop:4}}>地合い不明のため除外: {intradayAcc.unknownDays}日</div>
+            )}
           </div>
         )}
       </div>
