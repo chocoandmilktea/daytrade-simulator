@@ -996,10 +996,16 @@ export function analyzeStock(stock,pd,vixVal,opts){
   var isigKeys=signals.filter(function(x){return x.state!==0;}).map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
   var intradayHist=(opts.intradayHist||[]).slice();
   if(recordIntraday){
-    var ilast=intradayHist[intradayHist.length-1];
     var ientry={d:itoday,session:isession,t:itime,s:sc,p:price,sig:isigKeys,v:verdictKey};
-    if(ilast&&ilast.d===itoday&&ilast.session===isession){
-      intradayHist[intradayHist.length-1]=ientry;
+    // 同じ日・同じ時間帯の記録は配列全体から探して置き換える（mergeScanResultDay と同じ判定方式）。
+    // 最後の1件だけを見ると、サーバー取り込みで後の時間帯が先に入っている状態で
+    // 同じ時間帯を手動スキャンしたときに、同じ d と session の記録が2件並んでしまう
+    var iidx=-1;
+    for(var ii=0;ii<intradayHist.length;ii++){
+      if(intradayHist[ii]&&intradayHist[ii].d===itoday&&intradayHist[ii].session===isession){iidx=ii;break;}
+    }
+    if(iidx>=0){
+      intradayHist[iidx]=ientry;
     }else{
       intradayHist.push(ientry);
       if(intradayHist.length>200)intradayHist.shift(); // 目安：1日最大4件×約50日分
