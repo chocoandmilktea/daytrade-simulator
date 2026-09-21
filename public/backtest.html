@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#040c18" />
+<title>寄り→引け 検証 | DaySimulator</title>
+<style>
+  * { box-sizing: border-box; -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    padding: 16px 14px 48px;
+    background: #040c18;
+    color: #e6edf6;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .lead { font-size: 12px; color: #8ea4c0; margin: 0 0 16px; }
+  .btnRow { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+  button {
+    appearance: none;
+    border: 1px solid #38507a;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    padding: 12px 18px;
+    border-radius: 10px;
+    cursor: pointer;
+    min-height: 46px;
+  }
+  #runBtn { background: #1d6fe0; border: 1px solid #1d6fe0; color: #fff; }
+  #dlBtn { background: transparent; border: 1px solid #38507a; color: #9fb6d4; }
+  button:disabled { opacity: .45; }
+  #progress {
+    font-size: 12px;
+    color: #9fb6d4;
+    background: #0a1729;
+    border: 1px solid #16294a;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    min-height: 40px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .card {
+    background: #0a1729;
+    border: 1px solid #16294a;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+  }
+  .card h2 { font-size: 13px; margin: 0 0 8px; color: #7fa8dd; font-weight: 700; letter-spacing: .04em; }
+  .kv { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: 14px; }
+  .kv span:first-child { color: #9fb6d4; }
+  .kv span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .big { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pos { color: #4ade80; }
+  .neg { color: #f87171; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 4px; text-align: right; border-bottom: 1px solid #16294a; }
+  th { color: #7fa8dd; font-weight: 600; font-size: 12px; }
+  th:first-child, td:first-child { text-align: left; }
+  .note { font-size: 11px; color: #6c85a6; margin-top: 8px; line-height: 1.5; }
+  .skipList { font-size: 11px; color: #8ea4c0; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<h1>寄り→引け 検証</h1>
+<p class="lead">寄り前の気配が偏っていた銘柄を、その日の始値で建てて終値で手じまいした場合の損益を集計します。読み取り専用で、結果はどこにも保存しません。</p>
+
+<div class="btnRow">
+  <button id="runBtn" type="button">検証を実行</button>
+  <button id="dlBtn" type="button" disabled>予測記録をダウンロード</button>
+</div>
+
+<div id="progress">「検証を実行」を押すと、直近30日ぶんの寄り前予想と日足を取りに行きます（1〜2分かかります）。</div>
+
+<div id="result"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ─────────────────────────────────────────────
+  // 設定値
+  // ─────────────────────────────────────────────
+  // App.js の PM_BIAS_MIN=10 と同じ基準。買い比率50%を中心に±10ポイント以上ずれた銘柄を「偏り大」とする
+  var BIAS_MIN = 10;
+  var BUY_TH = 50 + BIAS_MIN;   // 60以上を買い
+  var SELL_TH = 50 - BIAS_MIN;  // 40以下を売り
+
+  var LOOKBACK_DAYS = 30;       // 今日から何日前まで遡るか（暦日）
+  var COST_PCT = 0.2;           // 往復コスト（%）
+  var OPEN_MISMATCH_PCT = 1.0;  // 予測記録の始値とYahooの始値の乖離許容（%）
+  var DAILY_CONCURRENCY = 5;    // /api/daily の同時リクエスト上限
+  var FETCH_TIMEOUT_MS = 15000;
+
+  var runBtn = document.getElementById('runBtn');
+  var dlBtn = document.getElementById('dlBtn');
+  var progressEl = document.getElementById('progress');
+  var resultEl = document.getElementById('result');
+
+  var archive = null;   // 処理1で集めた全日分の予測記録
+  var runDate = '';     // 実行日（ファイル名用）
+
+  // ─────────────────────────────────────────────
+  // 小物
+  // ─────────────────────────────────────────────
+  function setProgress(text) { progressEl.textContent = text; }
+
+  function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+
+  // 日本時間の日付を扱う。UTCへ+9時間ずらしてからUTCゲッタで読む
+  function jstShifted(msOffset) {
+    return new Date(Date.now() + 9 * 3600 * 1000 + (msOffset || 0));
+  }
+  function dateStrOf(d) {
+    return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate());
+  }
+
+  // 今日（JST）から LOOKBACK_DAYS 日前までの平日を新しい順に並べる
+  function buildWeekdays() {
+    var out = [];
+    for (var i = 0; i <= LOOKBACK_DAYS; i++) {
+      var d = jstShifted(-i * 24 * 3600 * 1000);
+      var w = d.getUTCDay();
+      if (w === 0 || w === 6) continue; // 土日は立会いが無いので最初から外す
+      out.push(dateStrOf(d));
+    }
+    return out;
+  }
+
+  // AbortSignal.timeout は Safari の版によって無いため、AbortController で自前に打ち切る
+  function fetchJson(url) {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, FETCH_TIMEOUT_MS);
+    return fetch(url, { signal: ctrl.signal, cache: 'no-store' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (j) { clearTimeout(timer); return j; })
+      .catch(function (e) { clearTimeout(timer); throw e; });
+  }
+
+  function fmtPct(v) {
+    if (v == null || !isFinite(v)) return '-';
+    return (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+  }
+  function cls(v) {
+    if (v == null || !isFinite(v)) return '';
+    return v > 0 ? 'pos' : (v < 0 ? 'neg' : '');
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  // ─────────────────────────────────────────────
+  // 処理1: 予測記録の取得
+  // ─────────────────────────────────────────────
+  function loadArchive(dates) {
+    var store = {};
+    var skipped = [];
+    var idx = 0;
+
+    function step() {
+      if (idx >= dates.length) {
+        return Promise.resolve({ store: store, skipped: skipped });
+      }
+      var date = dates[idx];
+      idx++;
+      setProgress('[1/3] 予測記録を取得中… ' + idx + '/' + dates.length + '日（' + date + '）');
+      return fetchJson('/api/sync?resource=premarket-prediction&date=' + encodeURIComponent(date))
+        .then(function (j) {
+          // found:false の日・中身が空の日は祝日などとして読み飛ばす
+          if (!j || !j.found || !j.predictions || !Object.keys(j.predictions).length) {
+            skipped.push(date);
+          } else {
+            store[date] = j.predictions;
+          }
+        })
+        .catch(function () {
+          skipped.push(date);
+        })
+        .then(step);
+    }
+    return step();
+  }
+
+  // ─────────────────────────────────────────────
+  // 処理2: 偏り大の抽出
+  // ─────────────────────────────────────────────
+  function pickBiased(store) {
+    var trades = [];
+    var noOpen = 0;
+    var dates = Object.keys(store).sort();
+
+    dates.forEach(function (date) {
+      var preds = store[date];
+      Object.keys(preds).forEach(function (code) {
+        var p = preds[code];
+        if (!p || p.buyRatioLast == null) return;
+        var br = Number(p.buyRatioLast);
+        if (!isFinite(br)) return;
+
+        var side = null;
+        if (br >= BUY_TH) side = 'buy';
+        else if (br <= SELL_TH) side = 'sell';
+        if (!side) return;
+
+        // open が null の銘柄は未寄り。建値が無いので除外する
+        if (p.open == null || !isFinite(Number(p.open)) || Number(p.open) <= 0) {
+          noOpen++;
+          return;
+        }
+
+        trades.push({
+          date: date,
+          code: code,
+          side: side,
+          buyRatio: br,
+          open: Number(p.open)
+        });
+      });
+    });
+    return { trades: trades, noOpen: noOpen };
+  }
+
+  // ─────────────────────────────────────────────
+  // 処理3: 終値の取得（銘柄ごとに1回だけ・同時5件まで）
+  // ─────────────────────────────────────────────
+  function loadDaily(codes) {
+    var map = {};      // code -> { 'YYYY-MM-DD': { open, close } }
+    var failed = {};   // code -> true
+    var next = 0;
+    var done = 0;
+
+    function worker() {
+      if (next >= codes.length) return Promise.resolve();
+      var code = codes[next];
+      next++;
+      return fetchJson('/api/daily?ticker=' + encodeURIComponent(code + '.T') + '&range=3mo')
+        .then(function (j) {
+          if (!j || !Array.isArray(j.dates) || !j.dates.length) throw new Error('empty');
+          var byDate = {};
+          for (var i = 0; i < j.dates.length; i++) {
+            byDate[j.dates[i]] = {
+              open: j.opens && j.opens[i] != null ? Number(j.opens[i]) : null,
+              close: j.closes && j.closes[i] != null ? Number(j.closes[i]) : null
+            };
+          }
+          map[code] = byDate;
+        })
+        .catch(function () {
+          failed[code] = true;
+        })
+        .then(function () {
+          done++;
+          setProgress('[2/3] 日足を取得中… ' + done + '/' + codes.length + '銘柄');
+          return worker();
+        });
+    }
+
+    var pool = [];
+    for (var k = 0; k < Math.min(DAILY_CONCURRENCY, codes.length); k++) pool.push(worker());
+    return Promise.all(pool).then(function () {
+      return { map: map, failed: failed };
+    });
+  }
+
+  // ─────────────────────────────────────────────
+  // 処理4: 集計
+  // ─────────────────────────────────────────────
+  function aggregate(trades, daily) {
+    var rows = [];
+    var exNoClose = 0;    // 終値が取れなかった
+    var exMismatch = 0;   // 始値がYahooと食い違う
+
+    trades.forEach(function (t) {
+      var byDate = daily.map[t.code];
+      if (!byDate) { exNoClose++; return; }
+      var bar = byDate[t.date];
+      if (!bar || bar.close == null || !isFinite(bar.close)) { exNoClose++; return; }
+
+      // Yahoo側の始値と予測記録の始値がずれている日は、別の日の足を掴んでいる恐れがあるので捨てる
+      if (bar.open != null && isFinite(bar.open) && t.open > 0) {
+        var diff = Math.abs(bar.open - t.open) / t.open * 100;
+        if (diff >= OPEN_MISMATCH_PCT) { exMismatch++; return; }
+      }
+
+      // 建値は予測記録の open を使う（Yahooの始値ではなく、予想を出した時点の値に揃える）
+      var raw = (bar.close - t.open) / t.open * 100;
+      if (t.side === 'sell') raw = -raw;
+      var net = raw - COST_PCT;
+
+      rows.push({
+        date: t.date, code: t.code, side: t.side,
+        buyRatio: t.buyRatio, open: t.open, close: bar.close,
+        rawPct: raw, netPct: net
+      });
+    });
+
+    function stat(list) {
+      if (!list.length) return { n: 0, avg: null, win: null };
+      var sum = 0, win = 0;
+      list.forEach(function (r) { sum += r.netPct; if (r.netPct > 0) win++; });
+      return { n: list.length, avg: sum / list.length, win: win / list.length * 100 };
+    }
+
+    var buys = rows.filter(function (r) { return r.side === 'buy'; });
+    var sells = rows.filter(function (r) { return r.side === 'sell'; });
+
+    // 日別
+    var byDate = {};
+    rows.forEach(function (r) {
+      if (!byDate[r.date]) byDate[r.date] = [];
+      byDate[r.date].push(r);
+    });
+    var daysList = Object.keys(byDate).sort().map(function (d) {
+      var s = stat(byDate[d]);
+      return { date: d, n: s.n, avg: s.avg };
+    });
+
+    // 日別平均が最も良かった1日を除いた場合の全体平均
+    var bestDay = null;
+    daysList.forEach(function (d) {
+      if (bestDay == null || d.avg > bestDay.avg) bestDay = d;
+    });
+    var exBest = null;
+    if (bestDay) {
+      var rest = rows.filter(function (r) { return r.date !== bestDay.date; });
+      exBest = { date: bestDay.date, stat: stat(rest) };
+    }
+
+    return {
+      all: stat(rows),
+      buy: stat(buys),
+      sell: stat(sells),
+      days: daysList,
+      bestDay: bestDay,
+      exBest: exBest,
+      exNoClose: exNoClose,
+      exMismatch: exMismatch
+    };
+  }
+
+  // ─────────────────────────────────────────────
+  // 表示
+  // ─────────────────────────────────────────────
+  function render(agg, noOpen, failedCodes, skippedDates, archivedDays) {
+    var h = [];
+
+    h.push('<div class="card">');
+    h.push('<h2>全体（往復コスト' + COST_PCT.toFixed(1) + '%差引後）</h2>');
+    h.push('<div class="big ' + cls(agg.all.avg) + '">' + fmtPct(agg.all.avg) + '</div>');
+    h.push('<div class="kv"><span>取引回数</span><span>' + agg.all.n + '回</span></div>');
+    h.push('<div class="kv"><span>対象営業日数</span><span>' + agg.days.length + '日</span></div>');
+    h.push('<div class="kv"><span>勝率</span><span>' + (agg.all.win == null ? '-' : agg.all.win.toFixed(1) + '%') + '</span></div>');
+    h.push('</div>');
+
+    h.push('<div class="card"><h2>売買別</h2>');
+    [['買い（買い比率' + BUY_TH + '%以上）', agg.buy], ['売り（買い比率' + SELL_TH + '%以下）', agg.sell]].forEach(function (pair) {
+      var s = pair[1];
+      h.push('<div class="kv"><span>' + pair[0] + '</span><span class="' + cls(s.avg) + '">' + fmtPct(s.avg) + '</span></div>');
+      h.push('<div class="kv"><span>　勝率 / 回数</span><span>' + (s.win == null ? '-' : s.win.toFixed(1) + '%') + ' / ' + s.n + '回</span></div>');
+    });
+    h.push('</div>');
+
+    h.push('<div class="card"><h2>最良日を除いた全体</h2>');
+    if (agg.exBest) {
+      h.push('<div class="kv"><span>除いた日（日別平均 ' + fmtPct(agg.bestDay.avg) + '）</span><span>' + agg.bestDay.date + '</span></div>');
+      h.push('<div class="kv"><span>除いた後の平均損益率</span><span class="' + cls(agg.exBest.stat.avg) + '">' + fmtPct(agg.exBest.stat.avg) + '</span></div>');
+      h.push('<div class="kv"><span>残った取引回数</span><span>' + agg.exBest.stat.n + '回</span></div>');
+    } else {
+      h.push('<div class="kv"><span>対象なし</span><span>-</span></div>');
+    }
+    h.push('</div>');
+
+    h.push('<div class="card"><h2>日別</h2><table><thead><tr><th>日付</th><th>銘柄数</th><th>平均損益率</th></tr></thead><tbody>');
+    if (!agg.days.length) {
+      h.push('<tr><td colspan="3">対象なし</td></tr>');
+    } else {
+      agg.days.forEach(function (d) {
+        h.push('<tr><td>' + d.date + '</td><td>' + d.n + '</td><td class="' + cls(d.avg) + '">' + fmtPct(d.avg) + '</td></tr>');
+      });
+    }
+    h.push('</tbody></table></div>');
+
+    h.push('<div class="card"><h2>除外の内訳</h2>');
+    h.push('<div class="kv"><span>未寄り（始値なし）</span><span>' + noOpen + '件</span></div>');
+    h.push('<div class="kv"><span>終値の取得失敗</span><span>' + agg.exNoClose + '件（銘柄' + failedCodes.length + '）</span></div>');
+    h.push('<div class="kv"><span>始値の不整合（' + OPEN_MISMATCH_PCT.toFixed(1) + '%以上）</span><span>' + agg.exMismatch + '件</span></div>');
+    if (failedCodes.length) {
+      h.push('<div class="note">取得できなかった銘柄: <span class="skipList">' + esc(failedCodes.join(' ')) + '</span></div>');
+    }
+    h.push('</div>');
+
+    h.push('<div class="card"><h2>読み飛ばした日付</h2>');
+    h.push('<div class="kv"><span>予測記録があった日</span><span>' + archivedDays + '日</span></div>');
+    h.push('<div class="kv"><span>読み飛ばし</span><span>' + skippedDates.length + '日</span></div>');
+    if (skippedDates.length) {
+      h.push('<div class="note skipList">' + esc(skippedDates.join(' / ')) + '</div>');
+    }
+    h.push('<div class="note">記録が空・応答エラーの日は祝日などとみなして読み飛ばしています。</div>');
+    h.push('</div>');
+
+    resultEl.innerHTML = h.join('');
+  }
+
+  // ─────────────────────────────────────────────
+  // 実行
+  // ─────────────────────────────────────────────
+  function run() {
+    runBtn.disabled = true;
+    dlBtn.disabled = true;
+    resultEl.innerHTML = '';
+    archive = null;
+    runDate = dateStrOf(jstShifted(0));
+
+    var dates = buildWeekdays();
+    setProgress('[1/3] 予測記録を取得中… 0/' + dates.length + '日');
+
+    loadArchive(dates).then(function (res) {
+      archive = res.store;
+      var archivedDays = Object.keys(archive).length;
+      dlBtn.disabled = !archivedDays;
+
+      if (!archivedDays) {
+        setProgress('完了: 予測記録が1日も取得できませんでした（読み飛ばし ' + res.skipped.length + '日）。');
+        render(aggregate([], { map: {}, failed: {} }), 0, [], res.skipped, 0);
+        runBtn.disabled = false;
+        return;
+      }
+
+      var picked = pickBiased(archive);
+      var codes = [];
+      var seen = {};
+      picked.trades.forEach(function (t) {
+        if (!seen[t.code]) { seen[t.code] = true; codes.push(t.code); }
+      });
+
+      setProgress('[2/3] 日足を取得中… 0/' + codes.length + '銘柄');
+      return loadDaily(codes).then(function (daily) {
+        setProgress('[3/3] 集計中…');
+        var agg = aggregate(picked.trades, daily);
+        var failedCodes = Object.keys(daily.failed);
+        render(agg, picked.noOpen, failedCodes, res.skipped, archivedDays);
+        setProgress('完了: ' + archivedDays + '日ぶんの予測記録から ' + agg.all.n + '件を集計しました（読み飛ばし ' + res.skipped.length + '日）。');
+        runBtn.disabled = false;
+      });
+    }).catch(function (e) {
+      setProgress('エラー: ' + (e && e.message ? e.message : e));
+      runBtn.disabled = false;
+    });
+  }
+
+  // ─────────────────────────────────────────────
+  // 処理5: 予測記録のダウンロード
+  // ─────────────────────────────────────────────
+  function download() {
+    if (!archive) return;
+    var name = 'premarket-archive-' + runDate + '.json';
+    var text = JSON.stringify(archive, null, 2);
+    var blob = new Blob([text], { type: 'application/json' });
+
+    // iPad の Safari は共有シート経由（「ファイルに保存」）が確実なので、使えるときはそちらを優先する。
+    // 非同期の待ちを挟むとユーザー操作の文脈が切れて共有シートが開かないため、ここで即座に呼ぶ
+    try {
+      if (navigator.canShare && navigator.share) {
+        var file = new File([blob], name, { type: 'application/json' });
+        if (navigator.canShare({ files: [file] })) {
+          navigator.share({ files: [file], title: name }).catch(function () {
+            anchorSave(blob, name);
+          });
+          return;
+        }
+      }
+    } catch (e) { /* 共有が使えない環境では下のダウンロードに落とす */ }
+
+    anchorSave(blob, name);
+  }
+
+  function anchorSave(blob, name) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  }
+
+  runBtn.addEventListener('click', run);
+  dlBtn.addEventListener('click', download);
+})();
+</script>
+
+</body>
+</html>
