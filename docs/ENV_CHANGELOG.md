@@ -53,6 +53,7 @@
 | 2026-08-30 | merge | daytrade-simulator | PR#56 寄り前の気配ベース予想（src="quote"）の生成と答え合わせをサーバー側へ移行。api/sync.js に resource `premarket-prediction` を新設（POST=認証必須で生成・保存、GET=無認証の読み取り専用）。保存先は `premarket:pred:<日付>`・30日。較正係数 `PM_Q_SLOPE`（既定 0.058）・`PM_Q_INTERCEPT`（既定 -0.105）を新設。既定値は src/App.js の直書き値と同値のため Vercel 側の設定は不要 | 有 |
 | 2026-08-30 | merge | tachibana-server | PR#20 寄り前収集の終了後に予想生成を自動呼び出し。生ログ保存成功時のみ `POST /api/sync?resource=premarket-prediction&date=<当日>` を1回叩く（タイムアウト30秒・リトライなし）。失敗時は `[warn]` 1行のみで収集の成否に影響させず、`errorCount`・`tickErrorCount` にも加算しない。予想の計算は Vercel 側（PR#56）にあり本変更では行わない | 無 |
 | 2026-08-30 | deploy | tachibana-server | 上記マージに伴うコンテナ全体の自動再デプロイ。日曜のため安全帯の制約なし（メンテ帯 3:00〜8:30 のみ回避）。起動ログで「分割 80件」と起動時 `[err]` 0件を確認 | 無 |
+| 2026-09-22 | merge | daytrade-simulator | `PM_Q_SLOPE`・`PM_Q_INTERCEPT`・`TACHIBANA_MARKET_PRICE_API` のコード上の参照を削除。詳細は 2026-09-22 の詳述セクション参照。PR #82 | 有 |
 
 ## 2026-08-24（月）— `PREMARKET_MAX=100` 実測判定：通過
 
@@ -115,3 +116,25 @@
 - 起動ログ（13:48）で `対象 100件 / 受領 158件 / 上限 100件` を確認。起動時の `[err]` 0件
 - 切り捨てログ（`上限により58件を切り捨てました`）が `[inf]` 側に出力されることを確認
 - 翌営業日（8/25）の収集窓で `[err]` 0件を確認予定
+
+## 2026-09-22（月）— 寄り予想機能の削除に伴う環境変数の参照削除
+
+凍結していた寄り予想機能・寄り前気配の収集・今朝の地合い・バックテストページを削除した。これに伴い、次の3つの環境変数を読むコードがリポジトリから無くなった。
+
+**参照が無くなった環境変数**
+
+- `PM_Q_SLOPE`（既定 0.058）… `api/sync.js` の `handlePremarketPrediction()` が `envNum()` 経由で読んでいた。ハンドラごと削除
+- `PM_Q_INTERCEPT`（既定 -0.105）… 同上
+- `TACHIBANA_MARKET_PRICE_API` … `api/premarket.js` が読んでいた。ファイルごと削除
+
+**人間が別途行う作業**
+
+- **Vercel の Environment Variables 画面に残っている実設定の削除は、このマージには含まれない。** コード側の参照を消しただけで、Vercel 上の値はそのまま残る。不要になった時点で人間が画面から削除すること
+- 3つとも未設定でも動く変数だったため、実設定が残っていても動作に影響はない（読む側が無い）
+
+**あわせて削除したもの**
+
+- `api/premarket.js`（サーバーレス関数の枠が 11 → 10 に戻る）
+- `public/backtest.html`
+- `api/sync.js` の resource `premarket-log` / `premarket-summary`（`mode=calib`・`mode=coverage` を含む）/ `premarket-prediction`
+- Redis キー `premarket:log:<日付>` / `premarket:log:partial:<日付>` / `premarket:pred:<日付>` への書き込み経路。**既存キーは TTL（最長30日）で自然に消えるまで残る**

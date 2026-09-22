@@ -4,7 +4,7 @@
 
 ## 作業ルール（トークン節約・最優先）
 
-- `src/App.js` は約7200行。**全体を読むことを禁止する。**
+- `src/App.js` は約6600行。**全体を読むことを禁止する。**
 - 修正依頼を受けたら、まず `grep -n "キーワード" 対象ファイル` で該当行を特定し、その前後50〜100行だけを offset/limit 指定で読む。
 - 読み込む前に「どの関数を何行目付近から読むか」を1行で宣言する。
 - 編集は Edit（部分置換）のみ。Write によるファイル全体の書き換えは禁止。
@@ -43,8 +43,7 @@
 - `api/stock.js` … 個別銘柄の詳細（分足: Yahoo、財務指標/TOPIX: 立花）。内部は並列取得
 - `api/daily.js` … ミニチャート用の日足（直近3ヶ月・Yahoo）
 - `api/intraday.js` … 当日1分足（Yahoo）。銘柄選択時のみ呼ばれ、スキャン時は呼ばれない
-- `api/premarket.js` … 「今朝の地合い」を1レスポンスで返す。日経225先物・SOX・S&P500・NASDAQ・ドル円・VIX・NYダウの前日比をYahooから集め、加重平均して寄り付きの想定ギャップ `marketBias` を出す。`codes` 指定時のみ立花の `/market-price`（寄り前気配）も中継する
-- `api/sync.js` … 同期・中継の総合窓口。`resource` パラメータで8種に分岐（詳細は後述）。TTL は用途ごとに5種類あるため、単一の値では表せない
+- `api/sync.js` … 同期・中継の総合窓口。`resource` パラメータで5種に分岐（詳細は後述）。TTL は用途ごとに4種類あるため、単一の値では表せない
 - `api/ai.js` … Anthropic APIプロキシ（system prompt・web_search対応）
 - `api/news.js` … TDnet（適時開示）とYahooファイナンスの見出しを取得し、Anthropic APIで5カテゴリに要約する。**Web検索は使わず、取得した実データだけをAIに渡す**
 - `api/ipo.js` … 銘柄コード→会社名（立花・1時間キャッシュ）
@@ -55,12 +54,12 @@
 
 ### Vercel関数枠の残量（実測値）
 
-- **現在の消費数: 11個 / 上限 12個（Vercel Hobbyプランの上限）。残り枠は1つだけ**
+- **現在の消費数: 10個 / 上限 12個（Vercel Hobbyプランの上限）。残り枠は2つ**
 - 数え方の根拠
   - `api/` 直下の `.js` ファイルは、1つにつき関数枠を1つ消費する
   - ファイル名が `_` で始まるものは Vercel がエンドポイントとして扱わないため、枠を消費しない（共通モジュール用。現状 `api/_scan.js` と `api/_fallbackCache.js` の2つが該当）
-- 枠を消費するファイル一覧（11個）
-  - `api/ai.js` / `api/daily.js` / `api/intraday.js` / `api/ipo.js` / `api/news.js` / `api/notify.js` / `api/premarket.js` / `api/ranking.js` / `api/sector.js` / `api/stock.js` / `api/sync.js`
+- 枠を消費するファイル一覧（10個）
+  - `api/ai.js` / `api/daily.js` / `api/intraday.js` / `api/ipo.js` / `api/news.js` / `api/notify.js` / `api/ranking.js` / `api/sector.js` / `api/stock.js` / `api/sync.js`
 - **新規エンドポイントを追加する前に、必ず `api/` を数え直すこと。** 枠が足りない場合は、次のどちらかで実装できないか先に検討する
   - 既存エンドポイントに `resource` パラメータで相乗りさせる（`sync.js?resource=scan-run` と同じ方式）
   - `_` 接頭辞の共通モジュールとして実装し、呼び出しは既存エンドポイントから行う
@@ -75,19 +74,16 @@
 | --- | --- | --- |
 | `UPSTASH_REDIS_REST_URL` | 必須 | Upstash Redis の REST 接続先。`Redis.fromEnv()` が読む。未設定でも起動は継続し、Redis を使う経路が最初のアクセスで失敗する |
 | `UPSTASH_REDIS_REST_TOKEN` | 必須 | 同上のトークン。未設定時の挙動も同じ |
-| `TACHIBANA_RELAY_SECRET` | 必須 | `tachibana-server` との共有の合言葉。受信側は `api/sync.js` の `isAuthed()` で照合し、未設定だと認証が要る5経路（`tachibana-watch` の GET、`tachibana-quote` の POST、`premarket-log` の POST、`premarket-prediction` の POST、`scan-run` の POST）がすべて 401 になる。送信側は未設定でもヘッダを付けずに動く |
-| `TACHIBANA_RANKING_API` | 任意 | 立花の `ranking-data` の中継先URL。未設定なら例外になるが `withFallback` が Redis の前回成功データを返す。`TACHIBANA_MARKET_PRICE_API` の導出元も兼ねる |
+| `TACHIBANA_RELAY_SECRET` | 必須 | `tachibana-server` との共有の合言葉。受信側は `api/sync.js` の `isAuthed()` で照合し、未設定だと認証が要る3経路（`tachibana-watch` の GET、`tachibana-quote` の POST、`scan-run` の POST）がすべて 401 になる。送信側は未設定でもヘッダを付けずに動く |
+| `TACHIBANA_RANKING_API` | 任意 | 立花の `ranking-data` の中継先URL。未設定なら例外になるが `withFallback` が Redis の前回成功データを返す |
 | `TACHIBANA_ISSUE_DETAIL_API` | 任意 | 立花の `issue-detail` の中継先URL。未設定時は `withFallback` が肩代わりする |
 | `TACHIBANA_TOPIX_API` | 任意 | 立花の `topix` の中継先URL。未設定時は `withFallback` が肩代わりする |
 | `TACHIBANA_NAMES_API` | 任意 | 立花の `names` の中継先URL。未設定時は `withFallback` が肩代わりする |
-| `TACHIBANA_MARKET_PRICE_API` | 任意（既定は `TACHIBANA_RANKING_API` から導出） | 寄り前気配の `market-price` の中継先URL。既定値は `TACHIBANA_RANKING_API` の `ranking-data` の部分を `market-price` に置き換えたもの。両方とも未設定の場合は `quotes` にエラーを載せた 200 を返す |
 | `ANTHROPIC_API_KEY` | 必須（`api/ai.js` と `api/news.js` のみ） | Anthropic API プロキシの認証。未設定なら即 500 を返す |
 | `PUSHOVER_TOKEN` | 必須（通知を使う場合） | Pushover のアプリトークン。未設定チェックが無いため、未設定でも API は 200 を返すが通知は届かない |
 | `PUSHOVER_USER` | 必須（通知を使う場合） | Pushover の宛先ユーザーキー。未設定時の挙動は上と同じ |
 | `SCAN_SYNC_USER_ID` | 任意（既定は空文字） | 自動スキャンの銘柄リスト組み立て時に、お気に入り・トレード中銘柄を読むための固定ユーザーID。未設定でも警告ログが出るだけで処理は続き、お気に入りが銘柄リストに加わらなくなる |
 | `VERCEL_URL` | 自動注入 | 自分自身の `/api/sector` と `/api/ranking` を叩くためのホスト名。Vercel が自動で入れるため人は設定しない。既定は `daytrade-simulator.vercel.app` |
-| `PM_Q_SLOPE` | 任意（既定 0.058） | 寄り前予想の較正係数。買い比率1ポイントあたりの予想ギャップの大きさ。**当面は設定しないこと。** 設定するとサーバー側だけが変わり、`src/App.js` にある同名の直書き定数と食い違う |
-| `PM_Q_INTERCEPT` | 任意（既定 -0.105） | 寄り前予想の較正係数。買い比率50%のときの予想ギャップ。注意点は `PM_Q_SLOPE` と同じ |
 
 ※ `KV_REST_API_URL` と `KV_REST_API_TOKEN` は当リポジトリのコードには書かれていないが、`@upstash/redis` が `UPSTASH_REDIS_REST_` 系の代替名として読む。Vercel の Upstash 連携がこの名前を注入することがあり、コードを `grep` しても出てこないのに効く場合がある
 ※ `TACHIBANA_WATCH_API` と `TACHIBANA_QUOTE_API` は `tachibana-server` 側の環境変数。`src/App.js` にも同名の定数があるが、そちらは直書きの JS 定数であり環境変数ではない
@@ -108,7 +104,7 @@
 
 - バックエンド: Vercel Functions（`api/`）／ストア: Upstash Redis（同期データ・フォールバック用スナップショット）／リアルタイム中継: Railway上の別リポジトリ `tachibana-server`（常時起動）
 - 立花証券e支店API: 日本株の現在値・板情報・出来高ランキング・業種・会社名・PER/PBR/EPS/BPS/配当利回り/権利落ち日・TOPIX日次騰落率
-- Yahoo Finance: 分足・日足ミニチャート・市況指数（日経225先物／米国主要指数／SOX／VIX／ドル円）／東証（JPX）公式Excel（認証不要）: 決算発表予定日
+- Yahoo Finance: 分足・日足ミニチャート・市況指数（日経平均／NYダウ／S&P500／VIX／ドル円）／東証（JPX）公式Excel（認証不要）: 決算発表予定日
 - **J-Quantsは2026年7月に完全廃止済み。新たにJ-Quantsを使うコードを書かないこと**（`JQUANTS_API_KEY` は不使用）
 
 ### 米国株の扱い（コードはあるが運用していない）
@@ -119,26 +115,21 @@
   - 米国株向けの価格処理（`src/lib/analyze.js` の `tickSizeFor` / `roundTickPrice` の `isJP=false` 側は呼値0.01・小数2桁、`src/App.js` の `fmtMoney` / `fmtPnl` は `$` 表記）
 - **依頼されていない限り、米国株関連のコードを削除しないこと。** 動作している既存機能を壊すリスクがあるため
 - 新機能を実装するとき、米国株対応を考慮する必要はない
-- なお `api/premarket.js` がS&P500・NASDAQ・NYダウ等を取るのは「日本株の寄り付き想定ギャップの材料」であり、米国株の運用ではない
 
 ## 立花証券APIの扱い方（重要）
 
-Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachibana-server(webapi.js) → 立花e支店API`（tachibana-server側は `index.js`（起動）/ `config.js`（設定値。`watchStaleSeconds` などの定義元）/ `auth.js`（ログイン・仮想URL復号）/ `eventClient.js`（WebSocket）/ `relay.js` / `watcher.js` / `webapi.js` / `scanner.js`（定時スキャンのスケジューラ）/ `holidays.js`（日本の祝日判定）/ `premarketLogger.js`（寄り付き前の気配データ収集。平日 8:45〜9:06））。
+Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachibana-server(webapi.js) → 立花e支店API`（tachibana-server側は `index.js`（起動）/ `config.js`（設定値。`watchStaleSeconds` などの定義元）/ `auth.js`（ログイン・仮想URL復号）/ `eventClient.js`（WebSocket）/ `relay.js` / `watcher.js` / `webapi.js` / `scanner.js`（定時スキャンのスケジューラ）/ `holidays.js`（日本の祝日判定））。
 
-- エンドポイントは5つ。**Vercel側キャッシュとサーバー側（tachibana-server）キャッシュは別物**なので混同しないこと:
+- エンドポイントは4つ。**Vercel側キャッシュとサーバー側（tachibana-server）キャッシュは別物**なので混同しないこと:
   - `/topix` … 呼び出し元 `api/stock.js`（Vercel側キャッシュ: 1時間 / `TOPIX_TTL`）｜サーバー側キャッシュ: 未確認
   - `/issue-detail?code=XXXX` … 呼び出し元 `api/stock.js`（Vercel側キャッシュ: 1時間 / `ISSUE_DETAIL_TTL`）｜サーバー側キャッシュ: 未確認
   - `/ranking-data` … 呼び出し元 `api/ranking.js`（Vercel側キャッシュ: なし。`withFallback` は失敗時フォールバックであってキャッシュではない）｜サーバー側キャッシュ: 3分（`tachibana-server` の `webapi.js`）
   - `/names` … 呼び出し元 `api/ipo.js`（Vercel側キャッシュ: 1時間 / `CACHE_TTL`）｜サーバー側キャッシュ: 24時間（銘柄マスタ）。**Vercel側とサーバー側で保持時間が異なる**
-  - `/market-price` … 呼び出し元 `api/premarket.js`（Vercel側キャッシュ: なし）｜サーバー側キャッシュ: なし
   - これらはすべてモジュールスコープの変数（プロセス内メモリ）であり Redis ではない。Lambda コンテナが再利用されたときだけ効くため、実効ヒット率は記載の時間ほど高くない。唯一の例外は `api/stock.js` の決算日マップで、メモリ6時間 → Redis 24時間（`jpx:earnings-map`）の二段構え
-  - `api/premarket.js` の `PREMARKET_TTL`（3分・メモリ）がキャッシュしているのは Yahoo 由来の地合いデータ（`marketBias` / `indicators`）であって、立花の `/market-price`（寄り前気配）ではない。気配は `fetchQuotes()` で毎回そのまま取得しており、`codes` 指定時は `Cache-Control: no-store` を返して CDN・ブラウザにもキャッシュさせない。秒単位で変わるデータのため
-- URLは環境変数から読む（`TACHIBANA_RANKING_API` / `TACHIBANA_ISSUE_DETAIL_API` / `TACHIBANA_TOPIX_API` / `TACHIBANA_NAMES_API` / `TACHIBANA_MARKET_PRICE_API`）、認証はヘッダ `X-Relay-Secret`（`TACHIBANA_RELAY_SECRET`）
-  - `TACHIBANA_MARKET_PRICE_API` … 立花 `/market-price` の URL。`api/premarket.js` が読む。未設定の場合は `TACHIBANA_RANKING_API` の `/ranking-data` を `/market-price` に文字列置換してフォールバックする
-- 立花APIの取得は原則 `withFallback(key, fn)`（`api/_fallbackCache.js`）で包み、`AbortSignal.timeout()` を付ける（8秒目安、一括取得系は15秒）。ただし全5エンドポイント中、実際に包んでいるのは4つ
+- URLは環境変数から読む（`TACHIBANA_RANKING_API` / `TACHIBANA_ISSUE_DETAIL_API` / `TACHIBANA_TOPIX_API` / `TACHIBANA_NAMES_API`）、認証はヘッダ `X-Relay-Secret`（`TACHIBANA_RELAY_SECRET`）
+- 立花APIの取得はすべて `withFallback(key, fn)`（`api/_fallbackCache.js`）で包み、`AbortSignal.timeout()` を付ける（8秒目安、一括取得系は15秒）。全4エンドポイントが対象
   - 包んでいる … `api/stock.js`（`/topix`・`/issue-detail`）、`api/ranking.js`（`/ranking-data`）、`api/ipo.js`（`/names`）
-  - 包んでいない … `api/premarket.js` の `fetchQuotes()`（立花 `/market-price`）と `fetchMarketSentiment()`（Yahoo）。`AbortSignal.timeout` は付いている
-  - 新しい取得処理を追加する場合は `withFallback` を使うこと。上記2つが例外である理由はコード上に明示されていない
+  - 新しい取得処理を追加する場合も `withFallback` を使うこと
 - 毎日3:00〜8:30はシステムメンテナンスでAPIが落ちるが、`withFallback` がRedisの前回成功データ（3日保持）を返すため問い合わせ自体をスキップしない
 
 ### リアルタイム株価・板情報（選択中の1銘柄のみ購読）
@@ -178,7 +169,7 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
   - `api/_scan.js` `mergeResults(key, rows)` … 本命。`scan:<date>:<slot>` を `get` → ticker 単位でマージ → `set` で書き戻す。同時実行すると後勝ちで片方のバッチ結果が丸ごと消える
   - `api/_scan.js` `runScanBatch()` の `offset === 0` のブロック … `UNIVERSE_BUILD_KEY` を `get` して比較してから `set` する check-then-act。同時実行すると両方が「組み立て回」と判定し `buildUniverse()` が二重に走る
   - **Vercel 側にロック機構は一切ない。** 壊れていないのは実装が安全だからではなく、呼び出し側の `tachibana-server/scanner.js` が `running` / `runningSlot` フラグで排他し、バッチを必ず前の応答を待ってから次を投げる直列呼び出しにしているため。この前提が崩れる変更（並列化、別クライアントからの `scan-run` 呼び出し）はデータ破壊に直結する
-  - 同種の read-modify-write は `api/sync.js` にもある。`handlePremarketLog()` の POST（`premarket:log:<日付>` を `get` → `push` → `set`）と、デバイス間同期の POST（`lastSectors` 未送信時に `user:<userId>` を `get` してから `set`）
+  - 同種の read-modify-write は `api/sync.js` にもある。デバイス間同期の POST（`lastSectors` 未送信時に `user:<userId>` を `get` してから `set`）
 - 停滞検知あり: 同一 `offset` が3回連続で返った場合はループを中断する（`MAX_SAME_OFFSET = 3`）
 - スキャン対象の銘柄リスト（ユニバース）は**サーバー側で組み立てる**。以前あった無認証のPOST口は廃止済み
 - ユニバース本体 `scan:universe` のTTLは7日（`UNIVERSE_TTL`）。`scan:universe:meta` も同じ7日
@@ -209,9 +200,6 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 | `tachibana:watch` | 5分 | `WATCH_TTL` | `api/sync.js` |
 | `tachibana:quote:<ticker>` | 30秒 | 定数なし・直書き | `api/sync.js` |
 | `tachibana:quote:last:<ticker>` | 3日 | `QUOTE_SNAPSHOT_TTL` | `api/sync.js` |
-| `premarket:log:<YYYY-MM-DD>` | 30日 | `PREMARKET_LOG_TTL` | `api/sync.js` |
-| `premarket:log:partial:<YYYY-MM-DD>` | 6時間 | `PREMARKET_LOG_PARTIAL_TTL` | `api/sync.js` |
-| `premarket:pred:<YYYY-MM-DD>` | 30日 | `PREMARKET_PRED_TTL` | `api/sync.js` |
 | `user:<userId>` | 90日 | `TTL` | `api/sync.js` |
 | `scan:universe` | 7日 | `UNIVERSE_TTL` | `api/_scan.js` |
 | `scan:universe:meta` | 7日 | `UNIVERSE_TTL` を流用（キー名は直書き） | `api/_scan.js` |
@@ -220,25 +208,14 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 
 - `scan:universe` と `scan:universe:meta` は同じ `UNIVERSE_TTL`（7日）だが、`scan:universe:built` だけは別定数 `UNIVERSE_BUILD_TTL`（3日）である。混同しないこと
 - `scan:universe:built` の**値**が「今日の日付とスロットの組み合わせ」と一致する間は、自動スキャン時のユニバース組み立てがスキップされる。キーが残っているだけではスキップされない（日付やスロットが変われば組み立てが走る）。手動テストで組み立てを走らせたい場合は Upstash Data Browser でこのキーを削除する
-- `premarket:log:partial:<日付>` は寄り前収集の**途中経過**を置く暫定キー。本番の生ログ `premarket:log:<日付>` とは保存先も入れ物の形も別物なので混同しないこと
-  - 用途: 本番の生ログが書かれるのは収集ループを抜けた 9:06 前後だが、端末が気配サマリーを見るのは 8:45〜9:00 である。その時間帯に読める材料を用意するために、収集の途中で1回だけ保存する
-  - TTL は6時間（`PREMARKET_LOG_PARTIAL_TTL`）。当日中に消えれば十分で、翌日以降に暫定データが残ると本番データと取り違えるため短くしてある
-  - **追記ではなく上書き。** 保持するのは常に最新の1件だけ（`handlePremarketLog()` の POST で `body.partial === true` のときの分岐）。本番キーのような配列にはしない
-  - 入れ物の形が違う: 本番キーは記録セッションの**配列**、暫定キーは記録セッション**1件そのもの**。`summarizePremarketDate()` へ渡すときは要素1件の配列に包む必要がある
-  - 読むのは `handlePremarketSummary()` だけで、**本番キーの読み取り結果が配列でなかったときに限り**参照する。本番キーがあるときは触らない。暫定を読んだ場合は応答の `partial` が `true` になる
-  - **`mode=calib` と `mode=coverage`（`handlePremarketCalib()` / `handlePremarketCoverage()`）はこの退避経路を持たない。** 較正係数と欠測件数は確定データだけで判断すべきもので、暫定データが混ざると数字が狂う。ここに退避を足さないこと
-  - 保存形式は本番キーと同じく `packForRedis()` の gzip。読み出しも `unpackFromRedis()` を通す
-  - `listPremarketDates()` は `premarket:log:*` の前方一致で拾うため暫定キーも引っかかる。日付形式（`isDateString`）で除外している。この絞り込みを外すと `date=list` に `partial:...` が並ぶ
-- 寄り予想の記録は2系統ある。サーバー側は `premarket:pred:<日付>`（全端末共通）、ブラウザ側は `localStorage` の `pm_<ticker>`（端末間同期の対象外）。移行期間中は併存しているため、的中率の集計がどちらを見ているかを確認してから触ること
 - `tachibana:watch` の TTL は5分だが、購読が有効とみなされる実効時間は2分。判定しているのは `tachibana-server/config.js` の `watchStaleSeconds`（120秒）で、Vercel 側の `WATCH_TTL` とは別の値。CLAUDE.md 上の5分だけを見て「2分以上前の購読も有効」と判断しないこと
 
 ## Redis への保存形式（gzip）
 
 - `api/sync.js` の `packForRedis()` は、渡されたオブジェクトを**閾値なしで常に** gzip 圧縮し、base64 化して先頭に `gz:` を付けて保存する。「サイズが一定を超えたら圧縮する」という実装ではない
 - 展開は `unpackFromRedis()`。`gz:` で始まれば展開し、そうでなければ素の JSON として `JSON.parse` するため、圧縮導入前の古いデータも読める
-- 実際に `gz:` 付きで保存されるのは `user:<userId>` と `premarket:log:<日付>` と `premarket:pred:<日付>` の3つだけ。`api/_scan.js` 側（`scan:universe` など）は `JSON.stringify` の素の文字列で保存しており圧縮していない
+- 実際に `gz:` 付きで保存されるのは `user:<userId>` だけ。`api/_scan.js` 側（`scan:universe` など）は `JSON.stringify` の素の文字列で保存しており圧縮していない
 - 圧縮の設計理由である「Redis の1リクエストあたり1MB」という制限は、コード上に数値としては存在しない（`api/sync.js` 冒頭のブロックコメントに文章として記載があるのみ）。サイズチェックの実装もない
-- 別物として、`tachibana-server/premarketLogger.js` の `POST_SIZE_LIMIT_KB=4500` は Vercel のリクエストボディ上限であり、Redis の制限ではない。混同しないこと
 
 ### 展開処理の二重実装
 
@@ -256,49 +233,12 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 | --- | --- | --- |
 | `tachibana-watch` | POST・GET | POST=購読中の銘柄を `tachibana:watch` に書く（無認証）。GET=購読中の銘柄を返す（`X-Relay-Secret` 必須） |
 | `tachibana-quote` | POST・GET | POST=立花のリアルタイム値をライブ用（30秒）とスナップショット用（3日）へ同時に書く（認証必須）。GET=ライブ値、無ければスナップショットを `stale:true` 付きで返す |
-| `premarket-log` | POST・GET | POST=`premarketLogger.js` から届く寄り前気配の生ログを追記（認証必須）。GET=その日の生ログ。`date=list` で保存済み日付一覧 |
-| `premarket-summary` | GET のみ | 寄り前ログを日付×銘柄で1行に集計して返す読み取り専用。保存もTTL延長もしない |
-| `premarket-prediction` | POST・GET | POST=その日の寄り前ログから気配ベースの寄り予想を生成して保存（認証必須）。`tachibana-server` の収集終了後に自動で1回叩かれる。生ログが1件も無い日は保存せず件数だけ返す。GET=保存済みの予想を返す読み取り専用（無認証・`date` 必須） |
 | `scan-universe` | GET のみ | スキャン対象銘柄リストの現在値を返す。書き込み口は廃止済み（保存は `_scan.js` の `buildUniverse` がサーバー側で行う） |
 | `scan-run` | POST のみ | 定時スキャン1バッチの実行窓口。`_scan.js` を動的 import して `runScanBatch()` を呼ぶ（認証必須） |
 | `scan-result` | GET のみ | `date` 指定で全 slot の保存結果を `mget` してまとめて返す |
 | （`resource` 無し・未知の値） | POST・GET | デバイス間同期にフォールバック。`userId` 必須。`user:<userId>` を読み書き（90日、GET時に延長） |
 
-- `premarket-summary` は `date` 未指定だと Redis に触る前に `400 date required` を返す。これは意図的な仕様で、日付を省くと保存済み全日分（最大30日）を展開して応答が数十MBに達し、Vercel の上限と実行時間を圧迫するため。`date` が `YYYY-MM-DD` 形式でない場合も `400 invalid date`。`premarket-log` で使える `date=list` は `premarket-summary` では使えない
-- `summarizePremarketDate()` は **`premarket-summary` 本体・`mode=calib`・`mode=coverage`・`premarket-prediction` の4箇所が共有している。** ここで行の作り方を変えると4つの出力が同時に変わる。片方だけを書き直すと数字が食い違う
 - `resource` 無しのデバイス間同期は、`lastSectors` が送られてこなかった場合に**既存の値を維持する**（未送信を「空で上書き」と解釈しない）。古い版のアプリからの同期で業種選定が消えるのを防ぐため
-
-### validCount の意味
-
-寄り前ログの集計行（`summarizePremarketDate()` が作る行）に載る `validCount` は、`api/sync.js:290` の `ratios.length` である。すなわち**その銘柄の気配レコードのうち、売気配数量と買気配数量の両方が数値として取得でき、かつ合計が0より大きかったレコードの件数**を表す。※行番号は目安。ズレていたら `validCount:` を grep して追うこと
-
-- **通し番号ではない。** 「何回目のティックだったか」という位置情報はコード上どこにも保持していない
-- カウント条件は `api/sync.js:247-255` の3つ。`pAAV`（売気配数量）が数値化できること、`pABV`（買気配数量）が数値化できること、その合計が0より大きいこと。**片側が数値の0ならカウントされる**（売り一色・買い一色のような偏りが強い場面がこれに当たる）
-- 上限は同じ行の `quoteCount`（その銘柄の生レコード数。`api/sync.js:289` の `list.length`）。`validCount ≤ quoteCount` が常に成り立つ
-- **寄り付き後のティックを除外する明示的な判定は存在しない。** 寄ると気配が空文字になり上記条件で落ちるため、結果的に除外されているだけである
-
-実測値の解釈（2026-09-02 の実測）:
-
-- 全158銘柄で `quoteCount` が84（収集窓の全ティック数）だった。したがって同日の `validCount` は「84回のうち何回、両側の気配が取れたか」を意味する
-- `validCount=60` が最も多い。8:45 から 9:00 までの15分間ぶんのティック数に相当し、9:00 の寄り付きで正常に寄った銘柄がこの値になる。ただしこれは「気配が前半に連続して出ていた」結果として数が一致するのであって、**60 という数値が寄り付き時刻を直接表しているわけではない**
-- 61以上は寄りが遅れて気配が出続けた銘柄。総ティック数と等しい値（同日は84）は 9:06 まで寄らなかった銘柄
-- **60未満も発生する。** 2026-09-02 は 11・33・34・49 が観測された。これは収集の取りこぼしではない（`quoteCount` は84で揃っている）。売り一色・買い一色などで片側の気配数量が空になり、カウント条件を満たさないレコードが多かったことを意味する
-- `validCount=0` は買い比率が1件も計算できなかった銘柄で、`premarket-summary` の `mode=coverage` が返す `noBuyRatio` と対応する。この銘柄は予想が作られない
-
-扱いの注意:
-
-- **`validCount` は単調な品質指標ではない。値が小さいほど悪いとは限らない。** 60未満の銘柄は気配の偏りが極端だったことを示し、2026-09-02 の実測では予想精度がむしろ高かった（5242 は予想+2.35に対し実測+2.14、255A は予想-2.48に対し実測-2.49）。一方 61以上の群は 8/31・9/1・9/2 の3営業日を通じて予想誤差が平均1%程度大きい傾向がある
-- したがって `validCount` を確信度に反映させる場合、**「60から離れるほど減点」という扱いは誤り**である。60未満と61以上は別の現象として扱うこと
-- **未寄りの判定に `validCount` を使わないこと。** `noOpen` は `row.open == null`（`api/sync.js:597`）で判定しており `validCount` を見ていない。両者が一致するのは現象上の相関であって同値関係ではない。欠測のある未寄り銘柄は `validCount` が総ティック数未満になりうる
-- `src/App.js` の寄り前予想の理由表示（`reasons`）が `validCount` に付けているラベル「観測回数」は実装と整合しており、**誤りではない**
-
-### サーバー側の寄り予想（`premarket-prediction`）を使うときの前提
-
-`src/App.js` からサーバー側の寄り予想を読む処理（`PM_PRED_API` / `pmFetchServerPredictions`）には、コードを読んだだけでは分からない前提が3つある。
-
-- **当日ぶんのサーバー予想は 9:00 より前には存在しない。** サーバー側の寄り予想は、寄り前収集の生ログの保存が成功したときに1回だけ生成される。収集窓は平日 8:45〜9:06 のため、保存が済むのは 9:06 前後になる。したがって 9:00 前にサーバーへ問い合わせても必ず空振りになり、問い合わせないのが正しい実装である。**この前提を知らずに「9:00 前にもサーバーの予想を出す」方向の変更を入れないこと**
-- **日付関数は2系統ある。取り違えないこと。** 当日を表す `fcTodayJST` と、翌営業日を表す `pmTargetDate` がある。サーバーの予想を取得するときに使うのは当日側の `fcTodayJST` である。`pmTargetDate` は寄り前収集の対象日を先送りするためのもので、これを使うと当日ぶんの予想が引けない。**取り違えても画面はエラーにならず、ただ何も表示されないだけなので気付きにくい**
-- **サーバーから取得した予想を端末内の記録へ書き戻さないこと。** `localStorage` の `pm_<ticker>` 側にも、同じ日・同じ銘柄・同じ出どころ名（`quote`）の記録が存在しうる。書き戻すと同一条件の記録が2件並び、的中率の集計件数が最大2倍になる。出どころ名で両者を区別できないことが原因であり、区別できるようにしない限りこの制約は外せない
 
 ## 開発ルール・よくある落とし穴
 
