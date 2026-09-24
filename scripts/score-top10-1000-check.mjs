@@ -947,16 +947,27 @@ var main = async function () {
 
   L.push("## 8. PR #88 との一致の確認（8:50のスコアで並べ、寄り付きで買う版）");
   L.push("");
-  L.push("写した処理が PR #88 と同じ動きかを確かめるため、PR #88 の本表（2章・3章）と同じ条件で計算し直した。`docs/score-top10-result.md` の数値と突き合わせる。");
+  L.push("写した処理が PR #88 と同じ動きかを確かめるため、PR #88 の本表（2章・3章）と同じ条件で計算し直し、`docs/score-top10-result.md` の数値と突き合わせた。");
   L.push("");
   L.push("- スコア計算 " + scored0850 + "件（寄り付き後扱い " + started0850 + "、時計のずれ " + clockMismatch0850 + "日）。公式の前日終値が無かった銘柄日 " + skip.noOfficialPrev);
+  var checkLine = L.length;
   L.push("");
+  var reproFrom = L.length;
   groupTable([
     ["スコア上位10", repro.groups.top, exitOpen],
     ["11位以下", repro.groups.rest, exitOpen],
     ["候補全体", repro.groups.all, exitOpen],
   ]);
   diffTable(repro.diff);
+  // 上の表のデータ行が、PR #88 のレポートに同じ文字列の行として含まれているかを確かめる
+  var pr88Path = fileURLToPath(new URL("../docs/score-top10-result.md", import.meta.url));
+  var pr88Lines = existsSync(pr88Path) ? new Set(readFileSync(pr88Path, "utf8").split("\n")) : null;
+  var reproRows = L.slice(reproFrom).filter(function (x) { return x.indexOf("| ") === 0 && x.indexOf("| ---") !== 0 && x.indexOf("| グループ") !== 0 && x.indexOf("| 同じ足で") !== 0; });
+  var missing = pr88Lines ? reproRows.filter(function (x) { return !pr88Lines.has(x); }) : reproRows;
+  L.splice(checkLine, 0, "- 突き合わせの結果: " + (!pr88Lines ? "`docs/score-top10-result.md` が見つからず確認できなかった"
+    : missing.length === 0 ? "**一致**（下の表のデータ行 " + reproRows.length + "行すべてが、PR #88 のレポートに同じ数値で載っている）"
+    : "**不一致**（" + missing.length + "行 / " + reproRows.length + "行が PR #88 のレポートに無い）"));
+  if (missing.length) console.log("PR #88 と一致しない行:\n" + missing.join("\n"));
 
   var outPath = fileURLToPath(new URL("../docs/score-top10-1000-result.md", import.meta.url));
   writeFileSync(outPath, L.join("\n"));
