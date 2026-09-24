@@ -29,8 +29,11 @@ var RETRY_WAITS = [5000, 10000, 20000, 40000, 80000]; // 429 のときの待ち�
 var ERROR_RETRY_WAITS = [3000, 6000]; // 429 以外の一時的な失敗（通信エラー・5xx）の再試行
 
 // 1時間足: Yahoo の 60m は「直近730日以内」しか返さない。range=730d が受け付けられる最長の指定
+// （実測では range=730d は直近730取引日分を返す）
 var HOURLY_INTERVAL = "60m";
 var HOURLY_RANGE = "730d";
+// 上場が新しい銘柄は range=730d が 422 になる（上場日が730日より前の場合）ため、そのときだけ range=2y で取り直す
+var HOURLY_FALLBACK_RANGE = "2y";
 // 1時間足で判定できる期間を決めるための基準銘柄（この銘柄の1時間足の最古日〜最新日を期間とする）
 var HOURLY_REF_TICKER = "7203.T";
 
@@ -185,14 +188,26 @@ var parseHourly = function (json) {
   return rows;
 };
 
-// 1銘柄の1時間足を取得する。戻り値: { rows } または { error }（再試行の仕方は fetchDaily と同じ）
+// 1銘柄の1時間足を取得する。戻り値: { rows, range } または { error }
+// range=730d が 422 のときだけ range=2y で取り直す（取り直しでも失敗したらその結果を返す）
 var fetchHourly = async function (ticker, cacheDir) {
   var cachePath = cacheDir ? join(cacheDir, ticker.replace(/[^A-Za-z0-9._-]/g, "_") + ".60m.json") : null;
   if (cachePath && existsSync(cachePath)) return JSON.parse(readFileSync(cachePath, "utf8"));
 
+  var out = await fetchHourlyRange(ticker, HOURLY_RANGE);
+  if (out.error === "Yahoo 422") {
+    await sleep(WAIT_MS);
+    out = await fetchHourlyRange(ticker, HOURLY_FALLBACK_RANGE);
+  }
+  if (cachePath && !(out.error && out.error.indexOf("429") === 0)) writeFileSync(cachePath, JSON.stringify(out));
+  return out;
+};
+
+// range を指定して1時間足を1回取得する（再試行の仕方は fetchDaily と同じ）
+var fetchHourlyRange = async function (ticker, range) {
   // api/daily.js と同じ URL 形式（interval と range を指定）
   var url = "https://query1.finance.yahoo.com/v8/finance/chart/" + encodeURIComponent(ticker) +
-    "?interval=" + HOURLY_INTERVAL + "&range=" + HOURLY_RANGE;
+    "?interval=" + HOURLY_INTERVAL + "&range=" + range;
   var n429 = 0, nErr = 0;
   var out = null;
   while (!out) {
@@ -220,9 +235,8 @@ var fetchHourly = async function (ticker, cacheDir) {
       out = { error: "JSON 解析失敗" };
       break;
     }
-    out = rows && rows.length ? { rows: rows } : { error: "データなし" };
+    out = rows && rows.length ? { rows: rows, range: range } : { error: "データなし" };
   }
-  if (cachePath && !(out.error && out.error.indexOf("429") === 0)) writeFileSync(cachePath, JSON.stringify(out));
   return out;
 };
 
@@ -437,6 +451,7 @@ var main = async function () {
 
   var hourly = new Array(stocks.length).fill(null); // 銘柄の番号 → Map(日付 → 時刻順の1時間足)
   var hourlyFailed = [];
+  var hourlyFallback = 0; // range=730d が 422 で、range=2y で取り直した銘柄数
   for (var hi = 0; hi < targets.length; hi++) {
     var hTicker = stocks[targets[hi]].ticker;
     var hFromCache = cacheDir && existsSync(join(cacheDir, hTicker + ".60m.json"));
@@ -451,6 +466,7 @@ var main = async function () {
       });
       byDate.forEach(function (list) { list.sort(function (a, b) { return a.ts - b.ts; }); });
       hourly[targets[hi]] = byDate;
+      if (hr.range === HOURLY_FALLBACK_RANGE) hourlyFallback++;
     }
     if (!hFromCache) await sleep(WAIT_MS);
     if ((hi + 1) % 200 === 0) console.log("  1時間足 " + (hi + 1) + "/" + targets.length + "（失敗 " + hourlyFailed.length + "）");
@@ -626,7 +642,8 @@ var main = async function () {
   L.push("- 1時間足で判定できる期間: " + hStart + " 〜 " + hEnd + "（" + HOURLY_REF_TICKER + " の1時間足の最古日〜最新日）");
   L.push("- 期間中の日本取引日: " + jpDaysInPeriod.length + "日（うち検証対象日 " + dayRows.length + "日" +
     (dayRows.length ? "、" + dayRows[0].date + " 〜 " + dayRows[dayRows.length - 1].date : "") + "）");
-  L.push("- 1時間足の取得対象: 期間中に一度でも候補に選ばれた " + targets.length + "銘柄（取得失敗 " + hourlyFailed.length + "銘柄）");
+  L.push("- 1時間足の取得対象: 期間中に一度でも候補に選ばれた " + targets.length + "銘柄（取得失敗 " + hourlyFailed.length + "銘柄。" +
+    "上場が新しく range=" + HOURLY_RANGE + " が 422 になったため range=" + HOURLY_FALLBACK_RANGE + " で取り直した銘柄 " + hourlyFallback + "銘柄）");
   L.push("");
   L.push("売り方: T当日の日足の始値 O で買い、利確ライン O × 1.015・損切りライン O × 0.9925 とする。T当日の1時間足を時刻順に見て、最初に「高値が利確ライン以上」または「安値が損切りライン以下」になった足で決着させる。");
   L.push("");
@@ -699,6 +716,7 @@ var main = async function () {
     L.push("| └ " + k2 + " | " + failReasons[k2] + " |");
   });
   L.push("| 1時間足の取得対象の銘柄 | " + targets.length + " |");
+  L.push("| 1時間足を range=" + HOURLY_FALLBACK_RANGE + " で取り直した銘柄（range=" + HOURLY_RANGE + " が 422） | " + hourlyFallback + " |");
   L.push("| 1時間足の取得に失敗した銘柄 | " + hourlyFailed.length + " |");
   Object.keys(hourlyFailReasons).sort().forEach(function (k2) {
     L.push("| └ " + k2 + " | " + hourlyFailReasons[k2] + " |");
