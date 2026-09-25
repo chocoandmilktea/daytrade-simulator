@@ -861,8 +861,13 @@ var main = async function () {
     var alwaysZero = vals.every(function (v) { return v === 0; });
     var alwaysZero0850 = vals0.every(function (v) { return v === 0; });
     var hasPos = vals.some(function (v) { return v > 0; });
-    return { label: lb, alwaysZero: alwaysZero, alwaysZero0850: alwaysZero0850, hasPos: hasPos };
+    // 0以外の同じ点数しか取らない部品（比べる群と相関が作れない）
+    var constVal = !alwaysZero && vals.every(function (v) { return v === vals[0]; }) ? vals[0] : null;
+    return { label: lb, alwaysZero: alwaysZero, alwaysZero0850: alwaysZero0850, hasPos: hasPos, constVal: constVal };
   });
+  var constNote = partInfo.filter(function (p) { return p.constVal != null; }).map(function (p) {
+    return p.label + "（" + N + "件すべてで " + signed(p.constVal) + "）";
+  }).join("、");
   var activeParts = partInfo.filter(function (p) { return !p.alwaysZero; });
 
   // 1. スコア帯（5等分。scripts/score-parts-check.mjs と同じ同点の扱い）
@@ -1035,6 +1040,7 @@ var main = async function () {
   L.push("- 加点あり: その部品の点数が0より大きい。加点なし: 0以下（0点と減点を含む）");
   if (partInfo.some(function (p) { return !p.alwaysZero && !p.hasPos; })) L.push("- 加点が一度も無い部品（点数が0以下しか取らない部品）は、減点あり（0未満）と減点なし（0）で同じ計算をした");
   L.push("- 日ごとに2群の平均の差を出し、その平均と t値（平均 ÷（不偏標準偏差 ÷ √日数））を示した。片方の群が0件の日は除いた");
+  if (constNote) L.push("- 0以外の同じ点数しか取らなかった部品: " + constNote + "。加点なしの群が無いため日数0・「-」になる");
   L.push("");
   L.push("### 5-2. 点数ごとの件数と平均");
   L.push("");
@@ -1084,11 +1090,12 @@ var main = async function () {
   L.push("| **合計スコア** |" + scoreCorr.map(function (c) { return " " + num3(c.r) + " |"; }).join(""));
   L.push("");
   L.push("- ピアソンの相関係数。計算に使った件数: " + RISE.map(function (x, i) { return x.label + " " + scoreCorr[i].n + "件"; }).join("、") + "（騰落率を計算できなかった銘柄日を除く）");
+  if (constNote) L.push("- 0以外の同じ点数しか取らなかった部品: " + constNote + "。点数が一定のため相関係数を計算できない（「-」）");
   L.push("");
 
   L.push("## 7. 集計4: 部品同士の相関（10:00の点数）");
   L.push("");
-  L.push("常に0点の部品を除いた " + activeParts.length + "部品。ピアソンの相関係数（" + N + "件）。列の番号は行の番号と同じ部品。");
+  L.push("常に0点の部品を除いた " + activeParts.length + "部品" + (constNote ? "（点数が一定の部品は相関係数を計算できないため「-」）" : "") + "。ピアソンの相関係数（" + N + "件）。列の番号は行の番号と同じ部品。");
   L.push("");
   var head = "| 部品 |";
   var sep = "| --- |";
