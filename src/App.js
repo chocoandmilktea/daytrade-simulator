@@ -3233,6 +3233,19 @@ function FavPickerModal(p){
   );
 }
 
+// ── S1（参考値）：スコア内訳(breakdown)のうち下の9項目の点数だけを足した値 ─────
+// 総合スコアとは別枠の参考値で、0〜100への切り詰めはしない。
+// ラベルは完全一致で照合する（"VWAP" と "VWAP傾き" を取り違えないため、前方一致・部分一致は使わない）
+var S1_LABELS=["VWAP傾き","Pivot","ATR(値幅)","ATR消化率","MACD","RSI","BB","Stoch","重複ボーナス"];
+function calcS1(breakdown){
+  if(!Array.isArray(breakdown)) return null;
+  var sum=0;
+  breakdown.forEach(function(b){
+    if(b&&S1_LABELS.indexOf(b.label)>=0&&typeof b.delta==="number"&&isFinite(b.delta)) sum+=b.delta;
+  });
+  return sum;
+}
+
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   var star=starStyle(s.ticker,isFav,p.personalTrades);
@@ -3299,6 +3312,7 @@ function StockCard(p){
             <div style={{fontSize:13,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
             {s.real===false&&s.failReason&&<div style={{fontSize:9,color:"#f43f5e",maxWidth:100,textAlign:"right"}}>{s.failReason}</div>}
             {s.real!==false&&<div style={{fontSize:10,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>}
+            {(function(){var s1=calcS1(s.breakdown);return s1!=null&&<div style={{fontSize:9,color:"#4a7090"}} title="S1（参考値）：スコア内訳のうちVWAP傾き・Pivot・ATR(値幅)・ATR消化率・MACD・RSI・BB・Stoch・重複ボーナスの点数だけを足した値">S1 {Math.round(s1)}</div>;})()}
           </div>
         </div>
       </div>
@@ -4319,9 +4333,9 @@ function FavPanel(p){
 
   // groupFilter: -1=📋全銘柄 / 0=未分類 / 1〜4=グループ。タブを移動しても保持される
   var groupFilterS=usePersistedState("fav_group_filter",0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1];
-  // sortMode: "reg"=既定順（お気に入り=登録順・全銘柄=スキャン順）/ "score"=スコア順 / "momentum"=初動順 / "trade"=トレード順
+  // sortMode: "reg"=既定順（お気に入り=登録順・全銘柄=スキャン順）/ "score"=スコア順 / "momentum"=初動順 / "trade"=トレード順 / "s1"=S1順
   var sortModeS=usePersistedState("fav_sort_mode","reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1];
-  var mode=(sortMode==="score"||sortMode==="momentum"||sortMode==="trade")?sortMode:"reg"; // 旧"dayType"の保存値は既定順に読み替え
+  var mode=(sortMode==="score"||sortMode==="momentum"||sortMode==="trade"||sortMode==="s1")?sortMode:"reg"; // 旧"dayType"の保存値は既定順に読み替え
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
   var addGroupS=useState(0);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
@@ -4415,6 +4429,12 @@ function FavPanel(p){
         var d=tradeRank(a)-tradeRank(b);
         return d!==0?d:(b.score||0)-(a.score||0);
       })
+    :mode==="s1"
+    ?baseList.map(function(s,i){return{s:s,i:i,v:calcS1(s.breakdown)};}).sort(function(a,b){
+        // S1順：S1の高い順。S1が無い銘柄は末尾へ。同点（無い同士も含む）は並べ替え前の順番を保つ
+        if(a.v==null||b.v==null){if(a.v==null&&b.v==null)return a.i-b.i;return a.v==null?1:-1;}
+        return b.v!==a.v?b.v-a.v:a.i-b.i;
+      }).map(function(x){return x.s;})
     :baseList;
 
   // ── 検索窓のページ内検索（表示中の銘柄へジャンプ）─────────────────────
@@ -4465,6 +4485,7 @@ function FavPanel(p){
   // ── 上部バーの部品（横スクロール1行に並べるため全てflexShrink:0）──────────
   var TIP_SCORE="アプリのスコア（0〜100点）が高い順に並べます。もう一度押すと既定の並びに戻ります";
   var TIP_TRADE="スキャル→デイトレ→スイングの順に並べ、各グループ内はスコアの高い順に表示します";
+  var TIP_S1="S1（スコア内訳のうちVWAP傾き・Pivot・ATR(値幅)・ATR消化率・MACD・RSI・BB・Stoch・重複ボーナスの合計点）が高い順に並べます。もう一度押すと既定の並びに戻ります";
   var TIP_MOM="これから数日で動き出しそうな銘柄（初動スコア）の高い順に並べます。対TOPIX相対の3日累積を主軸に、出来高の立ち上がりとBB収束を加味した点数です。日本株のみ・スキャン履歴が3日分たまると表示されます";
   function sBtn(m,label,title,color){
     var active=mode===m;
@@ -4500,7 +4521,7 @@ function FavPanel(p){
   return(
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(50+extraH)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4}}>
-        {/* 件数 / 検索 / グループ / 初動順 / スコア順 / 業種まとめ登録 / 的中率 ／ 右端に再スキャン（PC版）*/}
+        {/* 件数 / 検索 / グループ / 初動順 / スコア順 / トレード順 / S1順 / 業種まとめ登録 / 的中率 ／ 右端に再スキャン（PC版）*/}
         <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",display:"flex",gap:4,alignItems:"center",flexWrap:"nowrap",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <span style={{fontSize:10,color:"#4a7090",flexShrink:0,whiteSpace:"nowrap"}} title={"取得できた銘柄数／スキャンした銘柄数（表示中は"+displayStocks.length+"件）"}>
             <span style={{color:"#22d3a0",fontWeight:700}}>{realCount}</span>/{stocks.length}
@@ -4525,6 +4546,8 @@ function FavPanel(p){
           {sBtn("score","🏆スコア順",TIP_SCORE,"#fbbf24")}
           {/* トレード順。スコア順(#fbbf24)と見分けが付くよう色は紫(#a78bfa)にした */}
           {sBtn("trade","🎯トレード順",TIP_TRADE,"#a78bfa")}
+          {/* S1順。既存3ボタン(#22d3a0/#fbbf24/#a78bfa)と見分けが付くよう色は水色(#38bdf8)にした */}
+          {sBtn("s1","📐S1順",TIP_S1,"#38bdf8")}
           {p.onBulkSector&&<button onClick={p.onBulkSector} style={{flexShrink:0,background:"transparent",border:"1px solid #0ea5e955",borderRadius:6,color:"#7dd3fc",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>🏭業種まとめ登録</button>}
           {pcGap}
           <button onClick={function(){setShowAcc(true);}} style={{flexShrink:0,background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>📊的中率</button>
