@@ -14,8 +14,10 @@
 // 部品ごとの点数の取り出し・S1 の作り方・上位10の選び方・買値・現行の売り方（損益A）と大引け保有（損益B）は
 // scripts/score-variants-check.mjs から写した（元のファイルは処理がすべて main() の中にあり、
 // import すると既存のレポート docs/score-variants-result.md を書き換えるため）。
-// 写しが正しいことは、現行の売り方と大引け保有の成績が docs/score-variants-result.md の
-// 10:00の表と一致するかで確かめる（レポートの「実装前確認」）。
+// 写しが正しいことは、現行の売り方と大引け保有の成績を docs/score-variants-result.md の
+// 10:00の表と突き合わせて確かめる（レポートの0章・実装前確認3）。
+// 2026-09-27 の実行では Yahoo から取れる15分足が PR #92・#93 の実行時（2026-09-25）から変わっており一致しなかったため、
+// その日に取得したデータを新しい基準とした（ずれた理由はレポートの0章に書く）。
 // アプリ本体とは無関係の単発検証スクリプト。新しい npm パッケージは使わず、
 // 既存の依存関係に含まれる xlsx（SheetJS）・@upstash/redis（api/_scan.js の読み込みに必要）と
 // Node 標準の fetch のみを使う。
@@ -805,7 +807,12 @@ var main = async function () {
   ];
   // PR #92・#93 のレポート（docs/score-variants-result.md の1章）の件数
   var PR92_SKIP = { noIntraday: 18, noPrevBars: 0, fewBars: 4, noToday: 0, fewBars1000: 0, noDaily: 0, noBuyBar: 35, noAfter: 0 };
+  // 元のスクリプトを、今回と同じ取得データでリポジトリの外のコピー上で再実行して確かめた日と、その10:00の表の値（レポートの0章に載せる）
+  var RERUN_CHECKED = "2026-09-27";
+  var RERUN_VALUES = { s1: "354件・今の売り方 0.030%・大引け保有 0.308%", s0: "357件・今の売り方 -0.125%・大引け保有 -0.622%" };
   var daySkip = {};
+  // 15分足の取得失敗・600本未満で除いた銘柄日（0章でずれた理由を示すため）
+  var skipList = [];
   var clockMismatch1000 = 0, notStarted1000 = 0, scored1000 = 0, sumMismatch = 0, shortScored1000 = 0;
 
   testDays.forEach(function (td) {
@@ -823,14 +830,14 @@ var main = async function () {
       var rec = { day: date, ticker: st.ticker, order: order, at: {} };
       td.records.push(rec);
       var ix = intraday[si2];
-      if (!ix) { dsk.noIntraday++; return; }
+      if (!ix) { dsk.noIntraday++; skipList.push({ key: "noIntraday", date: date, ticker: st.ticker }); return; }
       // 8:50の範囲での判定（元のスクリプトは8:50のスコアを計算できなかった銘柄日を10:00でも計算しないため、同じ条件で除く）
       var w = windowBefore(ix, date);
       if (!w || w.lastDay !== jpDays[t - 1]) { dsk.noPrevBars++; return; }
       var d0 = t0 != null ? bars[si2][t0] : null;
       var tradedOnStart = !!(d0 && isNum(d0.close));
       var extra0850 = missingStartBars(ix, w.to - w.from, w.days, t, APP_WINDOW_DAYS, tradedOnStart);
-      if (w.to - w.from + extra0850 < MIN_BARS) { dsk.fewBars++; return; }
+      if (w.to - w.from + extra0850 < MIN_BARS) { dsk.fewBars++; skipList.push({ key: "fewBars", date: date, ticker: st.ticker, bars: w.to - w.from + extra0850 }); return; }
       var stock = scan.normalizeStock(st.ticker);
       var b = bars[si2][t];
 
@@ -968,17 +975,17 @@ var main = async function () {
   var judge = function (sel) {
     var st = sel.stats;
     var beatsCur = function (k) { return st[k].first.diff.avg > 0 && st[k].second.diff.avg > 0; };
-    var out = { strict: [], plateau: [], noNeighbor: [] };
+    var out = { plateau: [], strict: [], noNeighbor: [] };
     RANKED.forEach(function (rule) {
       if (rule.key === CURRENT_KEY || !beatsCur(rule.key)) return;
       var nb = neighborsOf(rule);
       if (!nb.length) { out.noNeighbor.push(rule.key); return; }
-      // 読み方1: その売り方が、前半・後半の両方で、隣の設定のどれよりも平均損益が高い
+      // 参考の読み方: その売り方が、前半・後半の両方で、隣の設定のどれよりも平均損益が高い
       var beatsNb = nb.every(function (k) {
         return st[rule.key].first.diff.avg > st[k].first.diff.avg && st[rule.key].second.diff.avg > st[k].second.diff.avg;
       });
       if (beatsNb) out.strict.push(rule.key);
-      // 読み方2: 隣の設定もすべて、前半・後半の両方で今の売り方を上回っている
+      // 主とする読み方: 隣の設定もすべて、前半・後半の両方で今の売り方を上回っている
       if (nb.every(beatsCur)) out.plateau.push(rule.key);
     });
     return out;
@@ -1018,15 +1025,45 @@ var main = async function () {
   L.push("# 10:00に買った上位10銘柄の売り方の比較 試算結果");
   L.push("");
   L.push("- 生成: `node scripts/exit-grid-check.mjs`（実行日 " + new RealDate().toISOString().slice(0, 10) + "）");
-  L.push("- 銘柄の選び方・買値・データの取得方法・コスト・同じ足で利確と損切りの両方に届いた場合の扱いは `scripts/score-variants-check.mjs`（PR #92。PR #93 は同じ内容で、閉じられている）と同じ。変えたのは売り方だけ");
-  L.push("- 検証日: " + testDays.length + "日（" + PERIOD_RANGES[0] + "）。前半 " + PERIODS[1].label + "（" + PERIOD_RANGES[1] + "）、後半 " + PERIODS[2].label + "（" + PERIOD_RANGES[2] + "）");
+  L.push("- 銘柄の選び方・買値・データの取得方法・コスト・同じ足で利確と損切りの両方に届いた場合の扱いは `scripts/score-variants-check.mjs`（PR #93。PR #92 と同じ内容）と同じ。変えたのは売り方だけ。ただしデータは今回取得したもので、PR #93 の値とは少しずれる（0章）");
+  L.push("- 検証日: " + testDays.length + "日（" + PERIOD_RANGES[0] + "）。" + PERIODS[1].label + "（" + PERIOD_RANGES[1] + "）、" + PERIODS[2].label + "（" + PERIOD_RANGES[2] + "）");
   L.push("- 銘柄: 各日、10:00時点のスコアで並べた上位10（S1 と S0 の2通り）。S1 は、今のスコアの部品の点数から9部品（" + EXCLUDED_PARTS.join("、") + "）と上限（" + CAP_PARTS.join("、") + "）を除いた合計。S0 は今のスコアそのまま");
   L.push("- 買値: 10:00開始の15分足の始値。判定に使う足: 10:00開始の足から15:15開始の足まで（15:30の足は使わない）");
   L.push("- 損益: 売値 ÷ 買値 − 1 − 往復コスト0.1%。どの売り方も、売れなかった場合は大引け（T当日の日足の終値）で売る");
   L.push("");
 
-  // 0章 実装前確認
-  L.push("## 0. 実装前確認の結果");
+  // 0章 PR #93 の値とのずれ（今回の基準）
+  var byTicker = function (key) {
+    var m = new Map();
+    skipList.filter(function (x) { return x.key === key; }).forEach(function (x) {
+      if (!m.has(x.ticker)) m.set(x.ticker, []);
+      m.get(x.ticker).push(x.date + (x.bars != null ? "（" + x.bars + "本）" : ""));
+    });
+    return Array.from(m.keys()).sort().map(function (tk) { return tk + " " + m.get(tk).length + "件（" + m.get(tk).join("・") + "）"; });
+  };
+  L.push("## 0. 今回の基準と PR #93 の値とのずれ");
+  L.push("");
+  L.push("この試算は、" + new RealDate().toISOString().slice(0, 10) + " に Yahoo から取得したデータを基準にしている。今の売り方（利確 +1.5%・損切り −0.75%）と大引け保有の成績は、PR #93（PR #92 と同じ内容。`docs/score-variants-result.md` の4-1の表）の値と次のようにずれた。");
+  L.push("");
+  L.push("| 上位10 | PR #93 の値（件数・今の売り方・大引け保有・勝率） | 今回（同） |");
+  L.push("| --- | --- | --- |");
+  CHECKS.forEach(function (c) {
+    L.push("| " + c.label.replace(" の上位10", "") + " | " + (c.theirs ? c.theirs.join(" / ") : "見つからない") + " | " + c.ours.join(" / ") + " |");
+  });
+  L.push("");
+  L.push("ずれた理由:");
+  L.push("");
+  L.push("- 10:00のスコアを計算できた銘柄日が、PR #93 の 2063件から今回 " + scored1000 + "件に減った。減った分だけ、日によって上位10の顔ぶれが入れ替わった（上位10の件数は偶然同じになった）");
+  L.push("- 15分足が取れなかった銘柄日（今回 " + skipTotal.noIntraday + "件、PR #93 は " + PR92_SKIP.noIntraday + "件）: " + byTicker("noIntraday").join("、"));
+  L.push("  - このうち 603A.T・604A.T の9件が今回増えた分。2銘柄とも 2026-07-29 上場（Yahoo の日足の最初の取引日。" + RERUN_CHECKED + " に確認）で、Yahoo は上場日を起点に15分足を返し、起点が60日より前になると `range=60d` の問い合わせを「60日以内でない」として拒否する（HTTP 422）。PR #93 の実行日（2026-09-25）は上場から58日目で取れていたが、" + RERUN_CHECKED + " は60日目で取れなくなった。593A.T・598A.T は PR #93 のときから同じ理由で取れていない");
+  L.push("- 15分足が" + MIN_BARS + "本未満で除いた銘柄日（今回 " + skipTotal.fewBars + "件、PR #93 は " + PR92_SKIP.fewBars + "件）: " + byTicker("fewBars").join("、"));
+  L.push("  - このうち 607A.T の 2026-09-07 が今回増えた分（" + MIN_BARS + "本に2本足りない）。PR #93 のときの取得データが残っていないため、前回は" + MIN_BARS + "本以上あった理由は確かめられなかった（Yahoo 側でこの銘柄の足が変わったと推測）");
+  L.push("- 元のスクリプト `scripts/score-variants-check.mjs` を、リポジトリの外のコピーで今回と同じ取得データを使って再実行したところ（" + RERUN_CHECKED + "）、S1 上位10は " + RERUN_VALUES.s1 + "、S0 上位10は " + RERUN_VALUES.s0 + " になり、上の「今回」と同じ値だった。ずれはスクリプトの写し方ではなく、データの違いによる");
+  L.push("- 売り方どうしの比較は、同じ日・同じ銘柄・同じ買値の取引で行うため、この基準の中で成り立つ");
+  L.push("");
+
+  // 実装前確認
+  L.push("## 実装前確認の結果");
   L.push("");
   L.push("### 確認1: `scripts/score-variants-check.mjs` にある処理（2026-09-27 時点の main の行番号。※行番号は目安）");
   L.push("");
@@ -1043,14 +1080,14 @@ var main = async function () {
   L.push("");
   L.push("### 確認2: 36日分の候補と15分足が今も同じ方法で取れるか");
   L.push("");
-  L.push("- 15分足（Yahoo、interval=" + INTRADAY_INTERVAL + "、range=" + INTRADAY_RANGE + "）の今回の期間: " + periodStart + " 〜 " + periodEnd + "。PR #92 の実行時（2026-09-25）と同じ期間だった");
-  L.push("- 取れなかった取引日: " + (lostDays.length ? lostDays.join("・") : "なし") + "（検証日ではなく、前半の検証日のスコアの窓に入る日。PR #92 と同じく、600本以上の条件を判定するときにその日の足があれば増えていた本数を足す扱い。この日が窓に入る検証日は " + shortWindowDays1000.length + "日、窓が短いままスコアを計算した銘柄日は " + shortScored1000 + "件）");
-  L.push("- 検証日: " + testDays.length + "日（PR #92 と同じ " + PR88_DAY_COUNT + "日、" + PR88_FIRST_DAY + " 〜 " + PR88_LAST_DAY + "）。取れなかった検証日は無い");
+  L.push("- 15分足（Yahoo、interval=" + INTRADAY_INTERVAL + "、range=" + INTRADAY_RANGE + "）の今回の期間: " + periodStart + " 〜 " + periodEnd + "。PR #93 の実行時（2026-09-25）と同じ期間だった");
+  L.push("- 取れなかった取引日: " + (lostDays.length ? lostDays.join("・") : "なし") + "（検証日ではなく、前半の検証日のスコアの窓に入る日。PR #93 と同じく、600本以上の条件を判定するときにその日の足があれば増えていた本数を足す扱い。この日が窓に入る検証日は " + shortWindowDays1000.length + "日、窓が短いままスコアを計算した銘柄日は " + shortScored1000 + "件）");
+  L.push("- 検証日: " + testDays.length + "日（PR #93 と同じ " + PR88_DAY_COUNT + "日、" + PR88_FIRST_DAY + " 〜 " + PR88_LAST_DAY + "）。取れなかった検証日は無い");
   L.push("- 日足の取得失敗: " + failed.length + "銘柄。15分足の取得対象 " + targets.length + "銘柄のうち取得失敗 " + intradayFailed.length + "銘柄" + (intradayFailed.length ? "（" + intradayFailed.map(function (f) { return f.ticker + ": " + f.error; }).join("、") + "）" : ""));
   L.push("");
-  L.push("除外した銘柄日の合計（PR #92 のレポート1章の件数と比べた）:");
+  L.push("除外した銘柄日の合計（PR #93 のレポート1章の件数と比べた）:");
   L.push("");
-  L.push("| 理由 | 今回 | PR #92 |");
+  L.push("| 理由 | 今回 | PR #93 |");
   L.push("| --- | ---: | ---: |");
   SKIP_KEYS.forEach(function (k) { L.push("| " + k.label + " | " + skipTotal[k.key] + " | " + PR92_SKIP[k.key] + " |"); });
   L.push("");
@@ -1065,7 +1102,7 @@ var main = async function () {
     L.push("| " + td.date + " | " + d.cands + " | " + d.scored + " | " + d.traded + " | " + parts.join("、") + " |");
   });
   L.push("");
-  L.push("### 確認3: 現行の売り方と大引け保有の成績が PR #92・#93 と一致するか");
+  L.push("### 確認3: 現行の売り方と大引け保有の成績が PR #93 と一致するか");
   L.push("");
   L.push("`docs/score-variants-result.md`（PR #92。PR #93 のレポートも同じ値）の4-1の表の同じ行と比べた。");
   L.push("");
@@ -1076,6 +1113,10 @@ var main = async function () {
       (c.expectOk ? "一致" : "不一致") + " | " + (c.rowOk ? "一致" : "不一致") + " |");
   });
   L.push("");
+  if (CHECKS.some(function (c) { return !c.expectOk || !c.rowOk; })) {
+    L.push("一致しなかった。理由と、今回のデータを新しい基準としたことは0章に書いた。");
+    L.push("");
+  }
 
   // 定義
   L.push("## 売り方の定義");
@@ -1089,6 +1130,7 @@ var main = async function () {
   L.push("");
   L.push("- 勝率: 損益がプラスだった割合。按分の件は、利確で終わった 1/3 回と損切りで終わった 2/3 回に分けて数える（PR #88 と同じ）。勝った回・負けた回の平均と最悪の1回も同じく分けて数える（負けは0以下）");
   L.push("- 今との差: 各日、同じ銘柄について「その売り方の平均損益 − 今の売り方の平均損益」を出し、その日ごとの差の平均と t値（平均 ÷（不偏標準偏差 ÷ √日数））");
+  L.push("- 最悪の1回が損切り幅より悪い件がある: 15:15開始の足までに損切りに届かず、大引け（T当日の日足の終値。15:30の足の値動きを含む）で売った件。元のスクリプトと同じく15:30の足は判定に使わないため");
   L.push("- 条件が重なった割合: 同じ足で売りの条件が2つ以上重なった件の割合。A で利確と損切りの両方に届いた場合だけが当たる（B・C・D は売りの条件が1つずつしかないため0）");
   L.push("- C・D の約定値段: 引き上がった損切りライン（C の最高値からのライン、D の引き上げ後のライン）は、前の足までの値で決まるため、足の始値の時点ですでにラインを割っていることがある。その場合は始値で売ったものとした（推測で決めた扱い。ラインの値段で売れたとした場合の数字は参考として各表の下に載せた）。A の損切りと D の引き上げ前の損切りは、元のスクリプトと同じくラインの値段で売る");
   L.push("");
@@ -1162,10 +1204,10 @@ var main = async function () {
   L.push("## " + chapter + ". 前半と後半の両方で今の売り方を上回り、かつ隣の設定も上回っている売り方");
   L.push("");
   L.push("「上回る」は、今の売り方との日ごとの差の平均がプラスであること（t値の大きさは問わない）。隣の設定は、A は表の上下左右（「なし」は表の端として扱う）、B は隣の時刻、C は隣の下落幅。D は設定が1つだけなので隣が無い。");
-  L.push("「隣の設定も上回っている」は2通りに読めるため、両方を出した（どちらの意味かは推測できなかった）。");
+  L.push("「隣の設定も上回っている」は2通りに読めるため両方を出したが、まとめは主の読み方で書く。");
   L.push("");
-  L.push("- 読み方1: その売り方が、前半・後半の両方で、隣の設定のどれよりも平均損益が高い（山の頂上）");
-  L.push("- 読み方2: 隣の設定もすべて、前半・後半の両方で今の売り方を上回っている（まわりも良い平らな場所）");
+  L.push("- 主の読み方: 隣の設定もすべて、前半・後半の両方で今の売り方を上回っている（まわりも良い平らな場所。設定が少しずれても今より良い）");
+  L.push("- 参考の読み方: その売り方が、前半・後半の両方で、隣の設定のどれよりも平均損益が高い（山の頂上）");
   L.push("");
   var descr = function (sel, k) {
     var st = sel.stats[k];
@@ -1175,10 +1217,10 @@ var main = async function () {
     var j = judge(sel);
     L.push("**" + sel.label + "**");
     L.push("");
-    L.push("- 読み方1に当てはまる売り方: " + (j.strict.length ? "" : "無い"));
+    L.push("- **まとめ（主の読み方）: " + (j.plateau.length ? "当てはまる売り方は次のとおり**" : "当てはまる売り方は無い**"));
+    j.plateau.forEach(function (k) { L.push("  - " + descr(sel, k) + "。隣: " + neighborsOf(ruleByKey[k]).map(function (nk) { return ruleByKey[nk].label; }).join("、")); });
+    L.push("- 参考の読み方に当てはまる売り方: " + (j.strict.length ? "" : "無い"));
     j.strict.forEach(function (k) { L.push("  - " + descr(sel, k)); });
-    L.push("- 読み方2に当てはまる売り方: " + (j.plateau.length ? "" : "無い"));
-    j.plateau.forEach(function (k) { L.push("  - " + descr(sel, k)); });
     L.push("- 前半・後半の両方で今の売り方を上回ったが、隣が無いため判定できない売り方: " + (j.noNeighbor.length ? "" : "無い"));
     j.noNeighbor.forEach(function (k) { L.push("  - " + descr(sel, k)); });
     L.push("");
@@ -1191,7 +1233,7 @@ var main = async function () {
   L.push("- C の最高値の初期値は買値とした（買ってすぐは買値からの損切りとして働く）");
   L.push("- D の「高値が +1.0% に届いた」は、足の高値が買値 × 1.01 以上になったこととした。届いた足と同じ足で −0.75% の損切りに届いた場合は、損切りで売ったものとした（引き上げは次の足から）");
   L.push("- 勝った回・負けた回の平均と最悪の1回は、按分の件を利確 1/3 回・損切り 2/3 回に分けて数えた。0ちょうどは負けに入れた");
-  L.push("- 判定（" + chapter + "章）の「隣の設定も上回っている」の意味と、A の表で「なし」を +3.0%・−1.5% の隣として扱うこと");
+  L.push("- 判定（" + chapter + "章）で、A の表の「なし」を +3.0%・−1.5% の隣として扱うこと");
   L.push("- 15分足の高値・安値だけでは足の中の値動きの順番が分からないため、A で同じ足で両方に届いた場合の按分（損切りが先 2/3）は元のスクリプトの仮定をそのまま使った。C・D にはこの按分は無い");
   L.push("");
 
@@ -1200,7 +1242,7 @@ var main = async function () {
   console.log(L.join("\n"));
   console.log("\n→ " + outPath);
   CHECKS.forEach(function (c) {
-    if (!c.expectOk || !c.rowOk) console.log(c.label + " が PR #92・#93 と一致しない: " + c.ours.join(" / ") + "  レポート: " + (c.theirs ? c.theirs.join(" / ") : "見つからない"));
+    if (!c.expectOk || !c.rowOk) console.log(c.label + " が PR #93 と一致しない（0章に理由を書く）: " + c.ours.join(" / ") + "  レポート: " + (c.theirs ? c.theirs.join(" / ") : "見つからない"));
   });
 };
 
