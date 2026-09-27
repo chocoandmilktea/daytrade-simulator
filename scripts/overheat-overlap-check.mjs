@@ -907,11 +907,15 @@ var main = async function () {
     if (!st.hit.n || !st.rest.n) return "比べられない";
     return st.diff.diff < 0 ? "悪い" : "良い";
   };
+  // 差の t値の絶対値が2未満なら、はっきりした差とは言えない旨を添える
+  var clearWord = function (sel, pkey) {
+    return Math.abs(sel.stats[pkey].diff.t) < 2 ? "。ただし t値の絶対値が2未満で、はっきりした差ではない" : "";
+  };
   L.push("## 結論");
   L.push("");
   L.push("1. S1 上位10（" + SLOT_TOTAL + "枠）に前日値上がり上位（2B）の銘柄が混ざったのは " + s1.hitTotal + "件（" + share(s1) + "）。" + verdict + "。");
-  L.push("2. S1 で当てはまった銘柄の成績は当てはまらなかった銘柄より" + dirWord(s1, "all") + "（1回あたり " + spct3(s1.stats.all.diff.diff) + "、t値 " + num2(s1.stats.all.diff.t) + "。前半は" + dirWord(s1, "first") + "・後半は" + dirWord(s1, "second") + "）。");
-  L.push("3. 参考の S0 上位10では " + s0.hitTotal + "件（" + share(s0) + "）が当てはまり、成績は当てはまらなかった銘柄より" + dirWord(s0, "all") + "（1回あたり " + spct3(s0.stats.all.diff.diff) + "、t値 " + num2(s0.stats.all.diff.t) + "）。");
+  L.push("2. S1 で当てはまった銘柄の成績は当てはまらなかった銘柄より" + dirWord(s1, "all") + "（1回あたり " + spct3(s1.stats.all.diff.diff) + "、t値 " + num2(s1.stats.all.diff.t) + "。前半は" + dirWord(s1, "first") + "（" + spct3(s1.stats.first.diff.diff) + "）・後半は" + dirWord(s1, "second") + "（" + spct3(s1.stats.second.diff.diff) + "））" + clearWord(s1, "all") + "。");
+  L.push("3. 参考の S0 上位10では " + s0.hitTotal + "件（" + share(s0) + "）が当てはまり、成績は当てはまらなかった銘柄より" + dirWord(s0, "all") + "（1回あたり " + spct3(s0.stats.all.diff.diff) + "、t値 " + num2(s0.stats.all.diff.t) + "）" + clearWord(s0, "all") + "。");
   L.push("");
 
   L.push("## 条件");
