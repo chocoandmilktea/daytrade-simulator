@@ -846,18 +846,16 @@ function editTradeRecord(kind,id,updates){
     }
     if(t.status!=="waiting"&&updates.buyPrice!=null)next.startPrice=updates.buyPrice;
     if(t.status==="done"){
-      // 決済価格(endPrice)は「実際にどこで終わったか」で決まる。利確で終わったトレードは
-      // 売り価格、損切りで終わったトレードは損切り価格を反映し、それ以外（引け決済・強制完了）は
-      // 記録済みの決済価格をそのまま残す。※以前は常に売り価格で上書きしていたため、
-      // 損切りで終わったトレードを編集すると損益が「利確した場合の数字」に化けていた
-      // endPriceが直接渡された場合（決済理由の手動切替）はそれを優先する
-      if(updates.endPrice==null&&updates.sellPrice!=null){
-        next.endPrice=(next.exitReason==="stop_loss"&&next.stopPrice!=null)?next.stopPrice:updates.sellPrice;
-      }
+      // 決済価格(endPrice)は「実際に約定した価格」の記録なので、編集では書き換えない。
+      // 売り価格・損切り価格を編集しても、それは注文条件の変更であって約定価格ではないため。
+      // ※以前は決済理由ごとに売り価格／損切り価格で上書きしていたため、引け決済や
+      // 損切りの実際の約定価格が消えていた
+      // endPriceが直接渡された場合（決済理由の手動切替）だけはそれを採用する（Object.assignで反映済み）
       var pnlPerShare=next.endPrice-next.startPrice;
       next.pnl=pnlPerShare*(next.shares||1);
       next.pnlPercent=next.startPrice?(pnlPerShare/next.startPrice*100):0;
     }
+    next.editedAt=new Date().toISOString(); // 最後に編集した日時（表示はしない・後から検証するための記録）
     return next;
   });
   saveTrades(kind,list);
