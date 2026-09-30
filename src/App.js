@@ -776,6 +776,44 @@ function calcRStats(doneList){
   return{n:rows.length,totalR:totalR,avgR:totalR/rows.length,pf:gl>0?gp/gl:null,
     beRate:(avgW&&avgL)?Math.round(avgL/(avgW+avgL)*100):null};
 }
+// ISO日時(UTC)を日本時間(UTC+9)に直したDateを返す。端末のタイムゾーンに依存させないため、読むときは必ずgetUTC系を使う
+function jstDateObj(iso){if(!iso)return null;var d=new Date(iso);return isNaN(d.getTime())?null:new Date(d.getTime()+9*3600000);}
+// 日本時間の「M/D H:MM」（例：9/29 10:05）。値が無い・壊れている場合は「−」
+function fmtJstDateTime(iso){var j=jstDateObj(iso);if(!j)return "−";return(j.getUTCMonth()+1)+"/"+j.getUTCDate()+" "+j.getUTCHours()+":"+String(j.getUTCMinutes()).padStart(2,"0");}
+// 詳細集計の決済理由の表示順と短い名前（詳細画面の見出しの長い名前は TradeDetailModal の EXIT_LABEL）
+var EXIT_REASON_ORDER=["take_profit","stop_loss","time_exit","forced"];
+var EXIT_REASON_SHORT={take_profit:"利確",stop_loss:"損切り",time_exit:"引け決済",forced:"強制完了",unknown:"理由なし"};
+// 完了トレードの詳細集計（取引日数・日別損益・決済理由別・−1R超えの損失）。画面の状態に依存しない純粋関数
+// 取引日は約定日時(startAt)、無ければ決済日時(endAt)を日本時間に直した日付。どちらも無い取引は日付null（取引日数には数えない）
+// 損益は既存の合計損益と同じく pnl||0 で足す（日別・理由別の総和が合計損益と一致するように）
+function calcTradeDetailStats(doneList){
+  var dayMap={},reasonMap={},rN=0,overN=0,minR=null;
+  (doneList||[]).forEach(function(t){
+    var j=jstDateObj(t.startAt)||jstDateObj(t.endAt);
+    var date=j?j.toISOString().slice(0,10):null;
+    var r=tradeR(t),pnl=t.pnl||0;
+    var dk=date||"";
+    if(!dayMap[dk])dayMap[dk]={date:date,n:0,pnl:0,rSum:0,rN:0};
+    var d=dayMap[dk];d.n++;d.pnl+=pnl;
+    var rk=EXIT_REASON_ORDER.indexOf(t.exitReason)>=0?t.exitReason:"unknown";
+    if(!reasonMap[rk])reasonMap[rk]={key:rk,n:0,pnl:0,rSum:0,rN:0};
+    var e=reasonMap[rk];e.n++;e.pnl+=pnl;
+    if(r!=null){
+      d.rSum+=r;d.rN++;e.rSum+=r;e.rN++;rN++;
+      if(r<-1.01)overN++; // 損切り価格より不利に約定した損失（丸め誤差を除くため−1.01未満）
+      if(minR==null||r<minR)minR=r;
+    }
+  });
+  var days=Object.keys(dayMap).map(function(k){return dayMap[k];}).sort(function(a,b){
+    if(a.date===b.date)return 0;if(a.date==null)return 1;if(b.date==null)return -1;return a.date<b.date?1:-1; // 新しい日付順・日付不明は末尾
+  });
+  var reasons=EXIT_REASON_ORDER.concat(["unknown"]).filter(function(k){return reasonMap[k];}).map(function(k){
+    var e=reasonMap[k];return{key:k,n:e.n,pnl:e.pnl,avgR:e.rN?e.rSum/e.rN:null,rN:e.rN};
+  });
+  return{tradeDays:days.filter(function(d){return d.date!=null;}).length,
+    days:days.map(function(d){return{date:d.date,n:d.n,pnl:d.pnl,totalR:d.rN?d.rSum:null,rN:d.rN};}),
+    reasons:reasons,rN:rN,overN:overN,minR:minR};
+}
 function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection){
   var list=loadTrades(kind);
   var curPrice=s.rawPrice!=null?s.rawPrice:null;
@@ -4678,6 +4716,22 @@ function TradePanel(p){
   var selStock=selTrade?stocks.find(function(x){return x.ticker===selTrade.ticker;}):null;
   // 「完了」セクションの開閉状態（初期状態は閉じておく）
   var doneOpenS=useState(false);var doneOpen=doneOpenS[0],setDoneOpen=doneOpenS[1];
+  // 「📊 詳細集計」の開閉状態（初期状態は閉じる・保存しない）。開いている時だけ集計する
+  var detailOpenS=useState(false);var detailOpen=detailOpenS[0],setDetailOpen=detailOpenS[1];
+  var detail=detailOpen?calcTradeDetailStats(doneList):null;
+  var DOW_JA=["日","月","火","水","木","金","土"];
+  function fmtR(v,digits){return v==null?"—":(v>=0?"+":"")+v.toFixed(digits)+"R";}
+  function fmtDay(date){if(!date)return "日付不明";var d=new Date(date+"T00:00:00Z");return(d.getUTCMonth()+1)+"/"+d.getUTCDate()+"("+DOW_JA[d.getUTCDay()]+")";}
+  function detailRow(key,label,n,pnl,rText){
+    return(
+      <div key={key} style={{display:"flex",gap:8,alignItems:"baseline",fontSize:11,padding:"2px 0",borderTop:"1px solid #0f2040"}}>
+        <span style={{flex:1,minWidth:0,color:"#b8cce0"}}>{label}</span>
+        <span style={{width:36,textAlign:"right",color:"#4a7090"}}>{n}件</span>
+        <span style={{width:86,textAlign:"right",fontWeight:700,color:pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnl(pnl,true)}</span>
+        <span style={{width:120,textAlign:"right",color:"#b8cce0"}}>{rText}</span>
+      </div>
+    );
+  }
 
   function Section(title,items,color,useScoreColor,collapsible){
     if(!items.length)return null;
@@ -4721,6 +4775,40 @@ function TradePanel(p){
               <button onClick={p.onRefreshTrades} disabled={p.tradeRefreshing} style={{background:p.tradeRefreshing?"#0f2040":"#0a1a3a",border:"1px solid #0ea5e9",borderRadius:8,color:"#0ea5e9",padding:"8px 12px",fontSize:12,fontWeight:700,cursor:p.tradeRefreshing?"not-allowed":"pointer",whiteSpace:"nowrap"}}>{p.tradeRefreshing?"更新中…":"🔄 価格更新"}</button>
             </div>
           </div>
+
+          {doneList.length>0&&(
+            <div>
+              <button onClick={function(){setDetailOpen(function(v){return !v;});}} style={{background:"transparent",border:"none",padding:0,fontSize:11,fontWeight:700,color:"#4a7090",cursor:"pointer",userSelect:"none"}}>
+                {detailOpen?"▼":"▶"} 📊 詳細集計
+              </button>
+              {detailOpen&&detail&&(
+                <div style={{background:"#050e1c",borderRadius:10,padding:"10px 14px",marginTop:6,display:"flex",flexDirection:"column",gap:10}}>
+                  <div style={{fontSize:11,color:"#4a7090"}}>
+                    取引日数 <span style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{detail.tradeDays}日</span>
+                    <span style={{color:"#2a6090",marginLeft:6}}>（完了{doneList.length}件を日本時間の約定日で数えた日数。約定日時が無い取引は決済日）</span>
+                  </div>
+                  <div style={{fontSize:11,color:"#4a7090"}}>
+                    −1R超えの損失 <span style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{detail.overN}件</span>
+                    <span style={{color:"#b8cce0"}}> ／ R集計{detail.rN}件</span>
+                    <span style={{marginLeft:8}}>最も大きな負け <span style={{fontWeight:700,color:detail.minR!=null&&detail.minR<0?"#f43f5e":"#b8cce0"}}>{fmtR(detail.minR,2)}</span></span>
+                    <div style={{color:"#2a6090"}}>（Rが−1.01未満＝損切り価格より不利に約定した件数。母数はRが計算できる取引）</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,color:"#4a7090",marginBottom:2}}>決済理由の内訳<span style={{fontWeight:400,color:"#2a6090"}}>（完了{doneList.length}件・平均RはRが計算できる取引のみ）</span></div>
+                    {detail.reasons.map(function(e){
+                      return detailRow(e.key,EXIT_REASON_SHORT[e.key],e.n,e.pnl,"平均"+fmtR(e.avgR,2)+"（R"+e.rN+"件）");
+                    })}
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:700,color:"#4a7090",marginBottom:2}}>日別損益<span style={{fontWeight:400,color:"#2a6090"}}>（完了{doneList.length}件・合計RはRが計算できる取引のみ）</span></div>
+                    {detail.days.map(function(d){
+                      return detailRow(d.date||"unknown",fmtDay(d.date),d.n,d.pnl,fmtR(d.totalR,2)+"（R"+d.rN+"件）");
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {list.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"#4a7090",fontSize:13}}>まだトレードが登録されていません。銘柄カードの🎯ボタンから登録してください</div>}
 
@@ -4879,6 +4967,7 @@ function TradeDetailModal(p){
         )}
 
         {t.status==="done"&&<div style={{fontSize:16,fontWeight:800,color:t.pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnl(t.pnl,isJP)} <span style={{fontSize:11,fontWeight:400}}>({t.pnlPercent>=0?"+":""}{t.pnlPercent.toFixed(1)}%)</span>{tradeR(t)!=null&&<span style={{fontSize:13,marginLeft:8}}>{(tradeR(t)>=0?"+":"")+tradeR(t).toFixed(2)}R</span>}{tradeRisk(t)!=null&&<span style={{fontSize:10,fontWeight:400,color:"#4a7090",marginLeft:6}}>1R=¥{Math.round(tradeRisk(t)).toLocaleString()}</span>}</div>}
+        {t.status==="done"&&<div style={{fontSize:11,color:"#4a7090"}}>約定 {fmtJstDateTime(t.startAt)} ／ 決済 {fmtJstDateTime(t.endAt)}<span style={{color:"#2a6090",marginLeft:6}}>（日本時間）</span></div>}
         {t.status==="active"&&unrealized!=null&&<div style={{fontSize:13,color:unrealized>=0?"#22d3a0":"#f43f5e"}}>含み損益 {fmtPnl(unrealized,isJP)}</div>}
 
         {!editing&&t.status!=="done"&&<button onClick={forceComplete} style={{background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:8,color:"#f43f5e",padding:"8px",fontSize:12,fontWeight:700,cursor:"pointer"}}>⏹ 現在価格で強制完了</button>}
