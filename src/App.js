@@ -966,13 +966,13 @@ function applyPricesToTrades(kind,priceMap,openMap){
     if(t.status==="waiting"){
       var dir=getBuyDirection(t);
       var reached=dir==="down"?cur<=t.buyPrice:cur>=t.buyPrice;
-      if(reached&&isMarketOpen(t.market)){
+      // 寄り前に出していた注文が、寄り付きの時点ですでに買値を越えていた場合は、
+      // 実際の注文と同じく買値ではなく始値で約定させる（買値ちょうどの約定は実際より有利になるため）。
+      // 寄り付きで実際に約定しているので、更新した時点の現在値が買値に届いているかは問わない
+      var op=isMarketOpen(t.market)?preOpenFillPrice(t,cur,openMap):null;
+      var openCrossed=op!=null&&(dir==="down"?op.price<=t.buyPrice:op.price>=t.buyPrice);
+      if(openCrossed){
         changed=true;
-        // 寄り前に出していた注文が、寄り付きの時点ですでに買値を越えていた場合は、
-        // 実際の注文と同じく買値ではなく始値で約定させる（買値ちょうどの約定は実際より有利になるため）
-        var op=preOpenFillPrice(t,cur,openMap);
-        var openCrossed=op!=null&&(dir==="down"?op.price<=t.buyPrice:op.price>=t.buyPrice);
-        if(!openCrossed)return Object.assign({},t,{status:"active",startPrice:t.buyPrice,startAt:new Date().toISOString(),lastPrice:cur});
         var startP0=op.price,nowIso=new Date().toISOString();
         // 始値の時点で損切り・利確のラインも越えていれば、始値のまま即時に手じまう（損切りを先に見るのは下の判定と同じ理由）
         var gapExit=(t.stopPrice!=null&&startP0<=t.stopPrice)?"stop_loss":(startP0>=t.sellPrice?"take_profit":null);
@@ -981,10 +981,16 @@ function applyPricesToTrades(kind,priceMap,openMap){
           var pnlPerShare0=endP0-startP0,pnl0=pnlPerShare0*(t.shares||1),pnlPercent0=startP0?(pnlPerShare0/startP0*100):0;
           return Object.assign({},t,{status:"done",startPrice:startP0,startAt:nowIso,endPrice:endP0,endAt:nowIso,pnl:pnl0,pnlPercent:pnlPercent0,exitReason:gapExit,lastPrice:cur,openGap:true,openSrc:op.src});
         }
-        return Object.assign({},t,{status:"active",startPrice:startP0,startAt:nowIso,lastPrice:cur,openFill:true,openSrc:op.src});
+        // 始値で進行中にしたうえで、同じ更新の中で現在値による通常の損切り・利確判定（下）へ進む
+        t=Object.assign({},t,{status:"active",startPrice:startP0,startAt:nowIso,lastPrice:cur,openFill:true,openSrc:op.src});
+      }else{
+        if(reached&&isMarketOpen(t.market)){
+          changed=true;
+          return Object.assign({},t,{status:"active",startPrice:t.buyPrice,startAt:new Date().toISOString(),lastPrice:cur});
+        }
+        if(cur!==t.lastPrice){changed=true;return Object.assign({},t,{lastPrice:cur});}
+        return t;
       }
-      if(cur!==t.lastPrice){changed=true;return Object.assign({},t,{lastPrice:cur});}
-      return t;
     }
     // status==="active"：損切り → 利確の順で判定する。
     // 更新の合間の値動きは見えないため、両方に到達し得る場合は必ず不利な側（損切り）を採る。
@@ -6362,12 +6368,12 @@ export default function App(){
     var todayKey=jstInfo(0).key;
     // 当日の始値はYahooの9:00の足を使う（日付が今日のものだけ）
     function yahooOpen(pd){var o=pd&&pd.open900;return (o&&o.date===todayKey)?{price:o.price,src:"yahoo"}:null;}
-    // 寄り前に出した待機中の注文が、今回の現在値で約定する銘柄か（＝始値が必要か）
-    function needsOpen(ticker,cur){
+    // 寄り前に出した注文がまだ待機中の銘柄か（＝始値が必要か）。
+    // 始値が買値を越えていれば現在値に関係なく約定するため、現在値では絞らない
+    function needsOpen(ticker){
       if(!isMarketOpen("JP"))return false;
       return personalTrades.some(function(t){
-        if(t.ticker!==ticker||t.status!=="waiting"||!isPreOpenOrder(t))return false;
-        return getBuyDirection(t)==="down"?cur<=t.buyPrice:cur>=t.buyPrice;
+        return t.ticker===ticker&&t.status==="waiting"&&isPreOpenOrder(t);
       });
     }
     Promise.all(tickers.map(function(ticker){
@@ -6376,7 +6382,7 @@ export default function App(){
         if(live!=null){                                                        // 立花のリアルタイム値
           var dop=tf?parseFloat(tf.p_1_DOP):NaN;                               // p_1_DOP＝当日始値（同じ応答に入っている）
           if(isFinite(dop)&&dop>0) return{ticker:ticker,price:live,open:{price:dop,src:"tachibana"}};
-          if(!needsOpen(ticker,live)) return{ticker:ticker,price:live,open:null};
+          if(!needsOpen(ticker)) return{ticker:ticker,price:live,open:null};
           // 立花に始値が無く、かつ始値が必要なときだけYahooの9:00の足を読みに行く（通信を増やさないため）
           return fetchYahoo(ticker).then(function(pd){return{ticker:ticker,price:live,open:yahooOpen(pd)};})
             .catch(function(){return{ticker:ticker,price:live,open:null};});
