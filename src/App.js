@@ -333,7 +333,8 @@ function detectSectors(text){
 // タップ直後はRedisにまだ値が無いので、①「この銘柄を見ている」と登録(watch) →
 // ②1秒おきに最大8回まで取りに行く、という順番が必要。
 // 取れなければ null を返し、呼び出し側でYahoo（約20分遅れ）にフォールバックする。
-async function fetchTachibanaPrice(ticker){
+// onFields（任意）：現在値が取れたとき、同じ応答の fields 全体を渡す（当日始値 p_1_DOP を読むため。追加の通信なし）
+async function fetchTachibanaPrice(ticker,onFields){
   if(!ticker||!ticker.endsWith(".T")) return null; // 日本株のみ対応
   var code=ticker.replace(".T","");
   try{
@@ -348,7 +349,7 @@ async function fetchTachibanaPrice(ticker){
         if(json.stale) return null;                      // 休場中の古い値ならYahooに任せる
         var raw=json.fields&&json.fields["p_1_DPP"];     // p_1_DPP＝現在値
         var p=raw!=null?parseFloat(raw):NaN;
-        if(isFinite(p)&&p>0) return p;
+        if(isFinite(p)&&p>0){ if(onFields) onFields(json.fields); return p; }
       }
     }catch(e){}
     await new Promise(function(r){setTimeout(r,1000);});
@@ -596,10 +597,22 @@ async function buildStockUniverse(manualSectors,skipAI){
   return{stocks:out,sectors:sectors};
 }
 
+// 直近の取引日の「9:00始まりの足」の始値（＝寄り付きの値段）を {date,price} で返す。無ければnull
+// 9:15以降の足の始値は寄り付きと大きくずれることがあるため代用しない。
+// 欠損(null)を前の値で埋めた opens ではなく、加工前の q.open を読む（埋めると前日終値が始値に化けるため）
+function pickOpen900(q){
+  var times=q.time||[],dates=q.date||[],opens=q.open||[];
+  for(var i=times.length-1;i>=0;i--){
+    if(times[i]!=="09:00")continue;
+    var v=opens[i];
+    return (v!=null&&isFinite(v)&&v>0&&dates[i])?{date:dates[i],price:v}:null;
+  }
+  return null;
+}
 // 15分足データ取得（メイン分析用・約20営業日分。実際の取得期間はapi/stock.js側で固定）
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],opens:cached.opens?cached.opens.slice():[],dates:cached.dates?cached.dates.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,officialPrevClose:cached.officialPrevClose,officialVolume:cached.officialVolume,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange};}
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],opens:cached.opens?cached.opens.slice():[],dates:cached.dates?cached.dates.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,officialPrevClose:cached.officialPrevClose,officialVolume:cached.officialVolume,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,open900:cached.open900};}
   var json=await enqueueStock(async function(){
     var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(25000),cache:"no-store"});
     var body=await res.json().catch(function(){return null;});
@@ -626,9 +639,9 @@ async function fetchYahoo(ticker){
   function fillVol(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=0;return out;}
   var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null,topixChange=result.topixChange!=null?result.topixChange:null;
   var filledClose=fill(q.close);
-  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fillVol(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,officialPrevClose:(meta.regularMarketPreviousClose!=null?meta.regularMarketPreviousClose:null),officialVolume:(meta.regularMarketVolume!=null?meta.regularMarketVolume:null),real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange};
+  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fillVol(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,officialPrevClose:(meta.regularMarketPreviousClose!=null?meta.regularMarketPreviousClose:null),officialVolume:(meta.regularMarketVolume!=null?meta.regularMarketVolume:null),real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,open900:pickOpen900(q)};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),opens:data.opens.slice(),dates:data.dates.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,officialPrevClose:data.officialPrevClose,officialVolume:data.officialVolume,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),opens:data.opens.slice(),dates:data.dates.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,officialPrevClose:data.officialPrevClose,officialVolume:data.officialVolume,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,open900:data.open900};
 }
 
 
@@ -882,7 +895,8 @@ function editTradeRecord(kind,id,updates){
       // 指値/逆指値が手動指定されなかった場合のみ、価格変更から自動判定する
       next.buyDirection=updates.buyPrice<=t.lastPrice?"down":"up";
     }
-    if(t.status!=="waiting"&&updates.buyPrice!=null)next.startPrice=updates.buyPrice;
+    // 寄り付きで始値約定した取引（openFill/openGap）は、開始価格が買値ではなく実際の始値なので上書きしない
+    if(t.status!=="waiting"&&updates.buyPrice!=null&&!t.openFill&&!t.openGap)next.startPrice=updates.buyPrice;
     if(t.status==="done"){
       // 決済価格(endPrice)は「実際に約定した価格」の記録なので、編集では書き換えない。
       // 売り価格・損切り価格を編集しても、それは注文条件の変更であって約定価格ではないため。
@@ -913,9 +927,26 @@ function forceCompleteTradeRecord(kind,id,curPrice){
   return list;
 }
 
+// 寄り前（約定する日＝今日の9:00 日本時間より前）に出していた日本株の注文か。
+// 日本時間はUTCに9時間を足して求め、端末のタイムゾーンには依存させない
+function isPreOpenOrder(t){
+  if(t.market!=="JP"||!t.addedAt)return false;
+  var j=new Date(Date.now()+9*60*60*1000);
+  var open9=Date.UTC(j.getUTCFullYear(),j.getUTCMonth(),j.getUTCDate(),0,0); // 今日の9:00(日本時間)＝UTCの0:00
+  return Date.parse(t.addedAt)<open9;
+}
+// 寄り前の注文に使う当日の始値 {price,src} を返す。使えなければnull（＝これまでどおり買値で約定）
+// 現在値から30%以上離れた始値は誤った値とみなして使わない
+function preOpenFillPrice(t,cur,openMap){
+  var op=openMap&&openMap[t.ticker];
+  if(!op||!(op.price>0)||!isPreOpenOrder(t))return null;
+  if(Math.abs(op.price-cur)/cur>=0.3)return null;
+  return op;
+}
 // 最新価格（{ticker:price}）を全トレードに適用し、waiting→active→doneの状態遷移を判定
 // ※ 前後2点の「またぎ」ではなく「閾値に到達しているか」を直接判定するため、更新間隔中に価格が飛んでも見逃さない
-function applyPricesToTrades(kind,priceMap){
+// openMap（任意）：{ticker:{price,src}} 当日の始値と取得元。寄り前の注文の約定価格に使う
+function applyPricesToTrades(kind,priceMap,openMap){
   var list=loadTrades(kind);
   var changed=false;
   var next=list.map(function(t){
@@ -937,7 +968,20 @@ function applyPricesToTrades(kind,priceMap){
       var reached=dir==="down"?cur<=t.buyPrice:cur>=t.buyPrice;
       if(reached&&isMarketOpen(t.market)){
         changed=true;
-        return Object.assign({},t,{status:"active",startPrice:t.buyPrice,startAt:new Date().toISOString(),lastPrice:cur});
+        // 寄り前に出していた注文が、寄り付きの時点ですでに買値を越えていた場合は、
+        // 実際の注文と同じく買値ではなく始値で約定させる（買値ちょうどの約定は実際より有利になるため）
+        var op=preOpenFillPrice(t,cur,openMap);
+        var openCrossed=op!=null&&(dir==="down"?op.price<=t.buyPrice:op.price>=t.buyPrice);
+        if(!openCrossed)return Object.assign({},t,{status:"active",startPrice:t.buyPrice,startAt:new Date().toISOString(),lastPrice:cur});
+        var startP0=op.price,nowIso=new Date().toISOString();
+        // 始値の時点で損切り・利確のラインも越えていれば、始値のまま即時に手じまう（損切りを先に見るのは下の判定と同じ理由）
+        var gapExit=(t.stopPrice!=null&&startP0<=t.stopPrice)?"stop_loss":(startP0>=t.sellPrice?"take_profit":null);
+        if(gapExit){
+          var endP0=startP0;
+          var pnlPerShare0=endP0-startP0,pnl0=pnlPerShare0*(t.shares||1),pnlPercent0=startP0?(pnlPerShare0/startP0*100):0;
+          return Object.assign({},t,{status:"done",startPrice:startP0,startAt:nowIso,endPrice:endP0,endAt:nowIso,pnl:pnl0,pnlPercent:pnlPercent0,exitReason:gapExit,lastPrice:cur,openGap:true,openSrc:op.src});
+        }
+        return Object.assign({},t,{status:"active",startPrice:startP0,startAt:nowIso,lastPrice:cur,openFill:true,openSrc:op.src});
       }
       if(cur!==t.lastPrice){changed=true;return Object.assign({},t,{lastPrice:cur});}
       return t;
@@ -4968,6 +5012,7 @@ function TradeDetailModal(p){
 
         {t.status==="done"&&<div style={{fontSize:16,fontWeight:800,color:t.pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnl(t.pnl,isJP)} <span style={{fontSize:11,fontWeight:400}}>({t.pnlPercent>=0?"+":""}{t.pnlPercent.toFixed(1)}%)</span>{tradeR(t)!=null&&<span style={{fontSize:13,marginLeft:8}}>{(tradeR(t)>=0?"+":"")+tradeR(t).toFixed(2)}R</span>}{tradeRisk(t)!=null&&<span style={{fontSize:10,fontWeight:400,color:"#4a7090",marginLeft:6}}>1R=¥{Math.round(tradeRisk(t)).toLocaleString()}</span>}</div>}
         {t.status==="done"&&<div style={{fontSize:11,color:"#4a7090"}}>約定 {fmtJstDateTime(t.startAt)} ／ 決済 {fmtJstDateTime(t.endAt)}<span style={{color:"#2a6090",marginLeft:6}}>（日本時間）</span></div>}
+        {t.status==="done"&&(t.openGap||t.openFill)&&<div style={{fontSize:11,color:"#f59e0b"}}>{t.openGap?"寄りでライン越え（即時手じまい）":"寄り付きで始値約定"}</div>}
         {t.status==="active"&&unrealized!=null&&<div style={{fontSize:13,color:unrealized>=0?"#22d3a0":"#f43f5e"}}>含み損益 {fmtPnl(unrealized,isJP)}</div>}
 
         {!editing&&t.status!=="done"&&<button onClick={forceComplete} style={{background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:8,color:"#f43f5e",padding:"8px",fontSize:12,fontWeight:700,cursor:"pointer"}}>⏹ 現在価格で強制完了</button>}
@@ -6314,15 +6359,34 @@ export default function App(){
     if(!tickers.length)return;
     setTradeRefreshing(true);
     tickers.forEach(function(ticker){delete CACHE[ticker];}); // キャッシュを無視して必ず最新価格を取得
+    var todayKey=jstInfo(0).key;
+    // 当日の始値はYahooの9:00の足を使う（日付が今日のものだけ）
+    function yahooOpen(pd){var o=pd&&pd.open900;return (o&&o.date===todayKey)?{price:o.price,src:"yahoo"}:null;}
+    // 寄り前に出した待機中の注文が、今回の現在値で約定する銘柄か（＝始値が必要か）
+    function needsOpen(ticker,cur){
+      if(!isMarketOpen("JP"))return false;
+      return personalTrades.some(function(t){
+        if(t.ticker!==ticker||t.status!=="waiting"||!isPreOpenOrder(t))return false;
+        return getBuyDirection(t)==="down"?cur<=t.buyPrice:cur>=t.buyPrice;
+      });
+    }
     Promise.all(tickers.map(function(ticker){
-      return fetchTachibanaPrice(ticker).then(function(live){
-        if(live!=null) return{ticker:ticker,price:live};                       // 立花のリアルタイム値
-        return fetchYahoo(ticker).then(function(pd){return{ticker:ticker,price:pd.currentPrice};}); // 取れなければYahoo
+      var tf=null;
+      return fetchTachibanaPrice(ticker,function(f){tf=f;}).then(function(live){
+        if(live!=null){                                                        // 立花のリアルタイム値
+          var dop=tf?parseFloat(tf.p_1_DOP):NaN;                               // p_1_DOP＝当日始値（同じ応答に入っている）
+          if(isFinite(dop)&&dop>0) return{ticker:ticker,price:live,open:{price:dop,src:"tachibana"}};
+          if(!needsOpen(ticker,live)) return{ticker:ticker,price:live,open:null};
+          // 立花に始値が無く、かつ始値が必要なときだけYahooの9:00の足を読みに行く（通信を増やさないため）
+          return fetchYahoo(ticker).then(function(pd){return{ticker:ticker,price:live,open:yahooOpen(pd)};})
+            .catch(function(){return{ticker:ticker,price:live,open:null};});
+        }
+        return fetchYahoo(ticker).then(function(pd){return{ticker:ticker,price:pd.currentPrice,open:yahooOpen(pd)};}); // 取れなければYahoo
       }).catch(function(){return{ticker:ticker,price:null};});
     })).then(function(results){
-      var priceMap={};results.forEach(function(r){if(r.price!=null)priceMap[r.ticker]=r.price;});
+      var priceMap={},openMap={};results.forEach(function(r){if(r.price!=null)priceMap[r.ticker]=r.price;if(r.open)openMap[r.ticker]=r.open;});
       if(Object.keys(priceMap).length>0){
-        var nextPersonal=applyPricesToTrades("personal",priceMap);
+        var nextPersonal=applyPricesToTrades("personal",priceMap,openMap);
         setPersonalTrades(nextPersonal);
         syncToServer(favs,favGroups,groupNames,nextPersonal);
       }

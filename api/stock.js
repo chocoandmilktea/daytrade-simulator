@@ -21,6 +21,13 @@ function toLocalDates(timestamps, gmtoffset) {
     return t == null ? null : new Date(t * 1000 + off).toISOString().slice(0, 10);
   });
 }
+// 同じく足の開始時刻（取引所ローカルの "HH:MM"）。アプリ側が当日9:00の足（寄り付き）を特定するのに使う
+function toLocalTimes(timestamps, gmtoffset) {
+  const off = (typeof gmtoffset === "number" ? gmtoffset : 0) * 1000;
+  return (timestamps || []).map(function (t) {
+    return t == null ? null : new Date(t * 1000 + off).toISOString().slice(11, 16);
+  });
+}
 
 // ── 1銘柄分の株価データ取得（HTTPを介さずに直接呼べる形）──────────────────
 // サーバー側スキャン（api/_scan.js）から import して使うため、
@@ -86,6 +93,7 @@ async function fetchJPPayload(ticker) {
   const meta = result.meta || {};
   // アプリ側の「本日分」特定に必須の日付配列（東京市場: UTC+9h=32400秒）
   const dates = toLocalDates(result.timestamp, meta.gmtoffset != null ? meta.gmtoffset : 32400);
+  const times = toLocalTimes(result.timestamp, meta.gmtoffset != null ? meta.gmtoffset : 32400);
 
   const currentPrice = meta.regularMarketPrice || 0;
   const previousClose = meta.chartPreviousClose || meta.regularMarketPreviousClose || 0;
@@ -133,7 +141,7 @@ async function fetchJPPayload(ticker) {
           dataRange: "30d",
         },
         indicators: {
-          quote: [{ close: closes, high: highs, low: lows, volume: volumes, open: opens, date: dates }],
+          quote: [{ close: closes, high: highs, low: lows, volume: volumes, open: opens, date: dates, time: times }],
         },
         per: per, pbr: pbr, eps: eps, bps: bps, dividendYield: dividendYield,
         analystTarget: null, sector: null,
