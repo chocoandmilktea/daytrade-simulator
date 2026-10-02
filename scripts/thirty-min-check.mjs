@@ -29,7 +29,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as XLSX from "xlsx";
-import { analyzeStock, currentSessionDate, calcVWAP } from "../src/lib/analyze.js";
+import { analyzeStock, calcVWAP, tickSizeFor } from "../src/lib/analyze.js";
 
 // ---------- PR #90 と同じ設定 ----------
 
@@ -87,6 +87,9 @@ var ZONES = [
 var NBANDS = 5;
 var MIN_GROUP_SHARE = 0.01; // 一覧（6）で「ベースラインとの差」を取るグループの最低件数（全件数に対する割合）
 var LEAK_SAMPLES = 300;     // 先読み検査で計算し直す判定時点の数
+// 呼値（値段の刻み）1つが値段の0.2%以下の判定時点だけを集めた一覧も出す。低位株は呼値1つで1〜10%動き、
+// 「呼値1つぶん上下に行き来する」だけの値動きが平均騰落率を大きく振らすため
+var FINE_TICK_RATIO = 0.002;
 
 // ---------- src/App.js の calcS1 の写し（App.js は import しない） ----------
 // 写し間違いが無いことは、実行時に src/App.js の該当部分と文字列で突き合わせて確認する（checkS1Copy）
@@ -599,6 +602,7 @@ var main = async function () {
         past30: n >= BACK_BARS && pd.closes[n - BACK_BARS] > 0 ? price / pd.closes[n - BACK_BARS] - 1 : null,
         dayRet: price / prevDailyClose - 1,
         vwapDev: vwap > 0 ? price / vwap - 1 : null,
+        tickRatio: tickSizeFor(price, true) / price,
         topix: topixChange,
         ret: fut != null ? fut / raw.close[i] - 1 : null,
       },
@@ -734,65 +738,72 @@ var main = async function () {
   ITEMS.push({ key: "vwapDev", label: "VWAP乖離率", get: function (r) { return r.vwapDev; }, kind: "値動き", pct: true });
   var fmtVal = function (item, v) { return item.pct ? pct3(v) : (Number.isInteger(v) ? String(v) : v.toFixed(2)); };
 
-  // 1. ベースライン
-  var base = groupStats(recs.map(function (r) { return { v: 0, ret: r.ret }; }));
-  var baseZone = {};
-  ZONES.forEach(function (z) {
-    baseZone[z.key] = groupStats(recs.filter(function (r) { return r.zone === z.key; }).map(function (r) { return { v: 0, ret: r.ret }; }));
-  });
-
-  // 2〜6. 項目ごと
-  var minGroup = Math.ceil(N * MIN_GROUP_SHARE);
-  var results = ITEMS.map(function (item) {
-    var xs = recs.map(function (r) { return { v: item.get(r), ret: r.ret, day: r.dayIdx, zone: r.zone }; });
-    var q = quintiles(xs);
-    var nonEmpty = [];
-    q.stats.forEach(function (g, k) { if (g.n) nonEmpty.push(k); });
-    var lo = nonEmpty[0], hi = nonEmpty[nonEmpty.length - 1];
-    var c = corr(xs.map(function (x) { return x.v; }), xs.map(function (x) { return x.ret; }));
-    // 時間帯別（時間帯ごとに5等分し直す）
-    var byZone = {};
+  // 集計（全判定時点と、呼値の影響が小さい銘柄に限った判定時点の両方に使う）
+  var analyzeSet = function (recs) {
+    // 1. ベースライン
+    var base = groupStats(recs.map(function (r) { return { v: 0, ret: r.ret }; }));
+    var baseZone = {};
     ZONES.forEach(function (z) {
-      var zx = xs.filter(function (x) { return x.zone === z.key; });
-      byZone[z.key] = { q: quintiles(zx), corr: corr(zx.map(function (x) { return x.v; }), zx.map(function (x) { return x.ret; })) };
+      baseZone[z.key] = groupStats(recs.filter(function (r) { return r.zone === z.key; }).map(function (r) { return { v: 0, ret: r.ret }; }));
     });
-    // 日ごとの一貫性: 全体の5等分で、いちばん上のグループといちばん下のグループの平均騰落率をその日ごとに比べる
-    var dayDiffs = [], better = 0;
-    if (lo !== hi) {
-      for (var d = 0; d < dayCount; d++) {
-        var top = [], bot = [];
-        xs.forEach(function (x, ii) {
-          if (x.day !== d) return;
-          if (q.band[ii] === hi) top.push(x.ret);
-          else if (q.band[ii] === lo) bot.push(x.ret);
-        });
-        if (!top.length || !bot.length) continue;
-        var diff = mean(top) - mean(bot);
-        dayDiffs.push(diff);
-        if (diff > 0) better++;
+
+    // 2〜6. 項目ごと
+    var minGroup = Math.ceil(recs.length * MIN_GROUP_SHARE);
+    var results = ITEMS.map(function (item) {
+      var xs = recs.map(function (r) { return { v: item.get(r), ret: r.ret, day: r.dayIdx, zone: r.zone }; });
+      var q = quintiles(xs);
+      var nonEmpty = [];
+      q.stats.forEach(function (g, k) { if (g.n) nonEmpty.push(k); });
+      var lo = nonEmpty[0], hi = nonEmpty[nonEmpty.length - 1];
+      var c = corr(xs.map(function (x) { return x.v; }), xs.map(function (x) { return x.ret; }));
+      // 時間帯別（時間帯ごとに5等分し直す）
+      var byZone = {};
+      ZONES.forEach(function (z) {
+        var zx = xs.filter(function (x) { return x.zone === z.key; });
+        byZone[z.key] = { q: quintiles(zx), corr: corr(zx.map(function (x) { return x.v; }), zx.map(function (x) { return x.ret; })) };
+      });
+      // 日ごとの一貫性: 全体の5等分で、いちばん上のグループといちばん下のグループの平均騰落率をその日ごとに比べる
+      var dayDiffs = [], better = 0;
+      if (lo !== hi) {
+        for (var d = 0; d < dayCount; d++) {
+          var top = [], bot = [];
+          xs.forEach(function (x, ii) {
+            if (x.day !== d) return;
+            if (q.band[ii] === hi) top.push(x.ret);
+            else if (q.band[ii] === lo) bot.push(x.ret);
+          });
+          if (!top.length || !bot.length) continue;
+          var diff = mean(top) - mean(bot);
+          dayDiffs.push(diff);
+          if (diff > 0) better++;
+        }
       }
-    }
-    var ddMean = dayDiffs.length ? mean(dayDiffs) : NaN, ddSd = sd(dayDiffs);
-    // ベースラインとの差（件数が全体の1%以上のグループのうち、上昇割合がベースラインから最も離れたもの）
-    var maxDev = null;
-    q.stats.forEach(function (g, k) {
-      if (!g.n || g.n < minGroup) return;
-      var dev = g.up - base.up;
-      if (!maxDev || Math.abs(dev) > Math.abs(maxDev.dev)) maxDev = { k: k, dev: dev, avgDev: g.avg - base.avg, g: g };
+      var ddMean = dayDiffs.length ? mean(dayDiffs) : NaN, ddSd = sd(dayDiffs);
+      // ベースラインとの差（件数が全体の1%以上のグループのうち、上昇割合がベースラインから最も離れたもの）
+      var maxDev = null;
+      q.stats.forEach(function (g, k) {
+        if (!g.n || g.n < minGroup) return;
+        var dev = g.up - base.up;
+        if (!maxDev || Math.abs(dev) > Math.abs(maxDev.dev)) maxDev = { k: k, dev: dev, avgDev: g.avg - base.avg, g: g };
+      });
+      return {
+        item: item, q: q, lo: lo, hi: hi, corr: c, byZone: byZone,
+        dayDays: dayDiffs.length, dayBetter: better, dayShare: dayDiffs.length ? better / dayDiffs.length : NaN,
+        ddMean: ddMean, ddT: ddMean / (ddSd / Math.sqrt(dayDiffs.length)),
+        spreadUp: lo !== hi ? q.stats[hi].up - q.stats[lo].up : NaN,
+        spreadAvg: lo !== hi ? q.stats[hi].avg - q.stats[lo].avg : NaN,
+        maxDev: maxDev,
+      };
     });
-    return {
-      item: item, q: q, lo: lo, hi: hi, corr: c, byZone: byZone,
-      dayDays: dayDiffs.length, dayBetter: better, dayShare: dayDiffs.length ? better / dayDiffs.length : NaN,
-      ddMean: ddMean, ddT: ddMean / (ddSd / Math.sqrt(dayDiffs.length)),
-      spreadUp: lo !== hi ? q.stats[hi].up - q.stats[lo].up : NaN,
-      spreadAvg: lo !== hi ? q.stats[hi].avg - q.stats[lo].avg : NaN,
-      maxDev: maxDev,
-    };
-  });
-  var ranked = results.slice().sort(function (a, b) {
-    var x = a.maxDev ? Math.abs(a.maxDev.dev) : -1, y = b.maxDev ? Math.abs(b.maxDev.dev) : -1;
-    return y - x;
-  });
+    var ranked = results.slice().sort(function (a, b) {
+      var x = a.maxDev ? Math.abs(a.maxDev.dev) : -1, y = b.maxDev ? Math.abs(b.maxDev.dev) : -1;
+      return y - x;
+    });
+    return { recs: recs, N: recs.length, base: base, baseZone: baseZone, minGroup: minGroup, results: results, ranked: ranked };
+  };
+  var all = analyzeSet(recs);
+  var base = all.base, baseZone = all.baseZone, minGroup = all.minGroup, results = all.results, ranked = all.ranked;
+  var fine = analyzeSet(recs.filter(function (r) { return r.tickRatio <= FINE_TICK_RATIO; }));
 
   // ---------- レポート ----------
 
@@ -801,19 +812,36 @@ var main = async function () {
   L.push("# 30分後の値上がりをスコアの各項目で予測できるか 検証結果");
   L.push("");
 
+  // 4章の一覧表（全判定時点・呼値の影響が小さい判定時点で共通）
+  var rankTable = function (set) {
+    var out = [];
+    out.push("| 順位 | 項目 | 差が最大のグループ | そのグループの上がった割合 | ベースラインとの差 | 平均騰落率の差 | 上位−下位（上がった割合） | 上位−下位（平均騰落率） | 相関係数 | 日ごとの一貫性 | t値 |");
+    out.push("| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+    set.ranked.forEach(function (r, k) {
+      var m = r.maxDev;
+      out.push("| " + (k + 1) + " | " + r.item.label + " | " + (m ? bandName(m.k) + "（" + int(m.g.n) + "件）" : "-") + " | " + (m ? pct1(m.g.up) : "-") + " | " + (m ? pt1(m.dev) : "-") + " | " + (m ? pct3(m.avgDev) : "-") +
+        " | " + pt1(r.spreadUp) + " | " + pct3(r.spreadAvg) + " | " + num3(r.corr) + " | " + (r.dayDays ? pct1(r.dayShare) + "（" + r.dayBetter + "/" + r.dayDays + "日）" : "-") + " | " + num2(r.ddT) + " |");
+    });
+    return out;
+  };
+
   // 結論（データから組み立てる）
-  var strongCorr = results.filter(function (r) { return Math.abs(r.corr) >= 0.05; });
-  var top1 = ranked[0];
-  var bestDaily = results.filter(function (r) { return isNum(r.dayShare); }).sort(function (a, b) { return Math.abs(b.dayShare - 0.5) - Math.abs(a.dayShare - 0.5); })[0];
+  var byAbsCorr = results.slice().sort(function (a, b) { return Math.abs(b.corr) - Math.abs(a.corr); });
   var scoreRes = results.filter(function (r) { return r.item.key === "score"; })[0];
+  var fineScore = fine.results.filter(function (r) { return r.item.key === "score"; })[0];
+  // 呼値の影響を除いても日をまたいで揃って残った項目（日ごとの一貫性が75%以上か25%以下、かつ t値の絶対値が3以上）
+  var fineSteady = fine.results.filter(function (r) {
+    return r.dayDays && (r.dayShare >= 0.75 || r.dayShare <= 0.25) && Math.abs(r.ddT) >= 3;
+  });
   L.push("## 結論");
   L.push("");
-  L.push("- 30分後に上がっていた割合は全体で " + pct1(base.up) + "（変わらず " + pct1(base.flat) + "）。どの項目も30分後の騰落率との相関係数は " +
-    (strongCorr.length ? "最大 " + num3(results.slice().sort(function (a, b) { return Math.abs(b.corr) - Math.abs(a.corr); })[0].corr) + "（" + results.slice().sort(function (a, b) { return Math.abs(b.corr) - Math.abs(a.corr); })[0].item.label + "）" : "±0.05 未満") +
-    "で、単独で30分後の上げ下げを言い当てられる項目は無い");
-  L.push("- ベースラインとの差が最も大きいのは「" + top1.item.label + "」の " + bandName(top1.maxDev.k) + "（上がった割合 " + pct1(top1.maxDev.g.up) + "、ベースラインとの差 " + pt1(top1.maxDev.dev) + "）。" +
-    "日ごとの一貫性が最も偏っていたのは「" + bestDaily.item.label + "」（上位グループの方が良かった日 " + bestDaily.dayBetter + "/" + bestDaily.dayDays + "日）");
-  L.push("- 総合スコアは、上位グループと下位グループの上がった割合の差 " + pt1(scoreRes.spreadUp) + "・平均騰落率の差 " + pct3(scoreRes.spreadAvg) + "、相関係数 " + num3(scoreRes.corr) + "。片道0.05%（往復0.1%）の売買コストと比べてどの程度かは4章の表で確かめられる");
+  L.push("- 30分後に上がっていた割合は全体で " + pct1(base.up) + "（ベースライン）。30分後の騰落率との相関係数は最も強い「" + byAbsCorr[0].item.label + "」でも " + num3(byAbsCorr[0].corr) +
+    "で、どの項目も単独では30分後の上げ下げをほとんど言い当てられない");
+  L.push("- 全判定時点では総合スコアの上位グループの方が良かった日が " + scoreRes.dayBetter + "/" + scoreRes.dayDays + "日と逆向きに見えるが、呼値1つが値段の" + pct1(FINE_TICK_RATIO) + "以下の判定時点に限ると " +
+    fineScore.dayBetter + "/" + fineScore.dayDays + "日・上位−下位の平均騰落率の差 " + pct3(fineScore.spreadAvg) + " となり、全体で見えた差の多くは低位株が呼値1つぶん上下に行き来する動きによるもの");
+  L.push("- 呼値の影響を除いても日をまたいで揃って残ったのは " +
+    (fineSteady.length ? fineSteady.map(function (r) { return "「" + r.item.label + "」（値が大きいほど" + (r.ddMean > 0 ? "良い" : "悪い") + "。" + r.dayBetter + "/" + r.dayDays + "日・差 " + pct3(r.spreadAvg) + "）"; }).join("と") : "無く") +
+    "。その差も往復の売買コスト0.1%前後と同じ程度しかなく、どの項目もそのままでは30分先の売買の判断材料にならない");
   L.push("");
 
   L.push("## 0. 前提");
@@ -908,13 +936,17 @@ var main = async function () {
   L.push("- 日ごとの一貫性: その日の上位グループ（値が最も大きいグループ）の平均騰落率が、下位グループ（値が最も小さいグループ）より良かった日の割合。グループは全期間で5等分したものを使い、両方に判定時点がある日だけ数えた。偶然なら50%前後になる");
   L.push("- t値: 日ごとの「上位−下位の平均騰落率の差」の平均 ÷ 標準誤差。日をまたいで同じ向きの差が出ているかの目安で、絶対値が2を超えると偶然では出にくい");
   L.push("");
-  L.push("| 順位 | 項目 | 差が最大のグループ | そのグループの上がった割合 | ベースラインとの差 | 平均騰落率の差 | 上位−下位（上がった割合） | 上位−下位（平均騰落率） | 相関係数 | 日ごとの一貫性 | t値 |");
-  L.push("| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
-  ranked.forEach(function (r, k) {
-    var m = r.maxDev;
-    L.push("| " + (k + 1) + " | " + r.item.label + " | " + (m ? bandName(m.k) + "（" + int(m.g.n) + "件）" : "-") + " | " + (m ? pct1(m.g.up) : "-") + " | " + (m ? pt1(m.dev) : "-") + " | " + (m ? pct3(m.avgDev) : "-") +
-      " | " + pt1(r.spreadUp) + " | " + pct3(r.spreadAvg) + " | " + num3(r.corr) + " | " + (r.dayDays ? pct1(r.dayShare) + "（" + r.dayBetter + "/" + r.dayDays + "日）" : "-") + " | " + num2(r.ddT) + " |");
-  });
+  rankTable(all).forEach(function (x) { L.push(x); });
+  L.push("");
+  L.push("### 4-2. 呼値の影響が小さい判定時点に限った一覧");
+  L.push("");
+  L.push("低位株は呼値（値段の刻み）1つで値段が1〜10%動く（例: 10円台の銘柄は1円で約10%）。こうした銘柄は売り気配と買い気配の間を行き来するだけで30分後の騰落率が大きく振れ、平均騰落率の差を膨らませる。" +
+    "そこで、呼値1つが判定時点の値段の" + pct1(FINE_TICK_RATIO) + "以下（呼値1円なら値段500円以上）の判定時点だけで同じ一覧を作った。呼値は `analyze.js` の `tickSizeFor()`（アプリの呼値表）で求めた。");
+  L.push("");
+  L.push("- 対象: " + int(fine.N) + "件（全体の " + pct1(fine.N / N) + "）・" + new Set(fine.recs.map(function (r) { return r.ticker; })).size + "銘柄。ベースライン: 上がった " + pct1(fine.base.up) + "・変わらず " + pct1(fine.base.flat) + "・下がった " + pct1(fine.base.down) + "・平均騰落率 " + pct3(fine.base.avg));
+  L.push("- 5等分はこの対象の中でやり直した");
+  L.push("");
+  rankTable(fine).forEach(function (x) { L.push(x); });
   L.push("");
 
   L.push("## 5. 相関係数");
@@ -974,6 +1006,7 @@ var main = async function () {
   L.push("## 9. 注意点");
   L.push("");
   L.push("- 同じ日の判定時点は、相場全体の上げ下げを共有しているため互いに独立ではない。件数が多くても、日をまたいで同じ向きの差が出ているか（8章）を合わせて見ること");
+  L.push("- 判定時点の値段は15分足の終値で、実際に買える値段（売り気配）とは呼値1つぶんずれることがある。高値引けした足（Stoch・直近30分の騰落率・VWAP乖離率が大きい足）の後に下がりやすいのは、この「買い気配と売り気配の間の行き来」も含んでおり、そのまま売買で取れる差ではない（4-2 で低位株を除いても向きは残るが、差は小さくなる）");
   L.push("- 30分後の騰落率は売買コストを引いていない。往復0.1%のコストは、ここで出ている平均騰落率の差より大きいことが多い");
   L.push("- TOPIX は連動ETF（1306.T）の値で代用した。本番の立花証券の TOPIX 前日比とは場中の値の取り方が違う可能性がある");
   L.push("- 銘柄群は前日の出来高・値上がり率の上位で、売買が活発な銘柄に偏っている。全銘柄に当てはまるとは限らない");
