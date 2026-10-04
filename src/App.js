@@ -2063,6 +2063,14 @@ function findIntradayEndIdx(entries,def){
   var r=sessionRankAt(entries,i);
   return(r!=null&&r>=SESSION_RANK["後場後半"])?i:-1; // 後場後半より前で終わる日は「当日終値」と呼べない
 }
+// sh_intraday_<ticker> の後場後半の記録を {日付:価格} で返す（翌営業日の答え合わせの終点用）
+function loadIntradayAfternoonCloses(ticker){
+  var out={};
+  loadIntradayHist(ticker).forEach(function(e){
+    if(e&&e.d&&e.session==="後場後半"&&e.p!=null) out[e.d]=e.p;
+  });
+  return out;
+}
 function calcVerdictAccuracy(){
   var now=Date.now();
   if(VERDICT_ACC_CACHE&&now-VERDICT_ACC_TS<UNIVERSE_STATS_TTL) return VERDICT_ACC_CACHE;
@@ -2098,13 +2106,23 @@ function calcVerdictAccuracy(){
           }
         });
       }else{
-        // 翌営業日版：次の記録の価格と比べる
-        if(!/\.T$/.test(k.slice(3))) return; // 日本株のみ（他集計と条件を揃える）
-        for(var m=0;m<hist.length-1;m++){
+        // 翌営業日版：始点は判定(v)付きの記録。終点は1営業日後の自動スキャン（後場後半）の価格を優先し、
+        // 無ければ従来どおり次の記録の価格と比べる。終点の時刻を揃えて当日の値動きのブレを減らすため
+        var ticker=k.slice(3);
+        if(!/\.T$/.test(ticker)) return; // 日本株のみ（他集計と条件を揃える）
+        var closes=null,used={};
+        for(var m=0;m<hist.length;m++){
           var cur=hist[m],nt=hist[m+1];
-          if(!cur.v||cur.p==null||nt.p==null) continue;
-          if(bizDayDiff(cur.d,nt.d,true)!==1) continue; // 記録が飛んだペアは「翌営業日」に含めない
-          tally(nx,cur.v,priceMoveState(cur.p,nt.p),(nt.p-cur.p)/cur.p*100);
+          if(!cur||!cur.v||cur.p==null||used[cur.d]) continue;
+          if(!closes) closes=loadIntradayAfternoonCloses(ticker); // 始点がある銘柄だけ読む
+          var endP=null;
+          var cds=Object.keys(closes);
+          for(var ci=0;ci<cds.length;ci++){if(bizDayDiff(cur.d,cds[ci],true)===1){endP=closes[cds[ci]];break;}}
+          // 記録が飛んだペアは「翌営業日」に含めない
+          if(endP==null&&nt&&nt.p!=null&&bizDayDiff(cur.d,nt.d,true)===1) endP=nt.p;
+          if(endP==null) continue;
+          used[cur.d]=1; // 同じ銘柄・同じ始点の日付は1件だけ数える
+          tally(nx,cur.v,priceMoveState(cur.p,endP),(endP-cur.p)/cur.p*100);
         }
       }
     });
@@ -2166,10 +2184,13 @@ if(typeof window!=="undefined"){
 // 端末の sh_intraday_<ticker> にマージする。これで手動スキャンをしなくても
 // 「⏰時間帯別 的中率」が自動で溜まっていく。
 // 実行はアプリ起動時の1回だけ（スキャンのたび・画面を開くたびには実行しない）。
-// 取り込んだ日付は SCAN_IMPORT_KEY に控え、同じ日を何度も取りに行かない
+// 15:00まで取り込めた日付は SCAN_IMPORT_KEY に控え、同じ日を何度も取りに行かない
 // （当日ぶんだけは時間帯が増え続けるため毎回取り直す）。
 var SCAN_RESULT_API="https://daytrade-simulator.vercel.app/api/sync?resource=scan-result";
-// {days:{"YYYY-MM-DD":取り込み件数},last:最終取り込み日時(ms),err:最後の失敗理由}
+// {days:{"YYYY-MM-DD":取り込み件数},done:{"YYYY-MM-DD":1＝15:00まで取り込み済み},
+//  last:最終取り込み日時(ms),err:最後の失敗理由}
+// 過去の日は done が付くまで毎回取り直す（昼に取り込んだ日の13:00・15:00を取りこぼさないため）。
+// 15:00の結果がサーバーに無い日も、取りに行く範囲（SCAN_IMPORT_DAYS）から外れた時点で打ち切られる
 var SCAN_IMPORT_KEY="scan_import_state"; // 取り込み状況はこの1キーだけで持つ
 var INTRADAY_KEEP_DAYS=14;               // sh_intraday_* を残す日数（localStorage 5MB対策）
 var SCAN_IMPORT_DAYS=INTRADAY_KEEP_DAYS; // さかのぼって取りに行く日数（保持日数と同じにする）
@@ -2199,10 +2220,11 @@ function entryMinutes(e){
 function loadScanImportState(){
   try{
     var v=JSON.parse(localStorage.getItem(SCAN_IMPORT_KEY)||"{}");
-    if(!v||typeof v!=="object") return{days:{},last:0};
+    if(!v||typeof v!=="object") return{days:{},done:{},last:0};
     if(!v.days||typeof v.days!=="object") v.days={};
+    if(!v.done||typeof v.done!=="object") v.done={};
     return v;
-  }catch(e){return{days:{},last:0};}
+  }catch(e){return{days:{},done:{},last:0};}
 }
 function saveScanImportState(st){
   try{localStorage.setItem(SCAN_IMPORT_KEY,JSON.stringify(st));}
@@ -2239,6 +2261,7 @@ function pruneIntradayHist(cutoff){
 // 1日ぶんの結果（slot→行の配列）を sh_intraday_* にマージする。
 // 戻り値は {count:取り込んだ件数, tickers:[保存できた銘柄]}。
 // 同じ日付(d)・同じ時間帯(session)の記録が既にあればサーバー値で上書きし、増殖させない
+// （ただし判定(v)付きの記録は上書きせず、そのまま残す）
 function mergeScanResultDay(date,slots){
   var byTicker={},count=0;
   Object.keys(slots).sort().forEach(function(slot){ // slot（HHMM）順＝時刻の早い順
@@ -2254,7 +2277,7 @@ function mergeScanResultDay(date,slots){
       count++;
     });
   });
-  var saved=[],failed=0;
+  var saved=[],failed=0,kept=0;
   Object.keys(byTicker).forEach(function(ticker){
     var hist=loadIntradayHist(ticker);
     byTicker[ticker].forEach(function(x){
@@ -2270,6 +2293,9 @@ function mergeScanResultDay(date,slots){
       for(var i=0;i<hist.length;i++){
         if(hist[i]&&hist[i].d===date&&hist[i].session===x.session){idx=i;break;}
       }
+      // 手動スキャンで判定(v)が付いた記録は丸ごと残す。vだけ残して価格・時刻をサーバー値に
+      // 差し替えると、判定した時点より後の価格が判定にくっつき「答えを知った後の判定」になるため
+      if(idx>=0&&hist[idx].v){kept++;return;}
       if(idx>=0) hist[idx]=entry; else hist.push(entry);
     });
     // 日付順（同じ日は時刻順）に並べ替える。集計側が「その日の最後の記録＝引け」を
@@ -2284,6 +2310,7 @@ function mergeScanResultDay(date,slots){
     catch(e){failed++;} // 容量超過など。1銘柄の失敗で全体を止めない
   });
   if(failed) console.warn("[intraday-import] "+date+" localStorageへ保存できなかった銘柄: "+failed+"件");
+  if(kept) console.log("[intraday-import] "+date+" 判定付きの手動記録を残した件数: "+kept+"件（サーバー値で上書きせず）");
   return{count:count,tickers:saved};
 }
 var SCAN_IMPORT_BUSY=false; // 二重起動の防止（画面の「取り込み中…」表示にも使う）
@@ -2300,7 +2327,7 @@ function runScanImport(force){
   for(var i=SCAN_IMPORT_DAYS-1;i>=0;i--){ // 古い日から順に取り込む
     var info=jstInfo(-i);
     if(info.dow===0||info.dow===6||JP_HOLIDAYS[info.key]) continue; // 休場日は結果が無い
-    if(info.key!==today&&st.days[info.key]!=null) continue;         // 取り込み済み（当日だけ毎回）
+    if(info.key!==today&&st.done[info.key]) continue;              // 15:00まで取り込み済み（当日だけ毎回）
     targets.push(info.key);
   }
   // 一度も取り込んでいない状態＝初回一括取得。何日ぶん取りに行くかを先頭に出す
@@ -2309,7 +2336,7 @@ function runScanImport(force){
   try{window.dispatchEvent(new Event("scanimport"));}catch(e){}
   // 1日ずつ順番に取りに行く（並列にしない）。1日ぶんが失敗しても
   // catch で受けて次の日へ進み、失敗した日は st.days に入れず次回に回す
-  var imported=0,seen={},errs=[],chain=Promise.resolve();
+  var imported=0,seen={},errs=[],pending=[],chain=Promise.resolve();
   targets.forEach(function(date){
     chain=chain.then(function(){
       return fetch(SCAN_RESULT_API+"&date="+date,{cache:"no-store",signal:AbortSignal.timeout(10000)})
@@ -2318,6 +2345,11 @@ function runScanImport(force){
           if(!json||!json.slots) throw new Error("結果が空です");
           var res=mergeScanResultDay(date,json.slots);
           st.days[date]=res.count;
+          // 15:00の結果が入っていれば、その日は完了。当日は15:00のバッチが途中の可能性があるため
+          // 完了扱いにしない（当日は毎回取り直すので、翌日以降に過去の日として改めて判定される）
+          var closeRows=json.slots["1500"];
+          if(date!==today&&Array.isArray(closeRows)&&closeRows.length) st.done[date]=1;
+          else if(date!==today) pending.push(date);
           imported+=res.count;
           res.tickers.forEach(function(t){seen[t]=1;});
         })
@@ -2331,10 +2363,12 @@ function runScanImport(force){
   return chain.then(function(){
     if(errs.length) console.warn("[intraday-import] 取り込み失敗 "+errs.length+"日ぶん: "+errs.join(" / "));
     console.log("[intraday-import] 取り込み成功 "+imported+"件 / 対象"+Object.keys(seen).length+"銘柄");
+    if(pending.length) console.log("[intraday-import] 15:00の結果が無いため次回も取り直す日: "+pending.join(" / "));
     // 取り込みが終わってから古い記録を削除する（この順序を入れ替えない）
     var cutoff=intradayCutoffDate();
     pruneIntradayHist(cutoff);
     Object.keys(st.days).forEach(function(d){if(d<cutoff)delete st.days[d];}); // 表示件数も保持ぶんに合わせる
+    Object.keys(st.done).forEach(function(d){if(d<cutoff)delete st.done[d];}); // 完了の控えも同じ範囲だけ持つ
     st.last=Date.now();
     st.err=errs.length?errs.join(" / "):""; // 画面（的中率パネル）にも出すため状態に残す
     saveScanImportState(st);
