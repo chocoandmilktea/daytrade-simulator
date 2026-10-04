@@ -2075,6 +2075,7 @@ function calcVerdictAccuracy(){
   var now=Date.now();
   if(VERDICT_ACC_CACHE&&now-VERDICT_ACC_TS<UNIVERSE_STATS_TTL) return VERDICT_ACC_CACHE;
   var nx={},td={};
+  var nxAutoEnd=0; // 翌営業日版で終点に自動スキャン（後場後半）の価格を使ったペア数（判定の区別なし・引分込み）
   // move: priceMoveState の戻り値（1=上昇 / -1=下落 / 0=横ばい / null=計算不可）
   // 横ばい（±WIN_THRESHOLD_PCT未満）は勝敗の分母に入れず「引き分け」として件数だけ数える
   // → 他の集計（スコア帯別など）と条件を揃えるための処理
@@ -2115,14 +2116,16 @@ function calcVerdictAccuracy(){
           var cur=hist[m],nt=hist[m+1];
           if(!cur||!cur.v||cur.p==null||used[cur.d]) continue;
           if(!closes) closes=loadIntradayAfternoonCloses(ticker); // 始点がある銘柄だけ読む
-          var endP=null;
+          var endP=null,fromAuto=false;
           var cds=Object.keys(closes);
-          for(var ci=0;ci<cds.length;ci++){if(bizDayDiff(cur.d,cds[ci],true)===1){endP=closes[cds[ci]];break;}}
+          for(var ci=0;ci<cds.length;ci++){if(bizDayDiff(cur.d,cds[ci],true)===1){endP=closes[cds[ci]];fromAuto=true;break;}}
           // 記録が飛んだペアは「翌営業日」に含めない
           if(endP==null&&nt&&nt.p!=null&&bizDayDiff(cur.d,nt.d,true)===1) endP=nt.p;
           if(endP==null) continue;
           used[cur.d]=1; // 同じ銘柄・同じ始点の日付は1件だけ数える
-          tally(nx,cur.v,priceMoveState(cur.p,endP),(endP-cur.p)/cur.p*100);
+          var nxMove=priceMoveState(cur.p,endP);
+          if(fromAuto&&nxMove!=null) nxAutoEnd++; // tally が数えるペア（引分込み）と範囲を揃える
+          tally(nx,cur.v,nxMove,(endP-cur.p)/cur.p*100);
         }
       }
     });
@@ -2134,7 +2137,7 @@ function calcVerdictAccuracy(){
         avgPct:st.t?st.sum/st.t:null,total:st.t,draw:st.draw};
     });
   }
-  VERDICT_ACC_CACHE={next:rows(nx),today:rows(td)};VERDICT_ACC_TS=now;
+  VERDICT_ACC_CACHE={next:rows(nx),today:rows(td),nextAutoEnd:nxAutoEnd};VERDICT_ACC_TS=now;
   return VERDICT_ACC_CACHE;
 }
 // 今日版（引けまで）用：sh_intraday_全体から「各時間帯のスナップショット→同日最後の記録」への
@@ -5695,13 +5698,14 @@ function SignalAccuracyContent(p){
                 </div>
               );
             })}
+            <div style={{fontSize:11,color:"#2a6090",marginTop:8}}>翌営業日のうち、翌日15:00の自動スキャン価格で答え合わせした件数：{verdictAcc.nextAutoEnd||0}件（残りは手動スキャンの価格どうし）</div>
             <div style={{fontSize:11,color:"#2a6090",marginTop:8}}>※小さい数字は上から「平均騰落率」「引分（±0.3%未満で除外）」「誤差の目安」。<br/>※判定どうしの差が誤差の目安（±◯pt）より小さいうちは、まだ優劣を判断できません<br/>※勝率が低くても平均騰落率がプラスなら「たまに大きく勝つ」型で、期待値はプラスです</div>
           </div>
         )}
       </div>
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
-        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>📈 スコア帯別 的中率（全スキャン銘柄）</div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>タブに関わらず、これまでスキャンした全銘柄のスコアと翌営業日の値動きを集計。スコアが高いほど的中率が高いかの目安になります</div>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>📈 スコア帯別 的中率（手動スキャン銘柄）</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>タブに関わらず、これまで手動スキャンした全銘柄のスコアと翌営業日の値動きを集計。スコアが高いほど的中率が高いかの目安になります</div>
         {bandData.every(function(b){return b.total===0;})?(
           <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。スキャンを重ねると溜まっていきます。</div>
         ):(
