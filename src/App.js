@@ -2353,7 +2353,9 @@ function sig3BadgeText(s){
   if(rec.pre) return "点灯 前日〜 "+pct;
   var m=hhmmToMin(rec.t);
   if(m==null) return null;
-  var now=new Date(),el=Math.max(0,now.getHours()*60+now.getMinutes()-m);
+  // 経過時間の終点は「端末の今の時刻と大引け15:30のうち早い方」。引け後に見ても伸び続けないようにする
+  var now=new Date(),end=Math.min(now.getHours()*60+now.getMinutes(),15*60+30);
+  var el=Math.max(0,end-m);
   var els=el<60?el+"分":Math.floor(el/60)+"時間"+(el%60)+"分";
   return "点灯 "+rec.t+"〜 "+pct+"（"+els+"）";
 }
