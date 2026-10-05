@@ -5640,6 +5640,123 @@ function formatSigKeyLabel(key){
   return label+" "+stateLabel;
 }
 
+// ── 🩺 データ診断（端末の保存内容を画面で確かめる用）──────────────────────
+// 開発者ツールが使えない端末（iPad）で、日次記録(sh_*)と時間帯別記録(sh_intraday_*)の
+// 件数・保存量・画面上部のTOPIXを確かめるためのもの。localStorage は読むだけで、
+// 書き込むのは空き容量テストのテスト用キーだけ（成否にかかわらず必ず消す）
+var DIAG_DAYS=21;                          // 今日から何暦日前までを表に出すか
+var DIAG_TEST_KEY="diag_quota_test_tmp";  // 空き容量テスト専用。sh_ で始めない（集計に混ざらないように）
+var DIAG_TEST_CHARS=200*1024;             // 書き込む文字数（約200KB）
+function collectDataDiagnostics(){
+  var r={totalChars:0,totalKeys:0,intraChars:0,intraKeys:0,dailyChars:0,dailyKeys:0,rows:[],latestD:null,latestKeys:0,err:""};
+  var byDate={};
+  for(var i=0;i<=DIAG_DAYS;i++){
+    var info=jstInfo(-i);
+    var row={d:info.key,dow:info.dow,dn:0,dv:0,dt:0,inN:0,iv:0};
+    byDate[info.key]=row;r.rows.push(row);
+  }
+  var keyMax={}; // 日次記録のキーごとの最新 d
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      var v=localStorage.getItem(k)||"";
+      var chars=k.length+v.length;
+      r.totalChars+=chars;r.totalKeys++;
+      if(k.indexOf("sh_")!==0) return;
+      var isIntra=k.indexOf("sh_intraday_")===0;
+      if(isIntra){r.intraChars+=chars;r.intraKeys++;}else{r.dailyChars+=chars;r.dailyKeys++;}
+      var hist;try{hist=JSON.parse(v||"[]");}catch(e){hist=[];}
+      if(!Array.isArray(hist)) return;
+      hist.forEach(function(e){
+        if(!e||!e.d) return;
+        var hasV=e.v!=null&&e.v!=="";
+        if(!isIntra&&(keyMax[k]==null||e.d>keyMax[k])) keyMax[k]=e.d;
+        var row=byDate[e.d];
+        if(!row) return;
+        if(isIntra){row.inN++;if(hasV)row.iv++;}
+        else{row.dn++;if(hasV)row.dv++;if(e.ctx&&e.ctx.topix!=null)row.dt++;}
+      });
+    });
+  }catch(e){r.err=(e&&e.name)||"読み取りエラー";}
+  Object.keys(keyMax).forEach(function(k){
+    var d=keyMax[k];
+    if(r.latestD==null||d>r.latestD){r.latestD=d;r.latestKeys=1;}
+    else if(d===r.latestD) r.latestKeys++;
+  });
+  return r;
+}
+function runQuotaTest(){
+  var s=new Array(DIAG_TEST_CHARS+1).join("x");
+  var res;
+  try{localStorage.setItem(DIAG_TEST_KEY,s);res={ok:true};}
+  catch(e){res={ok:false,name:(e&&e.name)||"不明なエラー"};}
+  finally{try{localStorage.removeItem(DIAG_TEST_KEY);}catch(e2){}}
+  return res;
+}
+// 的中率パネルの一番下に出す開閉式の欄。開いたときだけ集計する（閉じている間は何も読まない）
+function DataDiagnosticPanel(p){
+  var openS=useState(false);var open=openS[0],setOpen=openS[1];
+  var dataS=useState(null);var data=dataS[0],setData=dataS[1];
+  var testS=useState(null);var test=testS[0],setTest=testS[1];
+  function toggle(){
+    if(!open) setData(collectDataDiagnostics()); // 開くたびに最新の保存内容で集計し直す
+    setOpen(!open);
+  }
+  var note={fontSize:11,color:"#4a7090"};
+  var small={fontSize:10,color:"#2a6090"};
+  var WD=["日","月","火","水","木","金","土"];
+  // 画面上部の地合いバナー（MarketRegimeBanner）と同じ取り方：topixChange を持つ最初の銘柄
+  var tp=(p.stocks||[]).find(function(s){return s.topixChange!=null;});
+  function num(n){return n.toLocaleString();}
+  function cell(n,w){return <div style={{width:w,flexShrink:0,textAlign:"right",color:n?"#4a7090":"#2a6090"}}>{n}</div>;}
+  return(
+    <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
+      <div onClick={toggle} style={{fontSize:13,fontWeight:700,color:"#e0f0ff",cursor:"pointer",userSelect:"none"}}>{(open?"▾ ":"▸ ")+"🩺 データ診断"}</div>
+      {open&&data&&(
+        <div style={{marginTop:6}}>
+          <div style={Object.assign({},note,{marginBottom:8})}>この端末に保存されている記録の件数と保存量を表示します（読み取りのみ。閉じて開き直すと集計し直します）</div>
+          {data.err&&<div style={Object.assign({},note,{color:"#f43f5e",marginBottom:6})}>{"⚠️ 保存領域の読み取りに失敗: "+data.err}</div>}
+
+          <div style={Object.assign({},note,{fontWeight:700,marginTop:4})}>保存領域の使用量（キー名＋値の文字数）</div>
+          <div style={note}>{"全体: "+num(data.totalChars)+"文字（"+num(data.totalKeys)+"キー）"}</div>
+          <div style={note}>{"時間帯別記録 sh_intraday_: "+num(data.intraChars)+"文字（"+num(data.intraKeys)+"キー）"}</div>
+          <div style={note}>{"日次記録 sh_（上記以外）: "+num(data.dailyChars)+"文字（"+num(data.dailyKeys)+"キー）"}</div>
+
+          <div style={Object.assign({},note,{fontWeight:700,marginTop:10})}>日次記録の最新日付</div>
+          <div style={note}>{data.latestD?(data.latestD+"（この日付の記録を持つキー: "+num(data.latestKeys)+"）"):"日次記録なし"}</div>
+
+          <div style={Object.assign({},note,{fontWeight:700,marginTop:10})}>TOPIX（画面上部の表示値）</div>
+          <div style={note}>{tp?("騰落率: "+(tp.topixChange>=0?"+":"")+tp.topixChange.toFixed(2)+"%（"+tp.ticker+" の取得値）"):"値なし（スキャン前、または全銘柄で未取得）"}</div>
+          <div style={note}>取得時刻なし</div>
+
+          <div style={Object.assign({},note,{fontWeight:700,marginTop:10,marginBottom:4})}>{"日付ごとの記録件数（今日〜"+DIAG_DAYS+"暦日前）"}</div>
+          <div style={Object.assign({},small,{display:"flex",padding:"4px 4px",borderBottom:"1px solid #0f2040"})}>
+            <div style={{flex:1,minWidth:0}}>日付</div>
+            <div style={{width:44,flexShrink:0,textAlign:"right"}}>日次</div>
+            <div style={{width:44,flexShrink:0,textAlign:"right"}}>判定</div>
+            <div style={{width:48,flexShrink:0,textAlign:"right"}}>TOPIX</div>
+            <div style={{width:50,flexShrink:0,textAlign:"right"}}>時間帯</div>
+            <div style={{width:44,flexShrink:0,textAlign:"right"}}>判定</div>
+          </div>
+          {data.rows.map(function(r){
+            return(
+              <div key={r.d} style={Object.assign({},note,{display:"flex",padding:"3px 4px",borderBottom:"1px solid #0a1830",fontFamily:"monospace"})}>
+                <div style={{flex:1,minWidth:0,color:(r.dow===0||r.dow===6)?"#2a6090":"#4a7090"}}>{r.d.slice(5).replace("-","/")+"("+WD[r.dow]+")"}</div>
+                {cell(r.dn,44)}{cell(r.dv,44)}{cell(r.dt,48)}{cell(r.inN,50)}{cell(r.iv,44)}
+              </div>
+            );
+          })}
+          <div style={Object.assign({},small,{marginTop:6})}>※日次＝日次記録の件数、判定＝うち総合判定あり、TOPIX＝うち地合い（TOPIX）あり、時間帯＝時間帯別記録の件数。各記録の日付で数えています</div>
+
+          <div style={Object.assign({},note,{fontWeight:700,marginTop:12,marginBottom:4})}>空き容量テスト</div>
+          <div style={Object.assign({},note,{marginBottom:6})}>約200KBの文字列を試しに書き込み、保存できるかを確かめます。テスト用の記録は成否にかかわらずすぐ削除します</div>
+          <button onClick={function(){setTest(runQuotaTest());}} style={{fontSize:12,padding:"8px 12px",borderRadius:6,border:"1px solid #2a4060",background:"#0a1e3a",color:"#8ac0e8",cursor:"pointer"}}>🧪 書き込みテスト</button>
+          {test&&<div style={Object.assign({},note,{marginTop:6,color:test.ok?"#22d3a0":"#f43f5e"})}>{test.ok?"✅ 成功（約200KBを書き込めました）":"❌ 失敗: "+test.name}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // シグナル的中率の中身（お気に入りタブ／トレードタブ両方から使う）
 // tickers省略時はお気に入り銘柄で集計。指定時はそのtickerだけで集計（トレードタブ用・お気に入りとは分離）
 function SignalAccuracyContent(p){
@@ -6055,6 +6172,7 @@ function SignalAccuracyContent(p){
           <button onClick={cleanupOldData} style={{fontSize:12,padding:"8px 12px",borderRadius:6,border:"1px solid #2a4060",background:"#0a1e3a",color:"#8ac0e8",cursor:"pointer"}}>🧹 古いデータ掃除</button>
         </div>
       </div>
+      <DataDiagnosticPanel stocks={p&&p.stocks}/>
     </div>
   );
 }
