@@ -2259,13 +2259,110 @@ function pruneIntradayHist(cutoff){
   }
   console.log("[intraday-prune] "+removed+"件削除（"+cutoff+"より前）"+
     (failed?" ※"+failed+"銘柄は書き込めず次回に持ち越し":""));
+  pruneSig3(cutoff); // 3点灯の記録も sh_intraday_* と同じ保持期間で消す
   return removed;
+}
+
+// ── 3シグナル点灯（コンフルエンス・EMA整列・出来高がすべてプラス）の初回確認記録 ──
+// localStorage "sig3_on_v1" に {日付:{銘柄:{t:"HH:MM",p:価格,src:"app"|"scan",pre:前日フラグ}}} で持つ。
+// 1銘柄1日1件で、より早い確認が来たときだけ置き換える（前日フラグ付きが最も早い扱い）。
+// 銘柄カードの「点灯 10:12〜 +2.3%（35分）」表示専用で、sh_intraday_* や集計には一切関わらない
+var SIG3_KEY="sig3_on_v1";
+var SIG3_LABELS=["コンフルエンス","EMA整列","出来高"];
+var SIG3_SCAN_KEYS=["コンフルエンス#1","EMA整列#1","出来高#1"];
+// 自動スキャンのslot → 記録時刻。寄り前（0850・旧名0830）は前日の足で点灯しているため前日フラグを立てる
+var SIG3_SLOT_TIME={"0830":"08:50","0850":"08:50","0930":"09:30","1100":"11:00","1300":"13:00","1500":"15:00"};
+var SIG3_PRE_SLOTS={"0830":1,"0850":1};
+var SIG3_MEM=null; // 読み込んだ記録の控え（カードを描くたびに JSON.parse し直さないため）
+function loadSig3(){
+  if(SIG3_MEM) return SIG3_MEM;
+  var v;
+  try{v=JSON.parse(localStorage.getItem(SIG3_KEY)||"{}");}catch(e){v={};}
+  SIG3_MEM=(v&&typeof v==="object")?v:{};
+  return SIG3_MEM;
+}
+function saveSig3(all){
+  SIG3_MEM=all;
+  try{localStorage.setItem(SIG3_KEY,JSON.stringify(all));}
+  catch(e){console.warn("[sig3] 点灯記録を保存できませんでした: "+e.message);}
+}
+// 計算結果の signals で3つすべてが state 1 か
+function isSig3On(signals){
+  if(!Array.isArray(signals)) return false;
+  var on={};
+  signals.forEach(function(x){if(x&&x.state===1)on[x.label]=1;});
+  return SIG3_LABELS.every(function(l){return on[l];});
+}
+// 自動スキャンの sigKeys で3つすべてが #1 か
+function isSig3OnKeys(keys){
+  if(!Array.isArray(keys)) return false;
+  return SIG3_SCAN_KEYS.every(function(k){return keys.indexOf(k)>=0;});
+}
+// all[date][ticker] に rec を入れる（既存より早い確認のときだけ）。入れたら true
+function putSig3(all,date,ticker,rec){
+  var day=all[date]=all[date]||{},cur=day[ticker];
+  if(cur){
+    if(cur.pre) return false;  // 前日フラグ付きが最も早い
+    if(!rec.pre){
+      var a=hhmmToMin(rec.t),b=hhmmToMin(cur.t);
+      if(a==null||(b!=null&&a>=b)) return false;
+    }
+  }
+  day[ticker]=rec;
+  return true;
+}
+// アプリ内の計算で3点灯を確認したときの記録（ラッパー analyzeStock から呼ぶ）。
+// save.intraday は sh_intraday の記録条件（日本株・当日の足あり・本物のデータ）そのもので、
+// それに「時間外」でないことを足す。時刻は端末時刻、価格は計算に使った現在値
+function recordSig3FromApp(s){
+  var sv=s&&s.save;
+  if(!sv||!sv.intraday||sv.session==="時間外"||!isSig3On(s.signals)) return;
+  var all=loadSig3();
+  if(putSig3(all,jstInfo(0).key,s.ticker,{t:sv.time,p:sv.price,src:"app",pre:false})) saveSig3(all);
+}
+// 自動スキャン1日ぶん（slot→行の配列）から3点灯の行を記録する（mergeScanResultDay から呼ぶ）。
+// 寄り前以外のslotで stale の行は前日の値なので記録しない
+function recordSig3FromScanDay(date,slots){
+  if(!slots||typeof slots!=="object") return;
+  var all=loadSig3(),changed=false;
+  Object.keys(slots).forEach(function(slot){
+    var t=SIG3_SLOT_TIME[String(slot)],pre=!!SIG3_PRE_SLOTS[String(slot)],rows=slots[slot];
+    if(!t||!Array.isArray(rows)) return;
+    rows.forEach(function(r){
+      if(!r||!r.ticker||!(r.price>0)||!isSig3OnKeys(r.sigKeys)) return;
+      if(!pre&&r.stale===true) return;
+      if(putSig3(all,date,r.ticker,{t:t,p:r.price,src:"scan",pre:pre})) changed=true;
+    });
+  });
+  if(changed) saveSig3(all);
+}
+// cutoffより古い日付の記録を捨てる（pruneIntradayHist から呼ぶ）
+function pruneSig3(cutoff){
+  var all=loadSig3(),n=0;
+  Object.keys(all).forEach(function(d){if(d<cutoff){delete all[d];n++;}});
+  if(n) saveSig3(all);
+}
+// 銘柄カードのバッジ文字列。日本株で今の計算結果が3点灯し、今日の記録があるときだけ返す
+function sig3BadgeText(s){
+  if(!s||s.market!=="JP"||s.rawPrice==null||!isSig3On(s.signals)) return null;
+  var day=loadSig3()[jstInfo(0).key],rec=day&&day[s.ticker];
+  if(!rec||!(rec.p>0)) return null;
+  var v=Math.round((s.rawPrice-rec.p)/rec.p*1000)/10;
+  if(v===0) v=0; // -0 を +0.0 と表示するため
+  var pct=(v>=0?"+":"")+v.toFixed(1)+"%";
+  if(rec.pre) return "点灯 前日〜 "+pct;
+  var m=hhmmToMin(rec.t);
+  if(m==null) return null;
+  var now=new Date(),el=Math.max(0,now.getHours()*60+now.getMinutes()-m);
+  var els=el<60?el+"分":Math.floor(el/60)+"時間"+(el%60)+"分";
+  return "点灯 "+rec.t+"〜 "+pct+"（"+els+"）";
 }
 // 1日ぶんの結果（slot→行の配列）を sh_intraday_* にマージする。
 // 戻り値は {count:取り込んだ件数, tickers:[保存できた銘柄]}。
 // 同じ日付(d)・同じ時間帯(session)の記録が既にあればサーバー値で上書きし、増殖させない
 // （ただし判定(v)付きの記録は上書きせず、そのまま残す）
 function mergeScanResultDay(date,slots){
+  recordSig3FromScanDay(date,slots); // 3点灯の初回確認（別キー sig3_on_v1。下の取り込み内容には影響しない）
   var byTicker={},count=0;
   Object.keys(slots).sort().forEach(function(slot){ // slot（HHMM）順＝時刻の早い順
     var rows=slots[slot];
@@ -2443,6 +2540,7 @@ function analyzeStock(stock,pd,vixVal){
     buildVerdict:buildVerdict                    // 🚦総合判定（統計がlocalStorage由来のため注入）
   });
   saveScoreHistory(stock.ticker,s.save);
+  recordSig3FromApp(s); // 3点灯の初回確認（別キー sig3_on_v1）
   return s;
 }
 
@@ -3415,6 +3513,7 @@ function StockCard(p){
             {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
             {(function(){var mi=momentumInfo(s.momentum);return mi&&<span style={bStyle(mi.bg,"1px solid "+mi.color,mi.color)} title={"初動スコア "+mi.score+"/100（対TOPIX累積"+(mi.relSum>=0?"+":"")+mi.relSum+"%）。これから数日で動き出しそうな銘柄を、総合スコアとは別の観点で評価した点数。60点以上が候補"}>🌱初動{mi.score}</span>;})()}
             {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}{(function(){var dn=DAYNIGHT[s.ticker];if(!dn)return null;var pos=dn.day>0;return <span style={bStyle(pos?"#052e16":"#101826","1px solid "+(pos?"#22d3a0":"#2a4060"),pos?"#22d3a0":"#4a7090")} title={"過去1年の値動きの分解（"+dn.days+"日分）: 日中(始値→終値)の累積"+(dn.day>=0?"+":"")+dn.day+"% / 夜間(前日終値→始値)の累積"+(dn.night>=0?"+":"")+dn.night+"%。日中分がプラスなら、持ち越さないデイトレと相性が良い日中型"}>{(pos?"☀️日中+":"🌙日中")+dn.day+"%"}</span>;})()}
+            {(function(){var st=sig3BadgeText(s);return st&&<span style={bStyle("#0a1a3a","#2a4060","#60a5fa")} title={"コンフルエンス・EMA整列・出来高の3つがプラスになったのを今日最初に確認した時刻と、その時の価格から今の現在値までの値動き。「前日〜」は寄り前の自動スキャンで確認済み"}>{st}</span>;})()}
           </div>
           {(function(){
             var aw=s.actualWinRate;
