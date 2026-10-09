@@ -248,5 +248,6 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 - 日本株の前日比は `PrevC`（前日終値）を優先。無い場合のみ始値比で代用する
 - 銘柄コードは4桁。`ticker` は `"7203.T"` 形式、立花APIへは `.T` を外して渡す。スキャン時は `CACHE` をクリアして必ず最新データを取る
 - **`src/App.js` の `PUSH_SYNC` を触るとお気に入りが巻き戻る。** スキャン処理が `useCallback` のため、その中で掴む値は初回描画のまま古くなる。これを避けるため、描画のたびに最新の同期関数を `PUSH_SYNC` へ書き写している（`FAV_GROUP_CACHE` と同じ方式）
+- **1日1件のスコア履歴（`sh_<ticker>`。`sh_intraday_` は除く）は、端末の `localStorage` とサーバーの控え（`user:<userId>` の `scoreHist`）の2か所にある。** 起動時にサーバー側で丸ごと置き換えると、送っていない間に端末で記録した日が消えて古い状態に巻き戻る。読み込みは `mergeDailyHist()` で日付単位で混ぜ（`applyServerScoreHist()`）、スキャンと削除（的中率データのリセット・`cleanupOldData()`）の後には `pushSyncNow()` / `pushSyncSoon()` で送ること。サーバー側は受け取った `scoreHist` で丸ごと上書きするため、削除後に送らないと消した記録が控えから戻ってくる
 - **`src/App.js` の `applySyncedData()` は、同期パネルで ID を切り替えたときに `last_sectors` を上書きする。** 受け取った `lastSectors` が空でない場合に `localStorage` を書き換えるため、ID を切り替えた直後は業種選定が切替先のものに変わる
 - **`api/sector.js` の `sectorCache` と分岐を触ると AI 呼び出しが増える。** `?sectors=` が付かない呼び出しは `getPromisingSectors()` → `askAIForSectors()` で `/api/ai` を叩く実装が現役で、回数を抑えているのは `sectorCache`（24時間・プロセス内メモリ）だけ。キャッシュの条件を緩める（保持時間の短縮・判定の削除）と課金が発生する。なおフロントは前回の業種を `?sectors=` で渡すため通常運用では AI 選定に入らないが、業種が空のときは入る。「今はAIを呼んでいない」を前提に条件を書き換えないこと
