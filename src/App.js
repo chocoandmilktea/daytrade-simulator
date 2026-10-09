@@ -1896,6 +1896,8 @@ function cleanupOldData(){
       if(lastD&&lastD<cutoff){localStorage.removeItem(k);removed++;}
     });
   }catch(e){}
+  // サーバーの控えからも消す（送らないと、次に開いたとき控えから戻ってくる）
+  if(removed>0)pushSyncNow();
   alert(removed?("90日以上更新のない銘柄データを"+removed+"件削除しました"):"削除対象はありませんでした");
 }
 // シグナルの向き通りに動いた場合の平均リターン（%）。Dの機能。
@@ -2517,6 +2519,56 @@ function loadScoreHist(ticker){
 }
 function loadIntradayHist(ticker){
   try{return JSON.parse(localStorage.getItem("sh_intraday_"+ticker)||"[]");}catch(e){return[];}
+}
+// 1日1件のスコア履歴（sh_<ticker>）を、端末の配列とサーバーの控えの配列で日付ごとに混ぜる。
+// 丸ごと置き換えると、サーバーへ送っていない間に端末で記録した日が消えてしまうため。
+// 同じ日付が両方にあるときは、判定キー(v)が片方にだけあればそちらを、それ以外は端末側を採る。
+// 件数の上限は analyze.js の scoreHist と同じ40件（古い日付から捨てる）
+function mergeDailyHist(localList,serverList){
+  function hasV(e){return e.v!=null&&e.v!=="";}
+  var map={};
+  (Array.isArray(serverList)?serverList:[]).forEach(function(e){if(e&&e.d)map[e.d]=e;});
+  (Array.isArray(localList)?localList:[]).forEach(function(e){
+    if(!e||!e.d)return;
+    var sv=map[e.d];
+    if(sv&&hasV(sv)&&!hasV(e))return; // サーバー側にだけ判定キーがある→サーバーを残す
+    map[e.d]=e;
+  });
+  return Object.keys(map).sort().map(function(d){return map[d];}).slice(-40);
+}
+// サーバーから受け取った scoreHist（{ticker:配列}）を端末の sh_<ticker> に混ぜて書く。
+// サーバーにだけある銘柄はそのまま書き、端末にだけある銘柄は触らない
+function applyServerScoreHist(scoreHist){
+  if(!scoreHist)return;
+  Object.keys(scoreHist).forEach(function(t){
+    try{
+      var raw=localStorage.getItem("sh_"+t);
+      var local=null;
+      if(raw){try{local=JSON.parse(raw);}catch(e){local=null;}}
+      var next=Array.isArray(local)?mergeDailyHist(local,scoreHist[t]):scoreHist[t];
+      localStorage.setItem("sh_"+t,JSON.stringify(next));
+    }catch(e){}
+  });
+}
+// ── サーバーへの送信結果の記録（同期パネルの「最終送信」表示用）──
+var SYNC_LAST_PUSH_KEY="sync_last_push";
+function recordSyncPush(ok){
+  try{localStorage.setItem(SYNC_LAST_PUSH_KEY,JSON.stringify({ok:!!ok,t:Date.now()}));}catch(e){}
+  try{window.dispatchEvent(new Event("syncpush"));}catch(e){} // 同期パネルを開いたままでも表示を更新する
+}
+function loadSyncPush(){
+  try{return JSON.parse(localStorage.getItem(SYNC_LAST_PUSH_KEY)||"null");}catch(e){return null;}
+}
+// スキャン後の送信。1回で約1.5MBあるため、1銘柄の再スキャンを続けて押したときは
+// 最後の操作から3秒待ってまとめて1回だけ送る（pushSyncSoon）。全体スキャンや削除はすぐ送る（pushSyncNow）
+var PUSH_SYNC_TIMER=null;
+function pushSyncNow(){
+  if(PUSH_SYNC_TIMER){clearTimeout(PUSH_SYNC_TIMER);PUSH_SYNC_TIMER=null;}
+  try{if(PUSH_SYNC)PUSH_SYNC();}catch(e){}
+}
+function pushSyncSoon(){
+  if(PUSH_SYNC_TIMER)clearTimeout(PUSH_SYNC_TIMER);
+  PUSH_SYNC_TIMER=setTimeout(function(){PUSH_SYNC_TIMER=null;try{if(PUSH_SYNC)PUSH_SYNC();}catch(e){}},3000);
 }
 // analyzeStock が返した save の内容をlocalStorageへ書き込む（従来と同じキー・同じ形式）
 //   sh_<ticker>          … 1日1件のスコア履歴（最大40日分）
@@ -5511,6 +5563,20 @@ function SyncPanel(p){
   var pinS=useState("");var pin=pinS[0],setPin=pinS[1];
   // ログイン済みかどうかをlocalStorageに残し、タブを開き直しても表示が消えないようにする
   var loginStatusS=useState(function(){try{return localStorage.getItem("daytrade_login_done")==="1"?"ok":null;}catch(e){return null;}});var loginStatus=loginStatusS[0],setLoginStatus=loginStatusS[1];
+  // サーバーへの最終送信の成否（パネルを開いたまま送信が走っても表示を追従させる）
+  var lastPushS=useState(loadSyncPush);var lastPush=lastPushS[0],setLastPush=lastPushS[1];
+  useEffect(function(){
+    function onPush(){setLastPush(loadSyncPush());}
+    window.addEventListener("syncpush",onPush);
+    return function(){window.removeEventListener("syncpush",onPush);};
+  },[]);
+  var lastPushLabel=(function(){
+    if(!lastPush||!lastPush.t)return"最終送信：まだありません";
+    var d=new Date(lastPush.t),now=new Date();
+    var hm=String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+    var sameDay=d.toDateString()===now.toDateString();
+    return"最終送信："+(lastPush.ok?"成功 ":"失敗 ")+(sameDay?"":(d.getMonth()+1)+"/"+d.getDate()+" ")+hm;
+  })();
   function copyId(){
     if(navigator.clipboard){navigator.clipboard.writeText(userId).then(function(){setCopyStatus("ok");setTimeout(function(){setCopyStatus(null);},2000);});}
     else{prompt("ユーザーID",userId);}
@@ -5522,7 +5588,7 @@ function SyncPanel(p){
     if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
     if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
     if(data.personalTrades){saveTrades("personal",data.personalTrades);p.setPersonalTrades(data.personalTrades);}
-    if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(t){localStorage.setItem("sh_"+t,JSON.stringify(data.scoreHist[t]));});}catch(e){}}
+    if(data.scoreHist)applyServerScoreHist(data.scoreHist); // 日付単位で混ぜる（起動時の読み込みと同じ）
     if(data.lastSectors&&data.lastSectors.length){try{localStorage.setItem("last_sectors",JSON.stringify(data.lastSectors));}catch(e){}}
     try{localStorage.setItem("daytrade_uid",id);}catch(e){}
     if(setUserId)setUserId(id);
@@ -5578,6 +5644,7 @@ function SyncPanel(p){
           {loginStatus==="loading"?"ログイン中...":loginStatus==="ok"?"✅ ログイン済み":loginStatus==="error"?"❌ 失敗しました":"ログイン / 新規登録"}
         </button>
         <div style={{fontSize:11,color:"#2a6060",marginTop:8}}>※ 初めて使う合言葉＋PINの組み合わせなら、新規データとして自動的に登録されます</div>
+        <div style={{fontSize:12,color:lastPush&&lastPush.t&&!lastPush.ok?"#f87171":"#4a7090",marginTop:8}}>{lastPushLabel}</div>
       </div>
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
         <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:10}}>🔗 デバイスID（上級者向け）</div>
@@ -5622,6 +5689,8 @@ function SyncPanel(p){
             Object.keys(localStorage).forEach(function(k){
               if(k.indexOf("sh_")===0||k.indexOf("aipred_")===0){localStorage.removeItem(k);removed++;}
             });
+            // サーバーの控えも消す。送らないと、次に開いたとき控えから記録が戻ってくる
+            if(removed>0)pushSyncNow();
             alert(removed+"件のデータを削除しました");
           }catch(e){alert("削除に失敗しました: "+e.message);}
         }} style={{width:"100%",background:"#3a1a00",border:"1px solid #fb923c",borderRadius:8,color:"#fbbf24",padding:"10px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
@@ -6477,7 +6546,10 @@ export default function App(){
       personalTrades:nextPersonalTrades!==undefined?nextPersonalTrades:personalTrades
     };
     if(Array.isArray(lastSectors))payload.lastSectors=lastSectors;
-    fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}).catch(function(){});
+    // 成否を記録して同期パネルに出す（2xx以外・通信エラーは失敗）
+    fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
+      .then(function(r){recordSyncPush(r.ok);})
+      .catch(function(){recordSyncPush(false);});
   }
   // scan() は useCallback([startDayNightFill]) のため、中で参照する値は初回描画のまま古くなる。
   // last_sectors を更新した直後に最新の同期関数を呼べるよう、描画のたびに書き写しておく
@@ -6706,10 +6778,10 @@ export default function App(){
         setProgress({done:0,total:0,msg:progressMsg});
         await new Promise(function(r){setTimeout(r,rankingFailed?2500:800);}); // 警告時は気づけるよう長めに表示
         // 次回「前回の業種を表示」で使えるよう、実際に読み込んだ業種を保存
+        // サーバーへの反映はスコア計算の後にまとめて1回で送る（下の pushSyncNow）
+        var sectorsSaved=false;
         if(uResult.sectors&&uResult.sectors.length){
-          try{localStorage.setItem("last_sectors",JSON.stringify(uResult.sectors.map(function(s){return s.name;})));}catch(e){}
-          // サーバー側の自動スキャンが同じ業種で銘柄リストを組めるよう、すぐ同期に反映する
-          try{if(PUSH_SYNC)PUSH_SYNC();}catch(e){}
+          try{localStorage.setItem("last_sectors",JSON.stringify(uResult.sectors.map(function(s){return s.name;})));sectorsSaved=true;}catch(e){}
         }
         var favList=(function(){try{var v=localStorage.getItem("fav_tickers");return v?JSON.parse(v):[];}catch(e){return[];}})();
         var uTickers=universe.map(function(s){return s.ticker;});
@@ -6738,6 +6810,11 @@ export default function App(){
         setStocks(results);
         setTs(new Date().toLocaleTimeString("ja-JP"));
         startDayNightFill(results); // 表示後に☀️日中型を裏で取得
+        // スコア履歴を1銘柄でも保存した、または業種を保存したらサーバーへ送る。
+        // 送らないと次に開いたとき控え（古い履歴）しかサーバーに無く、別端末へ届かない。
+        // 業種だけの更新（休場中のスキャン等）も、サーバー側の自動スキャンが使うため送る
+        var savedAny=results.some(function(r){return r.save&&r.save.daily;});
+        if(savedAny||sectorsSaved)pushSyncNow();
       },function(next,max,err,wait){
         setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
       });
@@ -6778,6 +6855,8 @@ export default function App(){
         setStocks(results);
         setTs(new Date().toLocaleTimeString("ja-JP"));
         startDayNightFill(results); // 表示後に☀️日中型を裏で取得
+        // スコア履歴を1銘柄でも保存したらサーバーへ送る（通常スキャンと同じ理由）
+        if(results.some(function(r){return r.save&&r.save.daily;}))pushSyncNow();
       },function(next,max,err,wait){
         setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
       });
@@ -6796,6 +6875,8 @@ export default function App(){
       var pd=await fetchYahooSafe(ticker);
       var updated=analyzeStock(existing,pd,vix);
       setStocks(function(prev){return prev.map(function(s){return s.ticker===ticker?updated:s;});});
+      // 続けて押されたときにまとめて1回で送るため、少し待ってから送る
+      if(updated.save&&updated.save.daily)pushSyncSoon();
     }finally{
       setRescanLoading(function(prev){var n=Object.assign({},prev);delete n[ticker];return n;});
     }
@@ -6873,7 +6954,8 @@ export default function App(){
         if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
         if(data.groupNames){setGroupNames(function(prev){return Object.assign({},prev,data.groupNames);});try{localStorage.setItem("group_names",JSON.stringify(data.groupNames));}catch(e){}}
         if(data.personalTrades){saveTrades("personal",data.personalTrades);setPersonalTrades(data.personalTrades);}
-        if(data.scoreHist){try{Object.keys(data.scoreHist).forEach(function(ticker){localStorage.setItem("sh_"+ticker,JSON.stringify(data.scoreHist[ticker]));});}catch(e){}}
+        // 置き換えではなく日付単位で混ぜる（送っていない間の端末の記録を消さないため）
+        if(data.scoreHist)applyServerScoreHist(data.scoreHist);
         if(data.forecasts){try{fcMerge(data.forecasts);}catch(e){}}
         // 「前回の業種」も端末間で揃える（サーバー側スキャンが見ている値と一致させるため）
         if(data.lastSectors&&data.lastSectors.length){try{localStorage.setItem("last_sectors",JSON.stringify(data.lastSectors));}catch(e){}}
