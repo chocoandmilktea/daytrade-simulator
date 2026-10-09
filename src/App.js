@@ -1897,7 +1897,8 @@ function cleanupOldData(){
     });
   }catch(e){}
   // サーバーの控えからも消す（送らないと、次に開いたとき控えから戻ってくる）
-  if(removed>0)pushSyncNow();
+  if(removed>0)pushSyncNow("掃除");
+  else recordSyncTry("掃除","削除0件のため送らず",true);
   alert(removed?("90日以上更新のない銘柄データを"+removed+"件削除しました"):"削除対象はありませんでした");
 }
 // シグナルの向き通りに動いた場合の平均リターン（%）。Dの機能。
@@ -2559,16 +2560,78 @@ function recordSyncPush(ok){
 function loadSyncPush(){
   try{return JSON.parse(localStorage.getItem(SYNC_LAST_PUSH_KEY)||"null");}catch(e){return null;}
 }
+// ── 送信の試み・起動時の読み込みの記録（同期パネルの診断表示用）──
+// 開発ツールが使えない端末（iPadのホーム画面アプリ）でも、送らなかった理由・失敗の理由を画面で確かめるため。
+// 端末の保存容量が一杯だと localStorage への記録自体が失敗するため、同じ内容をモジュール変数にも持ち、
+// 画面にはそちらを優先して出す（再読み込みで消えるが、その場の確認には足りる）
+var SYNC_LAST_TRY_KEY="sync_last_try";
+var SYNC_LAST_LOAD_KEY="sync_last_load";
+var SYNC_LAST_TRY=null,SYNC_LAST_LOAD=null;
+function syncErrText(e){
+  if(!e)return"不明なエラー";
+  var name=e.name&&e.name!=="Error"?e.name+": ":"";
+  return(name+String(e.message||e)).slice(0,120);
+}
+function recordSyncTry(trigger,result,bad){
+  var rec={t:Date.now(),trigger:trigger||"",result:result,bad:!!bad};
+  SYNC_LAST_TRY=rec;
+  try{localStorage.setItem(SYNC_LAST_TRY_KEY,JSON.stringify(rec));}catch(e){}
+  try{window.dispatchEvent(new Event("synctry"));}catch(e){}
+}
+function loadSyncTry(){
+  if(SYNC_LAST_TRY)return SYNC_LAST_TRY;
+  try{return JSON.parse(localStorage.getItem(SYNC_LAST_TRY_KEY)||"null");}catch(e){return null;}
+}
+function recordSyncLoad(result,bad){
+  var rec={t:Date.now(),result:result,bad:!!bad};
+  SYNC_LAST_LOAD=rec;
+  try{localStorage.setItem(SYNC_LAST_LOAD_KEY,JSON.stringify(rec));}catch(e){}
+  try{window.dispatchEvent(new Event("syncload"));}catch(e){}
+}
+function loadSyncLoad(){
+  if(SYNC_LAST_LOAD)return SYNC_LAST_LOAD;
+  try{return JSON.parse(localStorage.getItem(SYNC_LAST_LOAD_KEY)||"null");}catch(e){return null;}
+}
+// 端末の保存容量の確認。使用量は全キーと値の文字数の合計。
+// 書き込みテストは小さな値を一時キーに書いて読み戻し、すぐ消す（容量一杯ならここで失敗する）
+function checkLocalStorage(){
+  var used=null,test;
+  try{
+    used=0;
+    for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);used+=k.length+(localStorage.getItem(k)||"").length;}
+  }catch(e){used=null;}
+  try{
+    var key="__sync_storage_test__",val=String(Date.now());
+    localStorage.setItem(key,val);
+    var back=localStorage.getItem(key);
+    localStorage.removeItem(key);
+    test=back===val?"OK":"読み戻した値が一致しない";
+  }catch(e){test="失敗（"+syncErrText(e)+"）";}
+  return{used:used,test:test,ok:test==="OK"};
+}
 // スキャン後の送信。1回で約1.5MBあるため、1銘柄の再スキャンを続けて押したときは
 // 最後の操作から3秒待ってまとめて1回だけ送る（pushSyncSoon）。全体スキャンや削除はすぐ送る（pushSyncNow）
+// trigger は同期パネルに出す「きっかけ」（通常スキャン・リセット等）
 var PUSH_SYNC_TIMER=null;
-function pushSyncNow(){
-  if(PUSH_SYNC_TIMER){clearTimeout(PUSH_SYNC_TIMER);PUSH_SYNC_TIMER=null;}
-  try{if(PUSH_SYNC)PUSH_SYNC();}catch(e){}
+function runPushSync(trigger){
+  if(!PUSH_SYNC){recordSyncTry(trigger,"送信の窓口が未設定のため送らず",true);return;}
+  try{PUSH_SYNC(trigger);}catch(e){recordSyncTry(trigger,"送る中身の作成で失敗（"+syncErrText(e)+"）",true);}
 }
-function pushSyncSoon(){
+function pushSyncNow(trigger){
+  if(PUSH_SYNC_TIMER){clearTimeout(PUSH_SYNC_TIMER);PUSH_SYNC_TIMER=null;}
+  runPushSync(trigger);
+}
+function pushSyncSoon(trigger){
   if(PUSH_SYNC_TIMER)clearTimeout(PUSH_SYNC_TIMER);
-  PUSH_SYNC_TIMER=setTimeout(function(){PUSH_SYNC_TIMER=null;try{if(PUSH_SYNC)PUSH_SYNC();}catch(e){}},3000);
+  recordSyncTry(trigger,"3秒後に送信予定",false);
+  PUSH_SYNC_TIMER=setTimeout(function(){PUSH_SYNC_TIMER=null;runPushSync(trigger);},3000);
+}
+// スキャン完了時の送信判定。スコア履歴を1銘柄も保存していなければ送らず、その件数を記録する。
+// force は「業種だけ保存した」等、履歴以外の理由で送る場合
+function pushSyncAfterScan(trigger,results,force){
+  var saved=results.filter(function(r){return r&&r.save&&r.save.daily;}).length;
+  if(saved>0||force){pushSyncNow(trigger);return;}
+  recordSyncTry(trigger,"保存0件のため送らず（結果"+results.length+"件・保存"+saved+"件）",true);
 }
 // analyzeStock が返した save の内容をlocalStorageへ書き込む（従来と同じキー・同じ形式）
 //   sh_<ticker>          … 1日1件のスコア履歴（最大40日分）
@@ -5577,6 +5640,26 @@ function SyncPanel(p){
     var sameDay=d.toDateString()===now.toDateString();
     return"最終送信："+(lastPush.ok?"成功 ":"失敗 ")+(sameDay?"":(d.getMonth()+1)+"/"+d.getDate()+" ")+hm;
   })();
+  // 送信の試み・起動時の読み込み・保存容量（送らなかった理由を画面で確かめるための診断表示）
+  var lastTryS=useState(loadSyncTry);var lastTry=lastTryS[0],setLastTry=lastTryS[1];
+  var lastLoadS=useState(loadSyncLoad);var lastLoad=lastLoadS[0],setLastLoad=lastLoadS[1];
+  var storageS=useState(checkLocalStorage);var storage=storageS[0],setStorage=storageS[1];
+  useEffect(function(){
+    // 送信の試みのたびに容量も測り直す（スキャンで履歴を書いた直後の状態を見るため）
+    function onTry(){setLastTry(loadSyncTry());setStorage(checkLocalStorage());}
+    function onLoad(){setLastLoad(loadSyncLoad());}
+    window.addEventListener("synctry",onTry);
+    window.addEventListener("syncload",onLoad);
+    return function(){window.removeEventListener("synctry",onTry);window.removeEventListener("syncload",onLoad);};
+  },[]);
+  function fmtSyncTime(t){
+    var d=new Date(t),now=new Date();
+    var hm=String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+    return(d.toDateString()===now.toDateString()?"":(d.getMonth()+1)+"/"+d.getDate()+" ")+hm;
+  }
+  var lastTryLabel=lastTry&&lastTry.t?"直近の送信の試み："+fmtSyncTime(lastTry.t)+" "+(lastTry.trigger||"不明")+" → "+lastTry.result:"直近の送信の試み：まだありません";
+  var lastLoadLabel=lastLoad&&lastLoad.t?"起動時の読み込み："+fmtSyncTime(lastLoad.t)+" "+lastLoad.result:"起動時の読み込み：まだ終わっていません";
+  var storageLabel="端末の保存容量："+(storage.used==null?"使用量を取得できず":storage.used>=10000?"約"+Math.round(storage.used/10000)+"万文字使用":storage.used+"文字使用")+"・書き込みテスト "+storage.test;
   function copyId(){
     if(navigator.clipboard){navigator.clipboard.writeText(userId).then(function(){setCopyStatus("ok");setTimeout(function(){setCopyStatus(null);},2000);});}
     else{prompt("ユーザーID",userId);}
@@ -5620,7 +5703,7 @@ function SyncPanel(p){
         // 初めての合言葉＋PIN→端末データは消さず、そのままこのIDで新規登録
         try{localStorage.setItem("daytrade_uid",id);}catch(e){}
         if(setUserId)setUserId(id);
-        if(p.syncToServer)p.syncToServer(p.favs,p.favGroups,p.groupNames,p.personalTrades,id);
+        if(p.syncToServer)p.syncToServer(p.favs,p.favGroups,p.groupNames,p.personalTrades,id,"ログイン（新規登録）");
       }
       setLoginStatus("ok");
       try{localStorage.setItem("daytrade_login_done","1");}catch(e){}
@@ -5645,6 +5728,12 @@ function SyncPanel(p){
         </button>
         <div style={{fontSize:11,color:"#2a6060",marginTop:8}}>※ 初めて使う合言葉＋PINの組み合わせなら、新規データとして自動的に登録されます</div>
         <div style={{fontSize:12,color:lastPush&&lastPush.t&&!lastPush.ok?"#f87171":"#4a7090",marginTop:8}}>{lastPushLabel}</div>
+        <div style={{fontSize:12,color:lastTry&&lastTry.bad?"#f87171":"#4a7090",marginTop:4}}>{lastTryLabel}</div>
+        <div style={{fontSize:12,color:lastLoad&&lastLoad.bad?"#f87171":"#4a7090",marginTop:4}}>{lastLoadLabel}</div>
+        <div style={{fontSize:12,color:storage.ok?"#4a7090":"#f87171",marginTop:4}}>{storageLabel}</div>
+        <button onClick={function(){pushSyncNow("手動送信");}} style={{marginTop:8,background:"#0a1828",border:"1px solid #1e4070",borderRadius:6,color:"#b8cce0",padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+          今すぐ送信
+        </button>
       </div>
       <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
         <div style={{fontSize:14,fontWeight:700,color:"#e0f0ff",marginBottom:10}}>🔗 デバイスID（上級者向け）</div>
@@ -5677,7 +5766,7 @@ function SyncPanel(p){
             <span style={{fontSize:13,color:"#b8cce0"}}>{row[1]}</span>
           </div>);
         })}
-        <div style={{fontSize:11,color:"#2a6060",marginTop:8}}>※ お気に入り・トレードの登録・変更時に自動でサーバーに保存されます</div>
+        <div style={{fontSize:11,color:"#2a6060",marginTop:8}}>※ お気に入り・トレードの変更時と、スキャン・記録の削除の後に自動でサーバーに保存されます</div>
       </div>
       <div style={{background:"#2a1400",border:"1px solid #fb923c",borderRadius:10,padding:"14px 16px"}}>
         <div style={{fontSize:14,fontWeight:700,color:"#fbbf24",marginBottom:4}}>🗑️ 的中率データのリセット</div>
@@ -5690,7 +5779,8 @@ function SyncPanel(p){
               if(k.indexOf("sh_")===0||k.indexOf("aipred_")===0){localStorage.removeItem(k);removed++;}
             });
             // サーバーの控えも消す。送らないと、次に開いたとき控えから記録が戻ってくる
-            if(removed>0)pushSyncNow();
+            if(removed>0)pushSyncNow("リセット");
+            else recordSyncTry("リセット","削除0件のため送らず",true);
             alert(removed+"件のデータを削除しました");
           }catch(e){alert("削除に失敗しました: "+e.message);}
         }} style={{width:"100%",background:"#3a1a00",border:"1px solid #fb923c",borderRadius:8,color:"#fbbf24",padding:"10px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"monospace"}}>
@@ -6531,30 +6621,45 @@ export default function App(){
   // 起動時のサーバー読み込みが終わるまでtrueにならない。falseの間は保存を止めて、
   // 「読み込み前の古いデータで上書きしてしまう」事故を防ぐ
   var syncLoadedS=useState(false);var syncLoaded=syncLoadedS[0],setSyncLoaded=syncLoadedS[1];
-  function syncToServer(nextFavs,nextGroups,nextGroupNames,nextPersonalTrades,targetId){
-    if(!syncLoaded)return; // 起動時の読み込み完了前は保存しない
-    // last_sectors はサーバー側スキャンが銘柄リストを組み立てる材料にもなるため同期する。
-    // 未保存（1度もスキャンしていない端末）のときは項目ごと送らない＝他端末の値を消さない
-    var lastSectors=(function(){try{var v=localStorage.getItem("last_sectors");return v?JSON.parse(v):null;}catch(e){return null;}})();
-    var payload={
-      favs:nextFavs,
-      scoreHist:getAllScoreHist(),
-      forecasts:fcLoad(),
-      groups:nextGroups,
-      groupNames:nextGroupNames,
-      appTrades:[], // アプリ予想は廃止（サーバー側の旧データも空で上書きする）
-      personalTrades:nextPersonalTrades!==undefined?nextPersonalTrades:personalTrades
-    };
-    if(Array.isArray(lastSectors))payload.lastSectors=lastSectors;
-    // 成否を記録して同期パネルに出す（2xx以外・通信エラーは失敗）
-    fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
-      .then(function(r){recordSyncPush(r.ok);})
-      .catch(function(){recordSyncPush(false);});
+  // trigger は同期パネルの「直近の送信の試み」に出すきっかけ。省略時はお気に入り・トレードの操作
+  function syncToServer(nextFavs,nextGroups,nextGroupNames,nextPersonalTrades,targetId,trigger){
+    var why=trigger||"お気に入りやトレードの操作";
+    if(!syncLoaded){recordSyncTry(why,"起動時の読み込みが終わっていないため送らず",true);return;} // 起動時の読み込み完了前は保存しない
+    // 送る中身の作成で例外が出ても呼び出し元へ投げず、理由を記録して止める
+    var body;
+    try{
+      // last_sectors はサーバー側スキャンが銘柄リストを組み立てる材料にもなるため同期する。
+      // 未保存（1度もスキャンしていない端末）のときは項目ごと送らない＝他端末の値を消さない
+      var lastSectors=(function(){try{var v=localStorage.getItem("last_sectors");return v?JSON.parse(v):null;}catch(e){return null;}})();
+      var payload={
+        favs:nextFavs,
+        scoreHist:getAllScoreHist(),
+        forecasts:fcLoad(),
+        groups:nextGroups,
+        groupNames:nextGroupNames,
+        appTrades:[], // アプリ予想は廃止（サーバー側の旧データも空で上書きする）
+        personalTrades:nextPersonalTrades!==undefined?nextPersonalTrades:personalTrades
+      };
+      if(Array.isArray(lastSectors))payload.lastSectors=lastSectors;
+      body=JSON.stringify(payload);
+    }catch(e){recordSyncTry(why,"送る中身の作成で失敗（"+syncErrText(e)+"）",true);return;}
+    recordSyncTry(why,"送信中（約"+Math.max(1,Math.round(body.length/1024))+"KB）",false);
+    // 成否を記録して同期パネルに出す（2xx以外・通信エラーは失敗）。
+    // 返事が来ないまま「送信中」で止まり続けないよう、30秒で諦めて失敗として記録する
+    fetch(SYNC_API+"?userId="+(targetId||userId),{method:"POST",headers:{"Content-Type":"application/json"},body:body,signal:AbortSignal.timeout(30000)})
+      .then(function(r){
+        recordSyncPush(r.ok);
+        recordSyncTry(why,(r.ok?"成功":"失敗")+"（HTTP "+r.status+"）",!r.ok);
+      })
+      .catch(function(e){
+        recordSyncPush(false);
+        recordSyncTry(why,"失敗（"+(e&&e.name==="TimeoutError"?"30秒で応答なし":syncErrText(e))+"）",true);
+      });
   }
   // scan() は useCallback([startDayNightFill]) のため、中で参照する値は初回描画のまま古くなる。
   // last_sectors を更新した直後に最新の同期関数を呼べるよう、描画のたびに書き写しておく
   // （FAV_GROUP_CACHE と同じ方式）
-  PUSH_SYNC=function(){syncToServer(favs,favGroups,groupNames);};
+  PUSH_SYNC=function(trigger){syncToServer(favs,favGroups,groupNames,undefined,undefined,trigger);};
   var favPickerS=useState(null);var favPickerTicker=favPickerS[0],setFavPickerTicker=favPickerS[1];
   // groupNum: 0=未分類 / 1〜5=グループ / null=お気に入り削除
   function applyFav(ticker,groupNum){setFavs(function(prev){
@@ -6813,8 +6918,7 @@ export default function App(){
         // スコア履歴を1銘柄でも保存した、または業種を保存したらサーバーへ送る。
         // 送らないと次に開いたとき控え（古い履歴）しかサーバーに無く、別端末へ届かない。
         // 業種だけの更新（休場中のスキャン等）も、サーバー側の自動スキャンが使うため送る
-        var savedAny=results.some(function(r){return r.save&&r.save.daily;});
-        if(savedAny||sectorsSaved)pushSyncNow();
+        pushSyncAfterScan("通常スキャン",results,sectorsSaved);
       },function(next,max,err,wait){
         setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
       });
@@ -6856,7 +6960,7 @@ export default function App(){
         setTs(new Date().toLocaleTimeString("ja-JP"));
         startDayNightFill(results); // 表示後に☀️日中型を裏で取得
         // スコア履歴を1銘柄でも保存したらサーバーへ送る（通常スキャンと同じ理由）
-        if(results.some(function(r){return r.save&&r.save.daily;}))pushSyncNow();
+        pushSyncAfterScan("お気に入りのみスキャン",results,false);
       },function(next,max,err,wait){
         setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
       });
@@ -6876,7 +6980,8 @@ export default function App(){
       var updated=analyzeStock(existing,pd,vix);
       setStocks(function(prev){return prev.map(function(s){return s.ticker===ticker?updated:s;});});
       // 続けて押されたときにまとめて1回で送るため、少し待ってから送る
-      if(updated.save&&updated.save.daily)pushSyncSoon();
+      if(updated.save&&updated.save.daily)pushSyncSoon("1銘柄の再スキャン");
+      else recordSyncTry("1銘柄の再スキャン","保存0件のため送らず（結果1件・保存0件）",true);
     }finally{
       setRescanLoading(function(prev){var n=Object.assign({},prev);delete n[ticker];return n;});
     }
@@ -6901,7 +7006,7 @@ export default function App(){
         setStocks(results);
         setTs(new Date().toLocaleTimeString("ja-JP"));
         // スコア履歴を1銘柄でも保存したらサーバーへ送る（通常スキャンと同じ理由）
-        if(results.some(function(r){return r.save&&r.save.daily;}))pushSyncNow();
+        pushSyncAfterScan("今の銘柄でリロード",results,false);
       },function(next,max,err,wait){
         setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
       });
@@ -6949,8 +7054,10 @@ export default function App(){
   useEffect(function(){
     // cache:"no-store"→ブラウザのキャッシュを使わず必ずサーバーから最新を取得
     // AbortSignal.timeout→通信が固まった場合でも8秒で諦めて保存ロックを解除する
+    // 結果（成功・失敗・タイムアウト）は同期パネルの「起動時の読み込み」に出す
+    var loadStatus=0;
     fetch(SYNC_API+"?userId="+userId,{cache:"no-store",signal:AbortSignal.timeout(8000)})
-      .then(function(r){return r.json();})
+      .then(function(r){loadStatus=r.status;return r.json();})
       .then(function(data){
         if(data.favs&&data.favs.length>0){setFavs(data.favs.slice());try{localStorage.setItem("fav_tickers",JSON.stringify(data.favs));}catch(e){}}
         if(data.groups){setFavGroups(data.groups);try{localStorage.setItem("fav_groups",JSON.stringify(data.groups));}catch(e){}}
@@ -6961,8 +7068,11 @@ export default function App(){
         if(data.forecasts){try{fcMerge(data.forecasts);}catch(e){}}
         // 「前回の業種」も端末間で揃える（サーバー側スキャンが見ている値と一致させるため）
         if(data.lastSectors&&data.lastSectors.length){try{localStorage.setItem("last_sectors",JSON.stringify(data.lastSectors));}catch(e){}}
+        recordSyncLoad(loadStatus>=200&&loadStatus<300?"成功":"失敗（HTTP "+loadStatus+"）",!(loadStatus>=200&&loadStatus<300));
       })
-      .catch(function(){})
+      .catch(function(e){
+        recordSyncLoad(e&&e.name==="TimeoutError"?"タイムアウト（8秒で応答なし）":"失敗（"+syncErrText(e)+"）",true);
+      })
       .finally(function(){setSyncLoaded(true);}); // 成功・失敗どちらでも保存ロックを解除
   },[]);
   // お気に入りが揃ったら、その日ぶんの予測をまとめて記録する（1日1回だけ動く）
