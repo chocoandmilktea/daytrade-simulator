@@ -6900,6 +6900,8 @@ export default function App(){
         results.sort(function(x,y){return y.score-x.score;});
         setStocks(results);
         setTs(new Date().toLocaleTimeString("ja-JP"));
+        // スコア履歴を1銘柄でも保存したらサーバーへ送る（通常スキャンと同じ理由）
+        if(results.some(function(r){return r.save&&r.save.daily;}))pushSyncNow();
       },function(next,max,err,wait){
         setProgress({done:0,total:0,msg:"⚠️ エラー: "+err.message+" — "+Math.round(wait/1000)+"秒後に再試行します("+next+"/"+max+")"});
       });
