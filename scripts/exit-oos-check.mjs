@@ -871,7 +871,7 @@ var main = async function () {
     L.push("| " + g.label + " | " + g.days.length + " | " + rangeOf(g.days) + " | " + g.days.map(function (d) { return d.date.slice(5); }).join("、") + " |");
   });
   L.push("");
-  L.push("- 新しい日: " + NEW_FIRST_DAY + " 以降の検証日。重なる日: PR #95 の36日（" + PR95_FIRST_DAY + " 〜 " + PR95_LAST_DAY + "）のうち今回も検証日に入った日（" + overlapDays.length + "日。" + (PR95_DAY_COUNT - overlapDays.length) + "日は15分足の期間から外れたため入らない）");
+  L.push("- 新しい日: " + NEW_FIRST_DAY + " 以降の検証日。重なる日: PR #95 の36日（" + PR95_FIRST_DAY + " 〜 " + PR95_LAST_DAY + "）のうち今回も検証日に入った日（" + overlapDays.length + "日。残りの" + (PR95_DAY_COUNT - overlapDays.length) + "日は、15分足が " + periodStart + " から始まるため、その日より前の15分足が" + MIN_BARS + "本に満たず検証日に入らない）");
   L.push("- スコアの窓が PR #95 より短い検証日: " + (shortWindowDays.length ? shortWindowDays.length + "日（" + shortWindowDays.join("、") + "）。15分足が " + periodStart + " から始まるため、10:00のスコアに使う前の取引日が" + (APP_WINDOW_DAYS - 1) + "日に満たない（" + MIN_BARS + "本以上の条件は満たす）。重なる日の前の方だけが当たる" : "無い"));
   L.push("- 日足の取得失敗: " + failed.length + "銘柄。TOPIX: " + topixSource + "（試した順: " + topixTried.join(" / ") + "）");
   L.push("- 15分足の取得対象 " + targets.length + "銘柄のうち取得失敗 " + intradayFailed.length + "銘柄" + (intradayFailed.length ? "（" + intradayFailed.map(function (f) { return f.ticker + ": " + f.error; }).join("、") + "）" : ""));
