@@ -2198,7 +2198,7 @@ var SCAN_RESULT_API="https://daytrade-simulator.vercel.app/api/sync?resource=sca
 // 過去の日は done が付くまで毎回取り直す（昼に取り込んだ日の13:00・15:00を取りこぼさないため）。
 // 15:00の結果がサーバーに無い日も、取りに行く範囲（SCAN_IMPORT_DAYS）から外れた時点で打ち切られる
 var SCAN_IMPORT_KEY="scan_import_state"; // 取り込み状況はこの1キーだけで持つ
-var INTRADAY_KEEP_DAYS=14;               // sh_intraday_* を残す日数（localStorage 5MB対策）
+var INTRADAY_KEEP_DAYS=7;                // sh_intraday_* を残す日数（localStorage 5MB対策。iPadで上限に達したため14日→7日）
 var SCAN_IMPORT_DAYS=INTRADAY_KEEP_DAYS; // さかのぼって取りに行く日数（保持日数と同じにする）
 var SCAN_IMPORT_MIN_INTERVAL=5*60*1000;  // 二重起動時の連打防止（5分）
 
@@ -2240,7 +2240,7 @@ function saveScanImportState(st){
 // 保持期間の下限日付（これより古い記録は削除対象）。営業日ではなく暦日で数える
 function intradayCutoffDate(){return jstInfo(-INTRADAY_KEEP_DAYS).key;}
 // cutoffより古い日付の記録を捨てる。200銘柄×5回＝1日1000件のペースで増えるため、
-// これが無いと2週間ほどでlocalStorageの上限に達し、保存が黙って失敗し始める。
+// これが無いと2週間足らずでlocalStorageの上限に達し、保存が黙って失敗し始める。
 // 空になったキーはlocalStorageから消す（残しても容量を食うだけのため）
 function pruneIntradayHist(cutoff){
   var removed=0,failed=0;
@@ -2363,7 +2363,8 @@ function sig3BadgeText(s){
   return "点灯 "+rec.t+"〜 "+pct+"（"+els+"）";
 }
 // 1日ぶんの結果（slot→行の配列）を sh_intraday_* にマージする。
-// 戻り値は {count:取り込んだ件数, tickers:[保存できた銘柄]}。
+// 戻り値は {count:取り込んだ件数, tickers:[保存できた銘柄], failed:保存に失敗した銘柄数}。
+// failed が1以上の日は、呼び出し元（runScanImport）で「取り込み済み」にしない
 // 同じ日付(d)・同じ時間帯(session)の記録が既にあればサーバー値で上書きし、増殖させない
 // （ただし判定(v)付きの記録は上書きせず、そのまま残す）
 function mergeScanResultDay(date,slots){
@@ -2416,19 +2417,74 @@ function mergeScanResultDay(date,slots){
   });
   if(failed) console.warn("[intraday-import] "+date+" localStorageへ保存できなかった銘柄: "+failed+"件");
   if(kept) console.log("[intraday-import] "+date+" 判定付きの手動記録を残した件数: "+kept+"件（サーバー値で上書きせず）");
-  return{count:count,tickers:saved};
+  return{count:count,tickers:saved,failed:failed};
+}
+// 「取り込み済み」なのに端末に記録がほとんど無い日を取り直し対象に戻す（runScanImport から呼ぶ）。
+// 以前は保存に失敗した日にも done を付けていたため、その日が二度と取り直されなかった。
+// 端末の sh_intraday_* にあるその日付の記録数が、取り込み時の件数（st.days）の半分未満なら done を外す。
+// 全キーは1回だけ読み、日付ごとの件数にまとめてから比べる（日ごとに全キーを読み直さない）
+function recheckScanImportDone(st,today){
+  var cutoff=intradayCutoffDate(),dates=Object.keys(st.done).filter(function(d){
+    return d!==today&&d>=cutoff&&st.days[d]>0;
+  });
+  if(!dates.length) return;
+  var stored={};
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_intraday_")!==0) return;
+      var hist;try{hist=JSON.parse(localStorage.getItem(k)||"[]");}catch(e){hist=[];}
+      if(!Array.isArray(hist)) return;
+      hist.forEach(function(e){if(e&&e.d&&e.d>=cutoff)stored[e.d]=(stored[e.d]||0)+1;});
+    });
+  }catch(e){
+    // 数えられないときは done を外さない（誤って全日を取り直させないため）
+    console.warn("[intraday-import] 記録数の確認に失敗しました: "+e.message);
+    return;
+  }
+  var redo=[];
+  dates.forEach(function(d){
+    var n=stored[d]||0;
+    if(n*2<st.days[d]){delete st.done[d];redo.push(d+"("+n+"/"+st.days[d]+"件)");}
+  });
+  if(redo.length) console.log("[intraday-import] 端末の記録が少ないため取り直す日: "+redo.join(" / "));
+}
+// 使われなくなった古いキーを一度だけ消す（起動時、取り込みの前に呼ぶ）。
+// pm_* / pq_* / dirstats_hist は src/App.js・src/lib/analyze.js・api/ のどこからも読み書きされておらず、
+// iPadの保存容量を食うだけになっている。消し終えたら印のキーを立て、2回目以降は何もしない。
+// obslog_* はまだ使っているので対象にしない
+var CLEANUP_DEAD_KEYS_FLAG="cleanup_dead_keys_v1";
+function cleanupDeadKeysOnce(){
+  try{if(localStorage.getItem(CLEANUP_DEAD_KEYS_FLAG)) return;}catch(e){return;}
+  var n=0,chars=0;
+  try{
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("pm_")!==0&&k.indexOf("pq_")!==0&&k!=="dirstats_hist") return;
+      var v=localStorage.getItem(k)||"";
+      localStorage.removeItem(k);
+      n++;chars+=k.length+v.length;
+    });
+    localStorage.setItem(CLEANUP_DEAD_KEYS_FLAG,"1");
+  }catch(e){
+    // 途中で失敗したら印を立てず、次回の起動でもう一度試す
+    console.warn("[cleanup] 不要キーの削除に失敗しました: "+e.message);
+  }
+  console.log("[cleanup] 不要キーを"+n+"件削除（"+chars.toLocaleString()+"文字）");
 }
 var SCAN_IMPORT_BUSY=false; // 二重起動の防止（画面の「取り込み中…」表示にも使う）
 function isScanImportBusy(){return SCAN_IMPORT_BUSY;}
-// 未取り込みの日付ぶんだけ取得してマージし、そのあとで古い記録を削除する（この順序を守る）。
-// 通信に失敗した日は「取り込み済み」にせず次の機会に回す（画面の動作には影響させない）。
+// 古い記録を削除して容量を空けてから、未取り込みの日付ぶんだけ取得してマージし、最後にもう一度古い記録を削除する。
+// 通信に失敗した日・保存に失敗した銘柄がある日は「取り込み済み」にせず次の機会に回す（画面の動作には影響させない）。
 // 成功・失敗はどちらも必ず console に出す（黙って握りつぶさない）
 function runScanImport(force){
   if(SCAN_IMPORT_BUSY) return Promise.resolve(false);
   var st=loadScanImportState(),now=Date.now();
   if(!force&&st.last&&now-st.last<SCAN_IMPORT_MIN_INTERVAL) return Promise.resolve(false);
   SCAN_IMPORT_BUSY=true;
+  // 取り込みの前にも古い記録を削除する。容量に空きを作ってから書き込むため
+  // （取り込み後の削除は今までどおり残す）
+  pruneIntradayHist(intradayCutoffDate());
   var today=jstInfo(0).key,targets=[];
+  recheckScanImportDone(st,today);
   for(var i=SCAN_IMPORT_DAYS-1;i>=0;i--){ // 古い日から順に取り込む
     var info=jstInfo(-i);
     if(info.dow===0||info.dow===6||JP_HOLIDAYS[info.key]) continue; // 休場日は結果が無い
@@ -2451,9 +2507,11 @@ function runScanImport(force){
           var res=mergeScanResultDay(date,json.slots);
           st.days[date]=res.count;
           // 15:00の結果が入っていれば、その日は完了。当日は15:00のバッチが途中の可能性があるため
-          // 完了扱いにしない（当日は毎回取り直すので、翌日以降に過去の日として改めて判定される）
+          // 完了扱いにしない（当日は毎回取り直すので、翌日以降に過去の日として改めて判定される）。
+          // 1銘柄でも保存に失敗した日は完了扱いにせず、理由を残して次回また取りに行く
           var closeRows=json.slots["1500"];
-          if(date!==today&&Array.isArray(closeRows)&&closeRows.length) st.done[date]=1;
+          if(res.failed>0) errs.push(date+"(保存失敗"+res.failed+"銘柄)");
+          else if(date!==today&&Array.isArray(closeRows)&&closeRows.length) st.done[date]=1;
           else if(date!==today) pending.push(date);
           imported+=res.count;
           res.tickers.forEach(function(t){seen[t]=1;});
@@ -2469,7 +2527,7 @@ function runScanImport(force){
     if(errs.length) console.warn("[intraday-import] 取り込み失敗 "+errs.length+"日ぶん: "+errs.join(" / "));
     console.log("[intraday-import] 取り込み成功 "+imported+"件 / 対象"+Object.keys(seen).length+"銘柄");
     if(pending.length) console.log("[intraday-import] 15:00の結果が無いため次回も取り直す日: "+pending.join(" / "));
-    // 取り込みが終わってから古い記録を削除する（この順序を入れ替えない）
+    // 取り込みが終わってからも古い記録を削除する（取り込んだ中に保持期間外の日が混ざっても残さないため）
     var cutoff=intradayCutoffDate();
     pruneIntradayHist(cutoff);
     Object.keys(st.days).forEach(function(d){if(d<cutoff)delete st.days[d];}); // 表示件数も保持ぶんに合わせる
@@ -7018,13 +7076,14 @@ export default function App(){
   },[stocks,vix]);
   // ── サーバー自動スキャン結果の取り込み（Phase 4）─────────────────────────
   // アプリ起動時に1回だけ実行する。スキャンのたび・画面に戻るたびには実行しない
-  // （通信を増やさないため）。取り込みのあとに14日より古い記録の削除まで行う。
+  // （通信を増やさないため）。取り込みの前後で保持期間（INTRADAY_KEEP_DAYS）より古い記録の削除まで行う。
   // 失敗しても起動は妨げない＝結果はconsoleに出すだけで画面の動作には影響させない。
-  // 初回は最大14日ぶんの通信が走るため、起動直後ではなく初期描画が落ち着いてから始める
-  // （requestIdleCallback が無いSafari等では setTimeout で代用する）
+  // 初回は保持日数ぶんの通信が走るため、起動直後ではなく初期描画が落ち着いてから始める
+  // （requestIdleCallback が無いSafari等では setTimeout で代用する）。
+  // 取り込みの前に、使われなくなった古いキーを一度だけ消して容量を空ける
   useEffect(function(){
     var idleId=null,timerId=null;
-    function start(){runScanImport(true);}
+    function start(){cleanupDeadKeysOnce();runScanImport(true);}
     if(typeof window.requestIdleCallback==="function"){
       idleId=window.requestIdleCallback(start,{timeout:3000}); // 暇にならなくても3秒で始める
     }else{
