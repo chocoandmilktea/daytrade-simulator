@@ -4323,10 +4323,10 @@ function StockDetailPanel(p){
     else{setSimBuy(simCurPriceText());setSimBasis("current");}
     setShowSim(true);
   }
-  // 実際の売り方（+1.5%で利確・−0.75%で損切り）に合わせた既定値
-  var simTargetS=useState(1.5);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
+  // 実際の売り方（+2.0%で利確・−0.75%で損切り）に合わせた既定値
+  var simTargetS=useState(2);var simTarget=simTargetS[0],setSimTarget=simTargetS[1];
   var simStopS=useState(-0.75);var simStop=simStopS[0],setSimStop=simStopS[1];
-  var simTargetInputS=useState("1.5");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
+  var simTargetInputS=useState("2");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
   var simStopInputS=useState("-0.75");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
   var showSupportInfoS=useState(false);var showSupportInfo=showSupportInfoS[0],setShowSupportInfo=showSupportInfoS[1];
   var showStatInfoS=useState(false);var showStatInfo=showStatInfoS[0],setShowStatInfo=showStatInfoS[1];
