@@ -191,6 +191,12 @@ export function sigStatDays(st){
   return st&&st.dd?Object.keys(st.dd).length:0;
 }
 
+// 1日1件のスコア履歴（sh_<ticker>）を1銘柄あたり何件まで残すか。
+// 端末の保存容量（localStorage 5MB）対策で40件→20件に減らした。
+// src/App.js の mergeDailyHist（サーバーの控えとの混ぜ合わせ）と autoTrimDailyHist（起動時の自動掃除）も
+// この定数を import して同じ件数で切り詰める
+export var DAILY_HIST_MAX=20;
+
 // スコア高銘柄の翌日実績を算出
 // scoreHist: [{d,s,p},...] pは記録日の終値
 // threshold: 対象スコア下限（デフォルト60）
@@ -971,8 +977,9 @@ export function analyzeStock(stock,pd,vixVal,opts){
       scoreHist[scoreHist.length-1]=entry;
     }else{
       scoreHist.push(entry);
-      if(scoreHist.length>40)scoreHist.shift();
     }
+    // 1件ずつ捨てる書き方だと、上限を下げたときに既に上限を超えている履歴が縮まないため末尾から残す
+    if(scoreHist.length>DAILY_HIST_MAX)scoreHist=scoreHist.slice(-DAILY_HIST_MAX);
   }
   // 初動スコア（既存スコアの計算には一切影響しない・scoreHist確定後に算出）
   var momentum=calcMomentumScore({
