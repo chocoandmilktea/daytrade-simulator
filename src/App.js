@@ -8,7 +8,8 @@ import {
   analyzeStock as analyzeStockCore,
   JP_HOLIDAYS, jstInfo, findPrevClose, TRADE_STYLES,
   WIN_THRESHOLD_PCT, priceMoveState, bizDayDiff, sigStatDays,
-  baseSigLabel, signalQuality, INTRADAY_SESSIONS, currentSessionLabel
+  baseSigLabel, signalQuality, INTRADAY_SESSIONS, currentSessionLabel,
+  DAILY_HIST_MAX
 } from "./lib/analyze";
 
 // ── スマホ幅判定（768px未満をスマホ扱い。画面回転・分割表示にも追従）─────────
@@ -2237,8 +2238,10 @@ function saveScanImportState(st){
   catch(e){console.warn("[intraday-import] 取り込み状況を保存できませんでした: "+e.message);}
 }
 
-// 保持期間の下限日付（これより古い記録は削除対象）。営業日ではなく暦日で数える
-function intradayCutoffDate(){return jstInfo(-INTRADAY_KEEP_DAYS).key;}
+// 保持期間の下限日付（これより古い記録は削除対象）。営業日ではなく暦日で数える。
+// 当日を含めて INTRADAY_KEEP_DAYS 暦日にするため INTRADAY_KEEP_DAYS−1 日前を返す
+// （取り込み範囲 SCAN_IMPORT_DAYS の「当日＋過去 SCAN_IMPORT_DAYS−1 日」とそろえる）
+function intradayCutoffDate(){return jstInfo(-(INTRADAY_KEEP_DAYS-1)).key;}
 // cutoffより古い日付の記録を捨てる。200銘柄×5回＝1日1000件のペースで増えるため、
 // これが無いと2週間足らずでlocalStorageの上限に達し、保存が黙って失敗し始める。
 // 空になったキーはlocalStorageから消す（残しても容量を食うだけのため）
@@ -2582,7 +2585,7 @@ function loadIntradayHist(ticker){
 // 1日1件のスコア履歴（sh_<ticker>）を、端末の配列とサーバーの控えの配列で日付ごとに混ぜる。
 // 丸ごと置き換えると、サーバーへ送っていない間に端末で記録した日が消えてしまうため。
 // 同じ日付が両方にあるときは、判定キー(v)が片方にだけあればそちらを、それ以外は端末側を採る。
-// 件数の上限は analyze.js の scoreHist と同じ40件（古い日付から捨てる）
+// 件数の上限は analyze.js の DAILY_HIST_MAX（20件）。古い日付から捨てる
 function mergeDailyHist(localList,serverList){
   function hasV(e){return e.v!=null&&e.v!=="";}
   var map={};
@@ -2593,7 +2596,7 @@ function mergeDailyHist(localList,serverList){
     if(sv&&hasV(sv)&&!hasV(e))return; // サーバー側にだけ判定キーがある→サーバーを残す
     map[e.d]=e;
   });
-  return Object.keys(map).sort().map(function(d){return map[d];}).slice(-40);
+  return Object.keys(map).sort().map(function(d){return map[d];}).slice(-DAILY_HIST_MAX);
 }
 // サーバーから受け取った scoreHist（{ticker:配列}）を端末の sh_<ticker> に混ぜて書く。
 // サーバーにだけある銘柄はそのまま書き、端末にだけある銘柄は触らない
@@ -2608,6 +2611,51 @@ function applyServerScoreHist(scoreHist){
       localStorage.setItem("sh_"+t,JSON.stringify(next));
     }catch(e){}
   });
+}
+// ── 1日1件のスコア履歴（sh_<ticker>）の自動掃除（起動時・1日1回）──
+// 端末の保存容量（localStorage 5MB）対策。最後の記録が AUTO_TRIM_STALE_DAYS 暦日より前の銘柄のキーを消し、
+// 残ったキーは DAILY_HIST_MAX 件に切り詰める。お気に入り・進行中のトレードの銘柄は消さない（切り詰めはする）。
+// 起動時のサーバー読み込みが成功した後にだけ呼ぶこと。読み込み前・失敗時に動かすと、
+// 消した記録が控えから戻ってくるか、古い中身で控えを上書きしてしまう。
+// sh_intraday_* と aipred_* には触れない。手動の掃除（cleanupOldData・90日）とは別物
+var AUTO_TRIM_DAILY_FLAG="auto_trim_daily_v1"; // 最後に走った日付（YYYY-MM-DD・JST）
+var AUTO_TRIM_STALE_DAYS=30;
+function autoTrimDailyHist(){
+  var today=jstInfo(0).key;
+  try{if(localStorage.getItem(AUTO_TRIM_DAILY_FLAG)===today) return;}catch(e){return;}
+  var cutoff=jstInfo(-AUTO_TRIM_STALE_DAYS).key;
+  var removed=0,trimmed=0,chars=0;
+  try{
+    var favList=(function(){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]");}catch(e){return[];}})();
+    if(!Array.isArray(favList)) favList=[];
+    var trades=loadTrades("personal");
+    Object.keys(localStorage).forEach(function(k){
+      if(k.indexOf("sh_")!==0||k.indexOf("sh_intraday_")===0) return;
+      var raw=localStorage.getItem(k)||"";
+      var list;try{list=JSON.parse(raw);}catch(e){return;} // 読めないキーは触らない
+      if(!Array.isArray(list)||!list.length) return;
+      var ticker=k.slice(3),last=list[list.length-1],lastD=last&&last.d;
+      var keep=favList.indexOf(ticker)>=0||hasActiveTrade(ticker,trades);
+      if(!keep&&lastD&&lastD<cutoff){
+        localStorage.removeItem(k);
+        removed++;chars+=k.length+raw.length;
+        return;
+      }
+      if(list.length>DAILY_HIST_MAX){
+        var next=JSON.stringify(list.slice(-DAILY_HIST_MAX));
+        localStorage.setItem(k,next);
+        trimmed++;chars+=raw.length-next.length;
+      }
+    });
+    localStorage.setItem(AUTO_TRIM_DAILY_FLAG,today);
+    console.log("[auto-trim] 日次の記録: 削除"+removed+"件 / 切り詰め"+trimmed+"件（"+chars.toLocaleString()+"文字減）");
+  }catch(e){
+    // 途中で失敗したら印を立てず、次回の起動でもう一度試す
+    console.warn("[auto-trim] 日次の記録の自動掃除に失敗しました: "+e.message+
+      "（ここまで 削除"+removed+"件 / 切り詰め"+trimmed+"件）");
+  }
+  // 途中で失敗していても、変えた分はサーバーの控えにも反映する（送らないと次の起動で控えから戻ってくる）
+  if(removed>0||trimmed>0) pushSyncNow("自動掃除");
 }
 // ── サーバーへの送信結果の記録（同期パネルの「最終送信」表示用）──
 var SYNC_LAST_PUSH_KEY="sync_last_push";
@@ -2692,7 +2740,7 @@ function pushSyncAfterScan(trigger,results,force){
   recordSyncTry(trigger,"保存0件のため送らず（結果"+results.length+"件・保存"+saved+"件）",true);
 }
 // analyzeStock が返した save の内容をlocalStorageへ書き込む（従来と同じキー・同じ形式）
-//   sh_<ticker>          … 1日1件のスコア履歴（最大40日分）
+//   sh_<ticker>          … 1日1件のスコア履歴（最大 DAILY_HIST_MAX＝20日分）
 //   sh_intraday_<ticker> … 時間帯別のスコア履歴（JP銘柄のみ・最大200件）
 // 休場中・寄り付き前・取得失敗（疑似データ）の時は統計が汚れるため書き込まない。
 // その判定は analyze.js 側で済んでおり、save.daily / save.intraday に入っている
@@ -6679,6 +6727,8 @@ export default function App(){
   // 起動時のサーバー読み込みが終わるまでtrueにならない。falseの間は保存を止めて、
   // 「読み込み前の古いデータで上書きしてしまう」事故を防ぐ
   var syncLoadedS=useState(false);var syncLoaded=syncLoadedS[0],setSyncLoaded=syncLoadedS[1];
+  // 起動時のサーバー読み込みが成功したか（syncLoaded は失敗でも true になるため別に持つ）。自動掃除の判定に使う
+  var syncLoadOkRef=useRef(false);
   // trigger は同期パネルの「直近の送信の試み」に出すきっかけ。省略時はお気に入り・トレードの操作
   function syncToServer(nextFavs,nextGroups,nextGroupNames,nextPersonalTrades,targetId,trigger){
     var why=trigger||"お気に入りやトレードの操作";
@@ -7128,12 +7178,18 @@ export default function App(){
         // 「前回の業種」も端末間で揃える（サーバー側スキャンが見ている値と一致させるため）
         if(data.lastSectors&&data.lastSectors.length){try{localStorage.setItem("last_sectors",JSON.stringify(data.lastSectors));}catch(e){}}
         recordSyncLoad(loadStatus>=200&&loadStatus<300?"成功":"失敗（HTTP "+loadStatus+"）",!(loadStatus>=200&&loadStatus<300));
+        syncLoadOkRef.current=loadStatus>=200&&loadStatus<300;
       })
       .catch(function(e){
         recordSyncLoad(e&&e.name==="TimeoutError"?"タイムアウト（8秒で応答なし）":"失敗（"+syncErrText(e)+"）",true);
       })
       .finally(function(){setSyncLoaded(true);}); // 成功・失敗どちらでも保存ロックを解除
   },[]);
+  // 日次の記録の自動掃除（1日1回）。syncLoaded は失敗でも true になるため、成功したかは syncLoadOkRef で見る
+  useEffect(function(){
+    if(!syncLoaded||!syncLoadOkRef.current)return;
+    autoTrimDailyHist();
+  },[syncLoaded]);
   // お気に入りが揃ったら、その日ぶんの予測をまとめて記録する（1日1回だけ動く）
   useEffect(function(){
     if(!syncLoaded)return;
