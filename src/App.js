@@ -1960,7 +1960,7 @@ function judgeOverall(a){
   function add(pt,label,ord){pt=Math.round(pt);if(pt===0)return;P+=pt;R.push({pt:pt,label:label,ord:ord||0});}
 
   // 1. 総合スコア（判定の主軸。50点を境に±）
-  add(a.score-50,"スコア"+Math.round(a.score),0);
+  add(a.score-50,"上昇済みスコア"+Math.round(a.score),0);
 
   // 2. 統計ベース予想（デイトレなので「今日の引けまで」を優先。無ければ翌営業日）
   var todayReady=a.todayF&&a.todayF.ready;
@@ -1971,7 +1971,7 @@ function judgeOverall(a){
   // 3. 同じスコア帯の実測勝率（件数が少ないうちは効きを半分に）
   if(a.band&&a.band.winRate!=null&&a.band.total>=10)
     add(clampPt((a.band.winRate-50)*(a.band.total>=20?0.4:0.2),12),
-      "同スコア帯の実績 "+a.band.winRate+"%("+a.band.total+"件)",1);
+      "同じ上昇済みスコア帯の実績 "+a.band.winRate+"%("+a.band.total+"件)",1);
 
   // 4. シグナルの一致度（強気の数－弱気の数）
   var up=0,dn=0;
@@ -3734,7 +3734,7 @@ function StockCard(p){
           <div style={{display:"flex",flexWrap:"wrap",gap:3,marginTop:2}}>
             {(function(){var ei=earningsInfo(s.earningsDate);return ei&&<span style={bStyle(ei.urgent?"#3a0a0a":"#1c1400","1px solid "+(ei.urgent?"#f43f5e":"#fbbf24"),ei.urgent?"#f87171":"#fbbf24")} title={"決算発表: "+ei.date}>📈決算{ei.label}</span>;})()}
             {(function(){var xi=exRightsInfo(s.exRightsDate);return xi&&<span style={bStyle("#0a1a3a","1px solid #3b82f6","#60a5fa")} title={"権利落ち予想: "+xi.date}>💰権利落ち(予想){xi.label}</span>;})()}
-            {(function(){var mi=momentumInfo(s.momentum);return mi&&<span style={bStyle(mi.bg,"1px solid "+mi.color,mi.color)} title={"初動スコア "+mi.score+"/100（対TOPIX累積"+(mi.relSum>=0?"+":"")+mi.relSum+"%）。これから数日で動き出しそうな銘柄を、総合スコアとは別の観点で評価した点数。60点以上が候補"}>🌱初動{mi.score}</span>;})()}
+            {(function(){var mi=momentumInfo(s.momentum);return mi&&<span style={bStyle(mi.bg,"1px solid "+mi.color,mi.color)} title={"初動スコア "+mi.score+"/100（対TOPIX累積"+(mi.relSum>=0?"+":"")+mi.relSum+"%）。これから数日で動き出しそうな銘柄を、上昇済みスコアとは別の観点で評価した点数。60点以上が候補"}>🌱初動{mi.score}</span>;})()}
             {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}{(function(){var dn=DAYNIGHT[s.ticker];if(!dn)return null;var pos=dn.day>0;return <span style={bStyle(pos?"#052e16":"#101826","1px solid "+(pos?"#22d3a0":"#2a4060"),pos?"#22d3a0":"#4a7090")} title={"過去1年の値動きの分解（"+dn.days+"日分）: 日中(始値→終値)の累積"+(dn.day>=0?"+":"")+dn.day+"% / 夜間(前日終値→始値)の累積"+(dn.night>=0?"+":"")+dn.night+"%。日中分がプラスなら、持ち越さないデイトレと相性が良い日中型"}>{(pos?"☀️日中+":"🌙日中")+dn.day+"%"}</span>;})()}
             {(function(){var st=sig3BadgeText(s);return st&&<span style={bStyle("#0a1a3a","#2a4060","#60a5fa")} title={"コンフルエンス・EMA整列・出来高の3つがプラスになったのを今日最初に確認した時刻と、その時の価格から今の現在値までの値動き。「前日〜」は寄り前の自動スキャンで確認済み"}>{st}</span>;})()}
           </div>
@@ -4278,7 +4278,7 @@ function VerdictPanel(p){
           return(<span key={i} style={{fontSize:9,fontWeight:700,color:pos?"#22d3a0":"#f43f5e",background:pos?"#052e16":"#1f0010",borderRadius:4,padding:"2px 5px"}}>{(pos?"+":"")+r.pt+" "+r.label}</span>);
         })}
       </div>
-      {!v.statReady&&<div style={{fontSize:9,color:"#4a7090",marginTop:3}}>※統計ベース予想はデータ蓄積中。今はスコアとシグナル中心の判定です</div>}
+      {!v.statReady&&<div style={{fontSize:9,color:"#4a7090",marginTop:3}}>※統計ベース予想はデータ蓄積中。今は上昇済みスコアとシグナル中心の判定です</div>}
     </div>
   );
 }
@@ -4479,7 +4479,11 @@ function StockDetailPanel(p){
     <div style={{background:"#050e1c",border:"none",borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",gap:6,alignItems:"center",minWidth:0,flex:1}}>
-          <ScoreRing score={s.score}/>
+          {/* 総合スコアは「すでに値上がりした度合い」なので、円の下に名前を添えて誤読を防ぐ */}
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:0}}>
+            <ScoreRing score={s.score}/>
+            <span style={{fontSize:8,color:"#4a7090",lineHeight:1,whiteSpace:"nowrap"}}>上昇済み</span>
+          </div>
           <div style={{minWidth:0}}>
             <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
               <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
@@ -4982,8 +4986,8 @@ function FavPanel(p){
   }
 
   // ── 上部バーの部品（横スクロール1行に並べるため全てflexShrink:0）──────────
-  var TIP_SCORE="アプリのスコア（0〜100点）が高い順に並べます。もう一度押すと既定の並びに戻ります";
-  var TIP_TRADE="スキャル→デイトレ→スイングの順に並べ、各グループ内はスコアの高い順に表示します";
+  var TIP_SCORE="アプリの上昇済みスコア（0〜100点）が高い順に並べます。もう一度押すと既定の並びに戻ります";
+  var TIP_TRADE="スキャル→デイトレ→スイングの順に並べ、各グループ内は上昇済みスコアの高い順に表示します";
   var TIP_S1="S1（スコア内訳のうちVWAP傾き・Pivot・ATR(値幅)・ATR消化率・MACD・RSI・BB・Stoch・重複ボーナスの合計点）が高い順に並べます。もう一度押すと既定の並びに戻ります";
   var TIP_MOM="これから数日で動き出しそうな銘柄（初動スコア）の高い順に並べます。対TOPIX相対の3日累積を主軸に、出来高の立ち上がりとBB収束を加味した点数です。日本株のみ・スキャン履歴が3日分たまると表示されます";
   function sBtn(m,label,title,color){
@@ -5042,7 +5046,7 @@ function FavPanel(p){
           {divider}
           {pcGap}
           {sBtn("momentum","🌱初動順",TIP_MOM,"#22d3a0")}
-          {sBtn("score","🏆スコア順",TIP_SCORE,"#fbbf24")}
+          {sBtn("score","上昇済み順",TIP_SCORE,"#fbbf24")}
           {/* トレード順。スコア順(#fbbf24)と見分けが付くよう色は紫(#a78bfa)にした */}
           {sBtn("trade","🎯トレード順",TIP_TRADE,"#a78bfa")}
           {/* S1順。既存3ボタン(#22d3a0/#fbbf24/#a78bfa)と見分けが付くよう色は水色(#38bdf8)にした */}
@@ -6087,7 +6091,7 @@ function SignalAccuracyContent(p){
     for(var bi=0;bi<bandData.length-1;bi++){
       var lo=bandData[bi],hb=bandData[bi+1];
       if(lo.total>=20&&hb.total>=20&&lo.winRate!=null&&hb.winRate!=null&&hb.winRate<lo.winRate)
-        inv.push("スコア"+hb.band+"("+hb.winRate+"%) が "+lo.band+"("+lo.winRate+"%) を下回っています");
+        inv.push("上昇済みスコア"+hb.band+"("+hb.winRate+"%) が "+lo.band+"("+lo.winRate+"%) を下回っています");
     }
     return inv;
   })();
@@ -6187,8 +6191,8 @@ function SignalAccuracyContent(p){
         )}
       </div>
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
-        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>📈 スコア帯別 的中率（手動スキャン銘柄）</div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>タブに関わらず、これまで手動スキャンした全銘柄のスコアと翌営業日の値動きを集計。スコアが高いほど的中率が高いかの目安になります</div>
+        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>📈 上昇済みスコア帯別 的中率（手動スキャン銘柄）</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>タブに関わらず、これまで手動スキャンした全銘柄の上昇済みスコアと翌営業日の値動きを集計。上昇済みスコアが高いほど的中率が高いかの目安になります</div>
         {bandData.every(function(b){return b.total===0;})?(
           <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。スキャンを重ねると溜まっていきます。</div>
         ):(
@@ -6196,7 +6200,7 @@ function SignalAccuracyContent(p){
             var reliable=b.total>=5;
             return(
               <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:i<bandData.length-1?"1px solid #0a1830":"none",opacity:reliable?1:0.5}}>
-                <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{"スコア "+b.band}</div>
+                <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{"上昇済みスコア "+b.band}</div>
                 <div style={{width:52,textAlign:"right",color:cellColor(b.winRate),fontWeight:700}}>{b.winRate!=null?b.winRate+"%":"-"}</div>
                 <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{b.total}</div>
               </div>
@@ -6257,7 +6261,7 @@ function SignalAccuracyContent(p){
             (scanImp?("最終取り込み: "+scanImp.at+" / 直近 "+scanImp.total.toLocaleString()+"件 / 保持 "+scanImp.days+"日"+
               (scanImp.err?(" ／ ⚠️ 取り込み失敗: "+scanImp.err):"")):"自動収集データがまだありません（起動時に取り込みます）")}
         </div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>その時間帯にスコア60点以上だった銘柄が、11:00時点・13:00時点・引け（後場後半か引け後の最後のスキャン）のそれぞれで上がっていたかを集計。始点と1時間以上離れたペアのみ対象です。翌営業日ではなく“当日中”の答え合わせです</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>その時間帯に上昇済みスコア60点以上だった銘柄が、11:00時点・13:00時点・引け（後場後半か引け後の最後のスキャン）のそれぞれで上がっていたかを集計。始点と1時間以上離れたペアのみ対象です。翌営業日ではなく“当日中”の答え合わせです</div>
         {intradayAcc.total===0?(
           <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだデータがありません。1日に複数回スキャンすると溜まっていきます</div>
         ):(
@@ -6301,9 +6305,9 @@ function SignalAccuracyContent(p){
       </div>
       {bandInv.length>0&&(
         <div style={{marginTop:16,padding:"10px 12px",background:"#1c1400",border:"1px solid #fbbf2450",borderRadius:8}}>
-          <div style={{fontSize:13,fontWeight:700,color:"#fbbf24",marginBottom:4}}>⚠️ スコア帯の逆転を検知</div>
+          <div style={{fontSize:13,fontWeight:700,color:"#fbbf24",marginBottom:4}}>⚠️ 上昇済みスコア帯の逆転を検知</div>
           {bandInv.map(function(msg,i){return <div key={i} style={{fontSize:12,color:"#e0d0a0"}}>{msg}</div>;})}
-          <div style={{fontSize:11,color:"#8a7850",marginTop:4}}>「スコアが高いほど当たる」が崩れています。スコア設計（配点・キャップ）の見直しサインです</div>
+          <div style={{fontSize:11,color:"#8a7850",marginTop:4}}>「上昇済みスコアが高いほど当たる」が崩れています。上昇済みスコアの設計（配点・キャップ）の見直しサインです</div>
         </div>
       )}
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
@@ -6413,7 +6417,7 @@ function SignalAccuracyContent(p){
       </div>
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>⚙️ 勝敗しきい値の検証</div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>スコア60点以上の記録を対象に、「何%以上動いたら勝敗として数えるか」を変えた場合の的中率を比較。現在は0.3%を採用中です</div>
+        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>上昇済みスコア60点以上の記録を対象に、「何%以上動いたら勝敗として数えるか」を変えた場合の的中率を比較。現在は0.3%を採用中です</div>
         {thrCheck.map(function(r,i){
           var isCurrent=r.thr===WIN_THRESHOLD_PCT;
           return(
