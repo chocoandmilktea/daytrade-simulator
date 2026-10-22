@@ -8,7 +8,7 @@ import {
   analyzeStock as analyzeStockCore,
   JP_HOLIDAYS, jstInfo, findPrevClose, TRADE_STYLES,
   WIN_THRESHOLD_PCT, priceMoveState, bizDayDiff, sigStatDays,
-  baseSigLabel, signalQuality, INTRADAY_SESSIONS, currentSessionLabel,
+  baseSigLabel, signalQuality, INTRADAY_SESSIONS,
   DAILY_HIST_MAX
 } from "./lib/analyze";
 
@@ -840,18 +840,11 @@ function normDecisionTags(v){
   return DECISION_TAG_ORDER.filter(function(k){return v.indexOf(k)>=0;});
 }
 function normConfidence(v){return CONFIDENCE_LEVELS.indexOf(v)>=0?v:null;}
-// 登録時の🔮予想の向き。しきい値は🔮表示（dirInfo）と同じ：上昇確率55%以上＝上昇寄り・45%以下＝下落寄り
-function forecastDirKey(f){
-  var up=f&&f.upRate!=null?Number(f.upRate):NaN;
-  if(isNaN(up))return "none";
-  return up>=55?"up":up<=45?"down":"neutral";
-}
-var FORECAST_DIR_LABEL={up:"上昇寄り（上昇55%以上）",neutral:"中立（45〜55%）",down:"下落寄り（上昇45%以下）",none:"未記録"};
 // 完了トレードの「判断の内訳」（決め手別・自信別・登録時のアプリ判定別）。画面の状態に依存しない純粋関数
 // 各行：件数・勝率（pnlがプラスの割合）・1回平均損益率（pnlPercentの平均）。勝ちの数え方は既存の勝率と同じく pnl||0>0
 // 決め手を複数選んだ取引は、それぞれの決め手の行に重ねて数える
 function calcTradeDecisionStats(doneList){
-  var tagMap={},confMap={},sigMap={},fcMap={};
+  var tagMap={},confMap={},sigMap={};
   function add(map,key,t){
     if(!map[key])map[key]={n:0,win:0,pctSum:0,pctN:0};
     var e=map[key];e.n++;
@@ -864,7 +857,6 @@ function calcTradeDecisionStats(doneList){
     var c=normConfidence(t.confidence);
     add(confMap,c!=null?String(c):"none",t);
     add(sigMap,t.signalAtAdd||"none",t);
-    add(fcMap,forecastDirKey(t.forecastAtAdd),t);
   });
   function rows(map,keys){
     return keys.map(function(k){
@@ -878,8 +870,7 @@ function calcTradeDecisionStats(doneList){
   return{
     tags:rows(tagMap,DECISION_TAG_ORDER.concat(["none"])),
     confidence:rows(confMap,CONFIDENCE_LEVELS.map(String).concat(["none"])),
-    signal:rows(sigMap,sigKnown.concat(sigExtra,["none"])),
-    forecast:rows(fcMap,["up","neutral","down","none"])
+    signal:rows(sigMap,sigKnown.concat(sigExtra,["none"]))
   };
 }
 function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence){
@@ -888,12 +879,10 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,
   // 登録時点で「過去実績に基づく重み補正」が何点効いていたか（検証パネル用）
   var wAdjItem=(s.breakdown||[]).find(function(b){return b.label==="実績反映調整";});
   var weightAdjustAtAdd=wAdjItem?wAdjItem.delta:0;
-  // 登録時点のスコア・点灯シグナル・🔮統計予想を記録（実トレード結果とシグナルを紐付けるため）
+  // 登録時点のスコア・点灯シグナルを記録（実トレード結果とシグナルを紐付けるため）
   // → 将来「自分の勝ちトレードに実際に効いていたシグナル」を分析できるようにする土台。今は記録のみ
+  // ※🔮統計予想（forecastAtAdd）は検証で効果が無かったため新規には記録しない。過去の記録に残る値は消さない
   var sigKeysAtAdd=(s.signals||[]).map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
-  var forecastAtAdd=(function(){
-    try{var f=calcStatForecast(s.signals,getUniverseSignalStats());return f.ready?{expPct:f.expPct,upRate:f.upRate}:null;}catch(e){return null;}
-  })();
   list.push({
     id:"t"+Date.now()+Math.random().toString(36).slice(2,6),
     ticker:s.ticker,name:s.name,market:s.market,
@@ -909,7 +898,6 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,
     scoreAtAdd:s.score!=null?s.score:null, // 登録時点のスコア
     styleAtAdd:s.tradeType||null, // 登録時点の手法バッジ（short=スキャル/mid=デイトレ/stable=スイング）
     sigKeysAtAdd:sigKeysAtAdd, // 登録時点で点灯していたシグナル一覧
-    forecastAtAdd:forecastAtAdd, // 登録時点の🔮翌営業日予想（期待変化率・上昇確率）
     decisionTags:normDecisionTags(decisionTags), // 何で決めたか（app/chart/board/news/gut・複数可・空＝未記録）
     confidence:normConfidence(confidence), // 自信の度合い（1低い/2ふつう/3高い・null＝未記録）
     lastPrice:curPrice,
@@ -1077,8 +1065,7 @@ function applyPricesToTrades(kind,priceMap,openMap){
 var AI_API_URL="https://daytrade-simulator.vercel.app/api/ai";
 // 対象銘柄の各シグナルについて、スキャン銘柄全体での過去的中率をAIへの参考情報として整形
 // （サンプル10件未満のシグナルは参考にならないため含めない）
-// あわせて🔮統計ベース予想（翌営業日の期待変化率・上昇確率）とスコア帯実績も渡し、
-// AIの見通しが実データに基づくようにする
+// あわせてスコア帯実績も渡し、AIの見通しが実データに基づくようにする
 function buildAccuracyPart(signals,score){
   var stats=getUniverseSignalStats();
   var lines=[];
@@ -1093,8 +1080,6 @@ function buildAccuracyPart(signals,score){
     lines.push("  "+sig.label+": 過去的中率"+pct+"%("+s.t+"件)"+(pct<=45?" ←当たらない傾向。逆方向のヒントとして扱う":""));
   });
   var out=lines.length?("過去のシグナル的中率(スキャン銘柄全体の集計。この銘柄固有の実績ではない／50%前後の項目は省略):\n"+lines.join("\n")+"\n"):"";
-  var fc=calcStatForecast(signals,stats);
-  if(fc.ready) out+="🔮統計ベース翌営業日予想(スキャン銘柄全体の集計であり、この銘柄の予想ではない): 期待変化率"+(fc.expPct>=0?"+":"")+fc.expPct.toFixed(1)+"% / 上昇した割合"+fc.upRate+"%("+fc.totalN+"件)\n";
   if(score!=null){
     var band=getUniverseBandStats().find(function(b){return b.band===bandLabelFor(score);});
     if(band&&band.total>=5) out+="スコア帯"+band.band+"点の過去実績: 翌営業日的中率"+band.winRate+"%("+band.total+"件)\n";
@@ -1985,29 +1970,9 @@ function isSigNegExpectancy(sig){
   var avg=signalAvgPct(s,key);
   return avg!=null&&avg<0;
 }
-// ── 統計ベースの未来予想（🔮パネル用）──────────────────────────────────────
-// 点灯中シグナルの過去実績（平均騰落率・上昇率）を件数で重み付け平均して
-// 「期待変化率」と「上昇確率の目安」を返す。サンプル10件未満のシグナルは除外し、
-// 有効シグナルが3種類未満の間は ready:false（＝データ蓄積中の表示）を返す
-var FORECAST_MIN_SAMPLES=10,FORECAST_MIN_SIGNALS=3,FORECAST_WEIGHT_CAP=30;
-function calcStatForecast(signals,stats){
-  var sumW=0,sumMove=0,sumUp=0,used=0,totalN=0;
-  (signals||[]).forEach(function(x){
-    var key=baseSigLabel(x.label)+"#"+x.state;
-    var st=stats[key];
-    if(!st||st.t<FORECAST_MIN_SAMPLES||sigStatDays(st)<5) return; // 件数不足 or 5営業日分未満は除外
-    var w=Math.min(st.t,FORECAST_WEIGHT_CAP); // 特定シグナルだけが極端に効きすぎないよう重みに上限
-    sumW+=w;totalN+=st.t;used++;
-    sumMove+=(st.sumPct/st.t)*w;
-    sumUp+=(st.w/st.t)*w;
-  });
-  if(used<FORECAST_MIN_SIGNALS||sumW===0) return{ready:false,used:used,totalN:totalN};
-  return{ready:true,used:used,totalN:totalN,expPct:sumMove/sumW,upRate:Math.round(sumUp/sumW*100)};
-}
-
 // ── 🚦 総合判定（デイトレ前提・標準しきい値）──────────────────────────────
-// スコア／統計ベース予想／スコア帯実績／シグナル一致度／日中型／対TOPIX／
-// リスクリワード／流動性 の8項目をすべて点数化し、合計点で1つの結論に集約する。
+// スコア／スコア帯実績／シグナル一致度／日中型／対TOPIX／
+// リスクリワード の6項目をすべて点数化し、合計点で1つの結論に集約する。
 // 否決条件（これが出たら無条件で見送り）は設けず、すべて加点・減点として扱う
 function clampPt(v,lim){return Math.max(-lim,Math.min(lim,v));}
 function judgeOverall(a){
@@ -2018,33 +1983,27 @@ function judgeOverall(a){
   // 1. 総合スコア（判定の主軸。50点を境に±）
   add(a.score-50,"上昇済みスコア"+Math.round(a.score),0);
 
-  // 2. 統計ベース予想（デイトレなので「今日の引けまで」を優先。無ければ翌営業日）
-  var todayReady=a.todayF&&a.todayF.ready;
-  var f=todayReady?a.todayF:(a.nextF&&a.nextF.ready?a.nextF:null);
-  if(f) add(clampPt((f.upRate-50)*0.6+f.expPct*4,20),
-    "統計"+(todayReady?"当日":"翌日")+" 上昇"+f.upRate+"%・"+(f.expPct>=0?"+":"")+f.expPct.toFixed(1)+"%",1);
-
-  // 3. 同じスコア帯の実測勝率（件数が少ないうちは効きを半分に）
+  // 2. 同じスコア帯の実測勝率（件数が少ないうちは効きを半分に）
   if(a.band&&a.band.winRate!=null&&a.band.total>=10)
     add(clampPt((a.band.winRate-50)*(a.band.total>=20?0.4:0.2),12),
       "同じ上昇済みスコア帯の実績 "+a.band.winRate+"%("+a.band.total+"件)",1);
 
-  // 4. シグナルの一致度（強気の数－弱気の数）
+  // 3. シグナルの一致度（強気の数－弱気の数）
   var up=0,dn=0;
   (a.signals||[]).forEach(function(x){if(x.state===1)up++;else if(x.state===-1)dn++;});
   add(clampPt((up-dn)*3,12),"シグナル 強気"+up+"／弱気"+dn,1);
 
-  // 5. 日中型／夜間型（持ち越さないデイトレでは日中の値動きが直接効く）
+  // 4. 日中型／夜間型（持ち越さないデイトレでは日中の値動きが直接効く）
   if(a.dayNight) add(a.dayNight.day>0?8:-8,(a.dayNight.day>0?"☀️日中型 +":"🌙夜間型 ")+a.dayNight.day+"%",1);
 
-  // 6. 対TOPIX相対（地合いより強いか弱いか）
+  // 5. 対TOPIX相対（地合いより強いか弱いか）
   if(a.relInfo) add(a.relInfo.strong?5:-5,"対TOPIX "+a.relInfo.label,1);
 
-  // 7. リスクリワード（利確幅 ÷ 損切り幅）
+  // 6. リスクリワード（利確幅 ÷ 損切り幅）
   if(a.rr!=null) add(a.rr>=2?8:a.rr>=1.5?4:a.rr>=1?0:-6,"リスクリワード 1:"+a.rr,1);
 
   R.sort(function(x,y){return x.ord!==y.ord?x.ord-y.ord:Math.abs(y.pt)-Math.abs(x.pt);});
-  return{key:P>=25?"BUY":P>=10?"TRY":P>=-10?"WATCH":"SKIP",points:Math.round(P),reasons:R,statReady:!!f};
+  return{key:P>=25?"BUY":P>=10?"TRY":P>=-10?"WATCH":"SKIP",points:Math.round(P),reasons:R};
 }
 // スキャン結果1件分から総合判定を作るラッパー（analyze内・再スキャン後の両方から呼ぶ）
 function buildVerdict(o){
@@ -2053,8 +2012,6 @@ function buildVerdict(o){
     for(var i=0;i<bands.length;i++){if(bands[i].band===bl)bandRow=bands[i];}
     return judgeOverall({
       score:o.score,signals:o.signals,
-      nextF:calcStatForecast(o.signals,getUniverseSignalStats()),
-      todayF:currentSessionLabel()!=="時間外"?calcStatForecast(o.signals,getIntradaySignalStats()):null,
       band:bandRow,dayNight:DAYNIGHT[o.ticker]||null,
       relInfo:relStrengthInfo(o.relStrength),
       rr:o.buyPlan?o.buyPlan.rr:null
@@ -4277,86 +4234,6 @@ function SupportZoneRow(p){
     </div>
   );
 }
-// ── 🔮 統計ベース予想パネル（翌営業日＋今日の引けまで）──────────────────────
-// AIの推測ではなく、蓄積した実績データ（シグナル別の平均騰落率）だけで目安を算出。
-// 「今日の引けまで」版はイントラデイ実績が貯まると自動で数値表示に切り替わる
-function StatForecastPanel(p){
-  var s=p.s;
-  if(!s||!s.signals||s.rawPrice==null) return null;
-  var price=s.rawPrice,isJP=s.market==="JP";
-  function fmtP(v){return isJP?Math.round(v).toLocaleString():v.toFixed(2);}
-  // この銘柄自身の「1日の動きやすさ」＝スコア履歴の日次変化率の平均（レンジ表示用）
-  var dailyVol=(function(){
-    var h=s.scoreHist||[],sum=0,n=0;
-    for(var i=0;i<h.length-1;i++){
-      if(h[i].p!=null&&h[i+1].p!=null&&h[i].p>0){sum+=Math.abs((h[i+1].p-h[i].p)/h[i].p*100);n++;}
-    }
-    return n>=3?sum/n:null;
-  })();
-  var next=calcStatForecast(s.signals,getUniverseSignalStats());
-  var session=currentSessionLabel();
-  var today=session!=="時間外"?calcStatForecast(s.signals,getIntradaySignalStats()):null;
-  function dirInfo(upRate){
-    if(upRate>=55)return{label:"上昇寄り",color:"#22d3a0"};
-    if(upRate<=45)return{label:"下落寄り",color:"#f43f5e"};
-    return{label:"ほぼ中立",color:"#fbbf24"};
-  }
-  // 目安価格が手前の抵抗線/支持線を越えていたら注意書きを返す（案3：現実的な天井/床チェック）
-  function levelWarn(expPct,target){
-    if(expPct>0&&s.resistance){
-      var up=[{v:s.resistance.r1,name:"20日高値"},{v:s.resistance.atrCeil,name:"ATR上限"}]
-        .filter(function(c){return c.v!=null&&c.v>price;}).sort(function(a,b){return a.v-b.v;});
-      if(up.length&&target>up[0].v)return"⚠️ 手前の"+fmtP(up[0].v)+"（"+up[0].name+"）に抵抗 → 目安が頭打ちになる可能性";
-    }
-    if(expPct<0&&s.support){
-      var dn=[{v:s.support.s1,name:"20日安値"},{v:s.support.atrFloor,name:"ATR下限"}]
-        .filter(function(c){return c.v!=null&&c.v<price;}).sort(function(a,b){return b.v-a.v;});
-      if(dn.length&&target<dn[0].v)return"⚠️ 手前の"+fmtP(dn[0].v)+"（"+dn[0].name+"）に支持 → 下げ止まる可能性";
-    }
-    return null;
-  }
-  function renderRow(titleLabel,f,withRange){
-    if(!f.ready){
-      return(
-        <div key={titleLabel} style={{fontSize:10,color:"#4a7090",marginBottom:3}}>{titleLabel}：📥 データ蓄積中（実績が十分＝10件かつ5営業日以上のシグナルが{f.used}/3種類）。スキャンを重ねると自動で表示が始まります</div>
-      );
-    }
-    var d=dirInfo(f.upRate);
-    var target=price*(1+f.expPct/100);
-    var warn=levelWarn(f.expPct,target);
-    var lo=withRange&&dailyVol!=null?price*(1+(f.expPct-dailyVol)/100):null;
-    var hi=withRange&&dailyVol!=null?price*(1+(f.expPct+dailyVol)/100):null;
-    return(
-      <div key={titleLabel} style={{marginBottom:3}}>
-        <div style={{display:"flex",alignItems:"baseline",gap:6,flexWrap:"wrap"}}>
-          <span style={{fontSize:10,color:"#8aa8c8",whiteSpace:"nowrap"}}>{titleLabel}</span>
-          <span style={{fontSize:10,fontWeight:700,color:d.color}}>{d.label}（過去傾向 上昇{f.upRate}%・{f.totalN}件）</span>
-        </div>
-        <div style={{fontSize:11,color:"#d8eeff",fontWeight:700,marginTop:1}}>
-          目安 {(f.expPct>=0?"+":"")+f.expPct.toFixed(1)}%（{fmtP(target)}前後）
-          {lo!=null&&<span style={{fontSize:9,color:"#4a7090",fontWeight:400,marginLeft:11}}>レンジ {fmtP(lo)}〜{fmtP(hi)}</span>}
-        </div>
-        {warn&&<div style={{fontSize:9,color:"#fbbf24",marginTop:1}}>{warn}</div>}
-      </div>
-    );
-  }
-  return(
-    <div onClick={p.onInfoClick} style={{background:"#071428",border:"1px solid #2a4060",borderRadius:8,padding:"5px 8px",cursor:"pointer"}}>
-      <div style={{fontSize:10,fontWeight:700,color:"#4a90c0",marginBottom:3}}>🔮 統計ベースの目安（過去実績のみで算出・AI不使用）</div>
-      {/* 左揃えの2段組み（上＝今日の引けまで／下＝翌営業日）。横2列だと幅が狭く折り返すため */}
-      <div style={{display:"flex",flexDirection:"column",gap:3,textAlign:"left"}}>
-        <div style={{minWidth:0}}>
-          {today?renderRow("今日の引けまで",today,false):(
-            <div style={{fontSize:9,color:"#2a6090",marginBottom:4}}>「今日の引けまで」版は取引時間中（9:00〜15:30）のみ表示されます</div>
-          )}
-        </div>
-        <div style={{minWidth:0,borderTop:"1px solid #16283f",paddingTop:3}}>
-          {renderRow("翌営業日",next,true)}
-        </div>
-      </div>
-    </div>
-  );
-}
 // ── 🚦 総合判定パネル（各機能をまとめた最終結論＋根拠）─────────────────
 function VerdictPanel(p){
   var v=p.v;
@@ -4377,7 +4254,6 @@ function VerdictPanel(p){
           return(<span key={i} style={{fontSize:9,fontWeight:700,color:pos?"#22d3a0":"#f43f5e",background:pos?"#052e16":"#1f0010",borderRadius:4,padding:"2px 5px"}}>{(pos?"+":"")+r.pt+" "+r.label}</span>);
         })}
       </div>
-      {!v.statReady&&<div style={{fontSize:9,color:"#4a7090",marginTop:3}}>※統計ベース予想はデータ蓄積中。今は上昇済みスコアとシグナル中心の判定です</div>}
     </div>
   );
 }
@@ -4534,7 +4410,6 @@ function StockDetailPanel(p){
   var simTargetInputS=useState("2");var simTargetInput=simTargetInputS[0],setSimTargetInput=simTargetInputS[1];
   var simStopInputS=useState("-0.75");var simStopInput=simStopInputS[0],setSimStopInput=simStopInputS[1];
   var showSupportInfoS=useState(false);var showSupportInfo=showSupportInfoS[0],setShowSupportInfo=showSupportInfoS[1];
-  var showStatInfoS=useState(false);var showStatInfo=showStatInfoS[0],setShowStatInfo=showStatInfoS[1];
 
   // 判定プロンプトをClaudeアプリに直接渡す（プロンプト欄に事前入力された状態で開く）
   // ※qに渡せるのは約14,000文字までのため、余裕をみて13,000文字で切る
@@ -4664,8 +4539,6 @@ function StockDetailPanel(p){
             {/* シグナル詳細（出来高急増後の値動きを内包）／板情報・利確損切りライン（右） */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:isMobile?6:10,alignItems:"start"}}>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
-          {/* 統計ベースの目安（シグナル詳細と同じ左列・同じ幅） */}
-          <StatForecastPanel s={s} onInfoClick={function(){setShowStatInfo(true);}}/>
           <SignalDetailList signals={s.signals} breakdown={s.breakdown} daily={daily}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
@@ -4676,32 +4549,6 @@ function StockDetailPanel(p){
         </div>
       </div>
 
-      {showStatInfo&&createPortal(
-        <div onClick={function(e){if(e.target===e.currentTarget)setShowStatInfo(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
-          <div style={{background:"#040c18",border:"1px solid #4a90c050",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-              <div style={{fontSize:14,fontWeight:700,color:"#4a90c0"}}>🔮 統計ベースの目安の見方</div>
-              <button onClick={function(){setShowStatInfo(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
-            </div>
-            <div style={{fontSize:13,color:"#b8cce0",lineHeight:1.7}}>
-              <div style={{marginBottom:10}}>今この銘柄で点灯しているシグナルについて、<b>過去に同じシグナルが出たあと実際に株価がどう動いたか</b>を集計して算出しています。AIの予測は一切使っていません。</div>
-              <div style={{fontWeight:700,color:"#d8eeff",marginTop:12,marginBottom:4}}>算出のしかた</div>
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                <div>① 点灯中のシグナルごとに、過去の記録から「その後の平均騰落率」と「上昇した割合」を取り出す</div>
-                <div>② 記録が10件未満、または5営業日分に満たないシグナルは信頼できないので除外する（同じ日に何十銘柄もスキャンした水増しを防ぐため）</div>
-                <div>③ 残ったシグナルを<b>記録件数で重み付けして平均</b>する（1つのシグナルだけが効きすぎないよう、重みは30件分で頭打ち）</div>
-                <div>④ その平均値を「目安 ±○%」「上昇○%」として表示。現在値に掛けた価格も併記する</div>
-              </div>
-              <div style={{fontWeight:700,color:"#d8eeff",marginTop:12,marginBottom:4}}>2種類の目安</div>
-              <div style={{marginBottom:10}}>「今日の引けまで」は取引時間中（9:00〜15:30）だけ表示され、その日の中での値動きを予想します。「翌営業日」は翌日の終値までの予想で、日々の値幅から求めたレンジも併せて表示します。</div>
-              <div style={{background:"#1c1400",border:"1px solid #fbbf2440",borderRadius:8,padding:"8px 10px",marginBottom:10}}>
-                <b style={{color:"#fbbf24"}}>📥 データ蓄積中と出る場合</b><br/>信頼できるシグナルが3種類そろっていない状態です。スキャンを重ねて記録が溜まると自動で表示が始まり、続けるほど精度も上がります。
-              </div>
-              <div style={{color:"#8aa4c0"}}>※ あくまで過去データの統計的な傾向であり、将来の値動きを保証するものではありません。手前に節目（サポート・レジスタンス）がある場合は⚠️で注意書きが出ます。</div>
-            </div>
-          </div>
-        </div>
-      ,document.body)}
       {showSupportInfo&&createPortal(
         <div onClick={function(e){if(e.target===e.currentTarget)setShowSupportInfo(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
           <div style={{background:"#040c18",border:"1px solid #4a90c050",borderRadius:16,padding:"16px",width:"100%",maxWidth:520,maxHeight:"85vh",overflowY:"auto",WebkitOverflowScrolling:"touch",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
@@ -5347,10 +5194,6 @@ function TradePanel(p){
                       <div>
                         <div style={{fontSize:11,color:"#4a7090",marginBottom:2}}>登録時のアプリの判定ごと（総合判定）</div>
                         {decision.signal.map(function(e){return decisionRow(e,signalLabel(e.key));})}
-                      </div>
-                      <div>
-                        <div style={{fontSize:11,color:"#4a7090",marginBottom:2}}>登録時の🔮予想の向きごと</div>
-                        {decision.forecast.map(function(e){return decisionRow(e,FORECAST_DIR_LABEL[e.key]);})}
                       </div>
                     </div>
                   )}
