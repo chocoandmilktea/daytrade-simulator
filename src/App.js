@@ -828,7 +828,61 @@ function calcTradeDetailStats(doneList){
     days:days.map(function(d){return{date:d.date,n:d.n,pnl:d.pnl,totalR:d.rN?d.rSum:null,rN:d.rN};}),
     reasons:reasons,rN:rN,overN:overN,minR:minR};
 }
-function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection){
+// トレード登録時の「決め手」（複数選択可・未選択可）と「自信の度合い」の表示順と名前
+// 決め手が空・項目が無い古い記録は「未記録」(none) として集計する（記録は書き換えない）
+var DECISION_TAG_ORDER=["app","chart","board","news","gut"];
+var DECISION_TAG_LABEL={app:"アプリの予測",chart:"チャートの形",board:"板",news:"ニュース・開示",gut:"直感",none:"未記録"};
+var CONFIDENCE_LEVELS=[1,2,3];
+var CONFIDENCE_LABEL={1:"1 低い",2:"2 ふつう",3:"3 高い",none:"未記録"};
+// 決め手を正規化（未知の値・重複を除く）。古い記録や壊れた値でも落ちないように配列以外は空扱い
+function normDecisionTags(v){
+  if(!Array.isArray(v))return[];
+  return DECISION_TAG_ORDER.filter(function(k){return v.indexOf(k)>=0;});
+}
+function normConfidence(v){return CONFIDENCE_LEVELS.indexOf(v)>=0?v:null;}
+// 登録時の🔮予想の向き。しきい値は🔮表示（dirInfo）と同じ：上昇確率55%以上＝上昇寄り・45%以下＝下落寄り
+function forecastDirKey(f){
+  var up=f&&f.upRate!=null?Number(f.upRate):NaN;
+  if(isNaN(up))return "none";
+  return up>=55?"up":up<=45?"down":"neutral";
+}
+var FORECAST_DIR_LABEL={up:"上昇寄り（上昇55%以上）",neutral:"中立（45〜55%）",down:"下落寄り（上昇45%以下）",none:"未記録"};
+// 完了トレードの「判断の内訳」（決め手別・自信別・登録時のアプリ判定別）。画面の状態に依存しない純粋関数
+// 各行：件数・勝率（pnlがプラスの割合）・1回平均損益率（pnlPercentの平均）。勝ちの数え方は既存の勝率と同じく pnl||0>0
+// 決め手を複数選んだ取引は、それぞれの決め手の行に重ねて数える
+function calcTradeDecisionStats(doneList){
+  var tagMap={},confMap={},sigMap={},fcMap={};
+  function add(map,key,t){
+    if(!map[key])map[key]={n:0,win:0,pctSum:0,pctN:0};
+    var e=map[key];e.n++;
+    if((t.pnl||0)>0)e.win++;
+    if(t.pnlPercent!=null&&isFinite(t.pnlPercent)){e.pctSum+=t.pnlPercent;e.pctN++;}
+  }
+  (doneList||[]).forEach(function(t){
+    var tags=normDecisionTags(t.decisionTags);
+    if(tags.length)tags.forEach(function(k){add(tagMap,k,t);});else add(tagMap,"none",t);
+    var c=normConfidence(t.confidence);
+    add(confMap,c!=null?String(c):"none",t);
+    add(sigMap,t.signalAtAdd||"none",t);
+    add(fcMap,forecastDirKey(t.forecastAtAdd),t);
+  });
+  function rows(map,keys){
+    return keys.map(function(k){
+      var e=map[k]||{n:0,win:0,pctSum:0,pctN:0};
+      return{key:k,n:e.n,winRate:e.n?e.win/e.n*100:null,avgPct:e.pctN?e.pctSum/e.pctN:null};
+    });
+  }
+  // アプリ判定は既知の値を固定順で出し、それ以外の値（将来増えた判定など）は記録にある時だけ末尾に足す
+  var sigKnown=["BUY","WATCH","SKIP"];
+  var sigExtra=Object.keys(sigMap).filter(function(k){return sigKnown.indexOf(k)<0&&k!=="none";}).sort();
+  return{
+    tags:rows(tagMap,DECISION_TAG_ORDER.concat(["none"])),
+    confidence:rows(confMap,CONFIDENCE_LEVELS.map(String).concat(["none"])),
+    signal:rows(sigMap,sigKnown.concat(sigExtra,["none"])),
+    forecast:rows(fcMap,["up","neutral","down","none"])
+  };
+}
+function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence){
   var list=loadTrades(kind);
   var curPrice=s.rawPrice!=null?s.rawPrice:null;
   // 登録時点で「過去実績に基づく重み補正」が何点効いていたか（検証パネル用）
@@ -856,6 +910,8 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection)
     styleAtAdd:s.tradeType||null, // 登録時点の手法バッジ（short=スキャル/mid=デイトレ/stable=スイング）
     sigKeysAtAdd:sigKeysAtAdd, // 登録時点で点灯していたシグナル一覧
     forecastAtAdd:forecastAtAdd, // 登録時点の🔮翌営業日予想（期待変化率・上昇確率）
+    decisionTags:normDecisionTags(decisionTags), // 何で決めたか（app/chart/board/news/gut・複数可・空＝未記録）
+    confidence:normConfidence(confidence), // 自信の度合い（1低い/2ふつう/3高い・null＝未記録）
     lastPrice:curPrice,
     addedAt:new Date().toISOString()
   });
@@ -3523,6 +3579,44 @@ function MarketRegimeBanner(p){
 
 // ── StockCard ────────────────────────────────────────────────────────────────
 // ── トレード登録モーダル（買い/売り価格を入力してトレードへ追加）─────
+// 決め手（複数選択・押すたびに選択/解除）と自信（1〜3・同じものをもう一度押すと解除）のボタン列。
+// 登録画面と編集画面（待機中のみ）で共用。見た目は「指値／逆指値」のボタンにそろえる。small=編集画面用の大きさ
+function DecisionPicker(p){
+  var tags=p.tags||[],conf=p.confidence;
+  var pad=p.small?"6px 2px":"4px 2px",fs=p.small?11:10,lfs=p.small?10:11;
+  function btn(key,label,on,color,onClick){
+    return <button key={key} type="button" onClick={onClick} style={{flex:"1 0 auto",padding:pad,fontSize:fs,fontWeight:700,borderRadius:5,cursor:"pointer",border:"1px solid "+(on?color:"#1e3050"),background:on?color+"20":"transparent",color:on?color:"#4a6080"}}>{label}</button>;
+  }
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+      <div>
+        <div style={{fontSize:lfs,color:"#0ea5e9",marginBottom:3}}>決め手（複数可・任意）</div>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+          {DECISION_TAG_ORDER.map(function(k){
+            var on=tags.indexOf(k)>=0;
+            return btn(k,DECISION_TAG_LABEL[k],on,"#0ea5e9",function(){
+              p.onTags(on?tags.filter(function(x){return x!==k;}):normDecisionTags(tags.concat([k])));
+            });
+          })}
+        </div>
+      </div>
+      <div>
+        <div style={{fontSize:lfs,color:"#a78bfa",marginBottom:3}}>自信（任意）</div>
+        <div style={{display:"flex",gap:4}}>
+          {CONFIDENCE_LEVELS.map(function(v){
+            var on=conf===v;
+            return btn(v,CONFIDENCE_LABEL[v],on,"#a78bfa",function(){p.onConfidence(on?null:v);});
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+// 決め手・自信の表示用テキスト（編集できない状態の表示に使う）
+function decisionSummary(t){
+  var tags=normDecisionTags(t.decisionTags),c=normConfidence(t.confidence);
+  return "決め手 "+(tags.length?tags.map(function(k){return DECISION_TAG_LABEL[k];}).join("・"):"未記録")+" ／ 自信 "+(c!=null?CONFIDENCE_LABEL[c]:"未記録");
+}
 function TradeAddModal(p){
   var s=p.s;
   var isMobile=useIsMobile();
@@ -3533,6 +3627,8 @@ function TradeAddModal(p){
   var sharesS=useState("100");var sharesVal=sharesS[0],setSharesVal=sharesS[1];
   var riskS=useState(String(loadRiskUnit()));var riskVal=riskS[0],setRiskVal=riskS[1];
   var capS=useState(String(loadCapital()));var capVal=capS[0],setCapVal=capS[1];
+  var tagsS=useState([]);var tags=tagsS[0],setTags=tagsS[1]; // 決め手（未選択でも登録できる）
+  var confS=useState(null);var conf=confS[0],setConf=confS[1]; // 自信 1〜3（未選択=null）
   function riskPerShare(){var b=parseFloat(buyVal),sp=parseFloat(stopVal);return(b>0&&sp>0&&sp<b)?b-sp:null;}
   // 1R基準の理想株数と、元手で実際に買える株数の両方を返す
   // （損切りが近い銘柄ほど必要資金が跨ね上がるため、元手で上限をかける）
@@ -3568,7 +3664,7 @@ function TradeAddModal(p){
   }
   function add(kind){
     if(!valid())return;
-    p.onAddTrade(kind,s,parseFloat(buyVal),parseFloat(sellVal),parseInt(sharesVal),stopVal!==""?parseFloat(stopVal):null,buyDir);
+    p.onAddTrade(kind,s,parseFloat(buyVal),parseFloat(sellVal),parseInt(sharesVal),stopVal!==""?parseFloat(stopVal):null,buyDir,tags,conf);
     p.onClose();
   }
   return(
@@ -3643,6 +3739,9 @@ function TradeAddModal(p){
               </div>
             );
           })()}
+        </div>
+        <div style={{marginBottom:14}}>
+          <DecisionPicker tags={tags} confidence={conf} onTags={setTags} onConfidence={setConf}/>
         </div>
         {validMsg()&&<div style={{fontSize:11,color:"#f43f5e",marginBottom:8}}>{validMsg()}</div>}
         <button onClick={function(){add("personal");}} disabled={!valid()} style={{width:"100%",background:valid()?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>🎯 トレードに登録</button>
@@ -5132,6 +5231,7 @@ function TradePanel(p){
   // 「📊 詳細集計」の開閉状態（初期状態は閉じる・保存しない）。開いている時だけ集計する
   var detailOpenS=useState(false);var detailOpen=detailOpenS[0],setDetailOpen=detailOpenS[1];
   var detail=detailOpen?calcTradeDetailStats(doneList):null;
+  var decision=detailOpen?calcTradeDecisionStats(doneList):null;
   var DOW_JA=["日","月","火","水","木","金","土"];
   function fmtR(v,digits){return v==null?"—":(v>=0?"+":"")+v.toFixed(digits)+"R";}
   function fmtDay(date){if(!date)return "日付不明";var d=new Date(date+"T00:00:00Z");return(d.getUTCMonth()+1)+"/"+d.getUTCDate()+"("+DOW_JA[d.getUTCDay()]+")";}
@@ -5145,6 +5245,20 @@ function TradePanel(p){
       </div>
     );
   }
+  // 判断の内訳の1行：件数・勝率・1回平均損益率。10件未満は偶然の偏りが大きいので「参考（件数少）」を添える
+  function decisionRow(e,label){
+    var few=e.n>0&&e.n<10;
+    return(
+      <div key={e.key} style={{display:"flex",gap:8,alignItems:"baseline",fontSize:11,padding:"2px 0",borderTop:"1px solid #0f2040"}}>
+        <span style={{flex:1,minWidth:0,color:"#b8cce0"}}>{label}</span>
+        <span style={{width:36,textAlign:"right",color:"#4a7090"}}>{e.n}件</span>
+        <span style={{width:52,textAlign:"right",color:"#fbbf24"}}>{e.winRate!=null?"勝"+Math.round(e.winRate)+"%":"—"}</span>
+        <span style={{width:64,textAlign:"right",fontWeight:700,color:e.avgPct==null?"#4a7090":e.avgPct>=0?"#22d3a0":"#f43f5e"}}>{e.avgPct!=null?(e.avgPct>=0?"+":"")+e.avgPct.toFixed(2)+"%":"—"}</span>
+        <span style={{width:72,textAlign:"right",color:"#2a6090",fontSize:10}}>{few?"参考（件数少）":""}</span>
+      </div>
+    );
+  }
+  function signalLabel(k){if(k==="none")return "未記録";return BADGE[k]?BADGE[k].label+"（"+k+"）":k;}
 
   function Section(title,items,color,useScoreColor,collapsible){
     if(!items.length)return null;
@@ -5218,6 +5332,28 @@ function TradePanel(p){
                       return detailRow(d.date||"unknown",fmtDay(d.date),d.n,d.pnl,fmtR(d.totalR,2)+"（R"+d.rN+"件）");
                     })}
                   </div>
+                  {decision&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                      <div style={{fontSize:11,fontWeight:700,color:"#4a7090"}}>判断の内訳<span style={{fontWeight:400,color:"#2a6090"}}>（完了{doneList.length}件・各行は 件数／勝率（損益プラスの割合）／1回平均損益率）</span></div>
+                      <div>
+                        <div style={{fontSize:11,color:"#4a7090",marginBottom:2}}>決め手ごと</div>
+                        {decision.tags.map(function(e){return decisionRow(e,DECISION_TAG_LABEL[e.key]);})}
+                        <div style={{fontSize:10,color:"#2a6090",marginTop:2}}>複数選んだ取引は各行に重ねて数えています</div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:11,color:"#4a7090",marginBottom:2}}>自信ごと</div>
+                        {decision.confidence.map(function(e){return decisionRow(e,CONFIDENCE_LABEL[e.key]);})}
+                      </div>
+                      <div>
+                        <div style={{fontSize:11,color:"#4a7090",marginBottom:2}}>登録時のアプリの判定ごと（総合判定）</div>
+                        {decision.signal.map(function(e){return decisionRow(e,signalLabel(e.key));})}
+                      </div>
+                      <div>
+                        <div style={{fontSize:11,color:"#4a7090",marginBottom:2}}>登録時の🔮予想の向きごと</div>
+                        {decision.forecast.map(function(e){return decisionRow(e,FORECAST_DIR_LABEL[e.key]);})}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -5280,13 +5416,16 @@ function TradeDetailModal(p){
   var stopS=useState(t.stopPrice!=null?String(t.stopPrice):"");var stopVal=stopS[0],setStopVal=stopS[1];
   var sharesS=useState(String(t.shares||1));var sharesVal=sharesS[0],setSharesVal=sharesS[1];
   var buyDirS=useState(getBuyDirection(t));var buyDir=buyDirS[0],setBuyDir=buyDirS[1]; // 指値(down)／逆指値(up)。待機中のみ編集可能
+  // 決め手・自信も待機中のみ編集可能（結果を見てからの付け直しを防ぐため、進行中・完了は表示だけ）
+  var tagsS=useState(normDecisionTags(t.decisionTags));var tags=tagsS[0],setTags=tagsS[1];
+  var confS=useState(normConfidence(t.confidence));var conf=confS[0],setConf=confS[1];
   var STATUS_LABEL={waiting:"待機中",active:"進行中",done:"完了"};
   var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0"};
   var EXIT_LABEL={take_profit:"利確で完了",stop_loss:"損切りで完了",time_exit:"引けで強制完了（持ち越しなし）",forced:"強制完了"};
   var unrealized=(t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?((t.lastPrice-t.startPrice)*(t.shares||1)):null;
   var editInp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
 
-  function startEdit(){setBuyVal(String(t.buyPrice));setSellVal(String(t.sellPrice));setStopVal(t.stopPrice!=null?String(t.stopPrice):"");setSharesVal(String(t.shares||1));setBuyDir(getBuyDirection(t));setEditing(true);}
+  function startEdit(){setBuyVal(String(t.buyPrice));setSellVal(String(t.sellPrice));setStopVal(t.stopPrice!=null?String(t.stopPrice):"");setSharesVal(String(t.shares||1));setBuyDir(getBuyDirection(t));setTags(normDecisionTags(t.decisionTags));setConf(normConfidence(t.confidence));setEditing(true);}
   function saveEdit(){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
     if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return;
@@ -5296,7 +5435,10 @@ function TradeDetailModal(p){
     var sp=String(stopVal).trim()===""?null:parseFloat(stopVal);
     if(sp!=null&&(isNaN(sp)||sp<=0||sp>=b)){alert("損切り価格は買い価格より低い値を入力してください（空欄のままにすると損切りなしで保存します）");return;}
     var updates={buyPrice:b,sellPrice:se,shares:sh,stopPrice:sp};
-    if(t.status==="waiting")updates.buyDirection=buyDir; // 待機中のみ手動指定を反映
+    if(t.status==="waiting"){
+      updates.buyDirection=buyDir; // 待機中のみ手動指定を反映
+      updates.decisionTags=tags;updates.confidence=conf; // 決め手・自信も待機中のみ反映
+    }
     p.onEditTrade(kind,t.id,updates);
     setEditing(false);
   }
@@ -5355,6 +5497,7 @@ function TradeDetailModal(p){
                 </div>
               </div>
             )}
+            {t.status==="waiting"&&<DecisionPicker small tags={tags} confidence={conf} onTags={setTags} onConfidence={setConf}/>}
           </div>
         ):(
           <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>
@@ -5378,6 +5521,7 @@ function TradeDetailModal(p){
             </div>
           </div>
         )}
+        {!(editing&&t.status==="waiting")&&<div style={{fontSize:11,color:"#4a7090"}}>{decisionSummary(t)}{editing&&<span style={{color:"#2a6090",marginLeft:6}}>（待機中のみ変更できます）</span>}</div>}
 
         {t.status==="done"&&<div style={{fontSize:16,fontWeight:800,color:t.pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnl(t.pnl,isJP)} <span style={{fontSize:11,fontWeight:400}}>({t.pnlPercent>=0?"+":""}{t.pnlPercent.toFixed(1)}%)</span>{tradeR(t)!=null&&<span style={{fontSize:13,marginLeft:8}}>{(tradeR(t)>=0?"+":"")+tradeR(t).toFixed(2)}R</span>}{tradeRisk(t)!=null&&<span style={{fontSize:10,fontWeight:400,color:"#4a7090",marginLeft:6}}>1R=¥{Math.round(tradeRisk(t)).toLocaleString()}</span>}</div>}
         {t.status==="done"&&<div style={{fontSize:11,color:"#4a7090"}}>約定 {fmtJstDateTime(t.startAt)} ／ 決済 {fmtJstDateTime(t.endAt)}<span style={{color:"#2a6090",marginLeft:6}}>（日本時間）</span></div>}
@@ -6885,8 +7029,8 @@ export default function App(){
   // ── トレードシミュレーター：状態管理・登録・削除・価格判定 ───────────────────
   var ptS=useState(function(){return loadTrades("personal");});var personalTrades=ptS[0],setPersonalTrades=ptS[1];
   var tradeRefreshingS=useState(false);var tradeRefreshing=tradeRefreshingS[0],setTradeRefreshing=tradeRefreshingS[1];
-  function addTradeHandler(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection){
-    var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection);
+  function addTradeHandler(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence){
+    var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence);
     setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,next);
   }
   function removeTradeHandler(kind,id){
