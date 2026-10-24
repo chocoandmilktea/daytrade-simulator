@@ -130,7 +130,7 @@ export async function saveUniverse(payload) {
 //   ① 同期済みの last_sectors があれば /api/sector?sectors=… を叩く
 //   ② セクター指定が無い／0件だった場合は /api/ranking?market=jp へフォールバック
 //   ③ ticker単位の先勝ちで重複除去（件数の絞り込み・並べ替えはしない＝返却順のまま）
-//   ④ お気に入り・トレード中（status!=="done"）の銘柄を末尾に追加
+//   ④ お気に入り・トレード中（status が waiting か active）の銘柄を末尾に追加
 //
 // 【userIdについて】リクエストからは一切受け取らず、環境変数 SCAN_SYNC_USER_ID の
 // 固定値だけを見る。外部から渡されたuserIdで他人の同期データを読ませないため。
@@ -197,10 +197,10 @@ export function composeUniverse(stocks, sync) {
   // ②お気に入り（universeに未収載のものだけ末尾へ）
   var favAdded = 0;
   ((sync && sync.favs) || []).forEach(function (t) { if (push(t)) favAdded++; });
-  // ③トレード中（status!=="done"）。同期タイミングによるズレは許容する
+  // ③トレード中（status が waiting か active）。見送り（skipped）は含めない。同期タイミングによるズレは許容する
   var tradeAdded = 0;
   ((sync && sync.personalTrades) || []).forEach(function (t) {
-    if (!t || t.status === "done") return;
+    if (!t || !(t.status === "waiting" || t.status === "active")) return;
     if (push(t.ticker)) tradeAdded++;
   });
   return { tickers: tickers, rankingCount: rankingCount, favAdded: favAdded, tradeAdded: tradeAdded };

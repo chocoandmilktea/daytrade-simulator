@@ -873,7 +873,9 @@ function calcTradeDecisionStats(doneList){
     signal:rows(sigMap,sigKnown.concat(sigExtra,["none"]))
   };
 }
-function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence){
+// skip=true のときは「見送り（買わなかった候補）」として記録する。買値・利確・損切り・株数は空のまま、
+// 決め手・自信・登録時のスコア等と登録時の現在値（lastPrice）だけを残す
+function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence,skip){
   var list=loadTrades(kind);
   var curPrice=s.rawPrice!=null?s.rawPrice:null;
   // 登録時点で「過去実績に基づく重み補正」が何点効いていたか（検証パネル用）
@@ -886,11 +888,11 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,
   list.push({
     id:"t"+Date.now()+Math.random().toString(36).slice(2,6),
     ticker:s.ticker,name:s.name,market:s.market,
-    buyPrice:buyPrice,sellPrice:sellPrice,
-    stopPrice:(stopPrice!=null&&stopPrice>0)?stopPrice:null, // 損切り価格（必須・R計算の基礎）
-    shares:shares>0?shares:1,
-    buyDirection:buyDirection==="up"?"up":"down", // 登録画面のスイッチで指定された値をそのまま使用（自動判定はしない）
-    status:"waiting", // waiting(待機中) → active(進行中) → done(完了)
+    buyPrice:skip?null:buyPrice,sellPrice:skip?null:sellPrice,
+    stopPrice:(!skip&&stopPrice!=null&&stopPrice>0)?stopPrice:null, // 損切り価格（必須・R計算の基礎）
+    shares:skip?null:(shares>0?shares:1),
+    buyDirection:skip?null:(buyDirection==="up"?"up":"down"), // 登録画面のスイッチで指定された値をそのまま使用（自動判定はしない）
+    status:skip?"skipped":"waiting", // waiting(待機中) → active(進行中) → done(完了)／skipped(見送り＝価格判定の対象外)
     startPrice:null,startAt:null,endPrice:null,endAt:null,
     pnl:null,pnlPercent:null,exitReason:null, // take_profit(利確) / stop_loss(損切り) / time_exit(引けで強制決済) / forced(強制完了)
     signalAtAdd:s.timing||null, // 登録時点のアプリ判定（BUY/WATCH/SKIP）＝後から検証するための記録
@@ -995,6 +997,8 @@ function applyPricesToTrades(kind,priceMap,openMap){
   var list=loadTrades(kind);
   var changed=false;
   var next=list.map(function(t){
+    // 見送りは売買していないので価格判定に通さない（通すと利確判定に入り完了へ変わってしまう）
+    if(t.status==="skipped")return t;
     if(t.status==="done")return t;
     // 土日・祝日など「取引日でない日」は、価格が古い終値のままなので一切状態を動かさない
     if(!isTradingDay(t.market))return t;
@@ -3624,6 +3628,12 @@ function TradeAddModal(p){
     p.onAddTrade(kind,s,parseFloat(buyVal),parseFloat(sellVal),parseInt(sharesVal),stopVal!==""?parseFloat(stopVal):null,buyDir,tags,conf);
     p.onClose();
   }
+  // 見送り（買わなかった候補）として記録する。価格の入力は使わないので入力チェックは通さず、決め手・自信だけ残す
+  function addSkip(kind){
+    if(!s||!s.ticker)return;
+    p.onAddTrade(kind,s,null,null,null,null,null,tags,conf,true);
+    p.onClose();
+  }
   return(
     <div onClick={function(e){if(e.target===e.currentTarget)p.onClose();}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
       <div style={{background:"#040c18",border:"1px solid #0ea5e950",borderRadius:16,padding:"16px",width:"100%",maxWidth:420,boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
@@ -3702,6 +3712,7 @@ function TradeAddModal(p){
         </div>
         {validMsg()&&<div style={{fontSize:11,color:"#f43f5e",marginBottom:8}}>{validMsg()}</div>}
         <button onClick={function(){add("personal");}} disabled={!valid()} style={{width:"100%",background:valid()?"linear-gradient(135deg,#0ea5e9,#0369a1)":"#0f2040",border:"none",borderRadius:8,color:valid()?"#fff":"#2a4060",padding:"10px",fontSize:13,fontWeight:700,cursor:valid()?"pointer":"not-allowed"}}>🎯 トレードに登録</button>
+        <button onClick={function(){addSkip("personal");}} style={{width:"100%",marginTop:8,background:"transparent",border:"1px solid #9a8cb8",borderRadius:8,color:"#9a8cb8",padding:"9px",fontSize:12,fontWeight:700,cursor:"pointer"}}>見送りとして記録（買わなかった候補）</button>
       </div>
     </div>
   );
@@ -5063,12 +5074,14 @@ function TradePanel(p){
   var waitingList=list.filter(function(t){return t.status==="waiting";});
   var activeList=list.filter(function(t){return t.status==="active";});
   var doneList=list.filter(function(t){return t.status==="done";});
+  var skippedList=list.filter(function(t){return t.status==="skipped";});
   var totalPnl=doneList.reduce(function(a,t){return a+(t.pnl||0);},0);
   // 勝率：完了トレードのうち損益がプラスだった割合
   var winRate=doneList.length?Math.round(doneList.filter(function(t){return(t.pnl||0)>0;}).length/doneList.length*100):null;
   var rStats=calcRStats(doneList);
   // 的中率の集計対象：登録している全トレード銘柄（お気に入りタブの集計とは分離）
-  var tradeTickers=Array.from(new Set(list.map(function(t){return t.ticker;})));
+  // 見送り（買わなかった候補）は自分のトレードではないので母数から外す
+  var tradeTickers=Array.from(new Set(list.filter(function(t){return t.status!=="skipped";}).map(function(t){return t.ticker;})));
   // スマホはタップして表示（初期非表示）、PC/iPadは今まで通り常時表示
   var showAccS=useState(!isMobile);var showAccuracy=showAccS[0],setShowAccuracy=showAccS[1];
   var selTrade=selId?list.find(function(t){return t.id===selId;}):null;
@@ -5207,6 +5220,7 @@ function TradePanel(p){
           {Section("進行中",activeList,"#0ea5e9")}
           {Section("待機中",waitingList,"#4a7090",true)}
           {Section("完了",doneList,"#22d3a0",false,true)}
+          {Section("見送り",skippedList,"#9a8cb8")}
         </div>
 
         {showAccuracy&&(
@@ -5234,7 +5248,7 @@ function TradePanel(p){
 function TradeMiniTile(p){
   var t=p.t;
   var isJP=t.market==="JP";
-  var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0"};
+  var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0",skipped:"#9a8cb8"};
   var pnlVal=t.status==="done"?t.pnl:((t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?(t.lastPrice-t.startPrice)*(t.shares||1):null);
   return(
     <button onClick={p.onClick} style={{background:"#03080f",border:"1px solid "+STATUS_COLOR[t.status],borderRadius:8,padding:"6px 2px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,cursor:"pointer",minWidth:0}}>
@@ -5262,8 +5276,8 @@ function TradeDetailModal(p){
   // 決め手・自信も待機中のみ編集可能（結果を見てからの付け直しを防ぐため、進行中・完了は表示だけ）
   var tagsS=useState(normDecisionTags(t.decisionTags));var tags=tagsS[0],setTags=tagsS[1];
   var confS=useState(normConfidence(t.confidence));var conf=confS[0],setConf=confS[1];
-  var STATUS_LABEL={waiting:"待機中",active:"進行中",done:"完了"};
-  var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0"};
+  var STATUS_LABEL={waiting:"待機中",active:"進行中",done:"完了",skipped:"見送り"};
+  var STATUS_COLOR={waiting:"#4a7090",active:"#0ea5e9",done:"#22d3a0",skipped:"#9a8cb8"};
   var EXIT_LABEL={take_profit:"利確で完了",stop_loss:"損切りで完了",time_exit:"引けで強制完了（持ち越しなし）",forced:"強制完了"};
   var unrealized=(t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?((t.lastPrice-t.startPrice)*(t.shares||1)):null;
   var editInp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
@@ -5298,7 +5312,7 @@ function TradeDetailModal(p){
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontSize:11,fontWeight:700,color:STATUS_COLOR[t.status]}}>● {STATUS_LABEL[t.status]}{t.status==="done"&&t.exitReason?"（"+EXIT_LABEL[t.exitReason]+"）":""}</span>
           <div style={{display:"flex",gap:14,alignItems:"center"}}>
-            <button onClick={editing?saveEdit:startEdit} style={{background:"transparent",border:"none",color:editing?"#22d3a0":"#4a5a70",fontSize:13,cursor:"pointer"}}>{editing?"💾 保存":"✏️"}</button>
+            {t.status!=="skipped"&&<button onClick={editing?saveEdit:startEdit} style={{background:"transparent",border:"none",color:editing?"#22d3a0":"#4a5a70",fontSize:13,cursor:"pointer"}}>{editing?"💾 保存":"✏️"}</button>}
             {!editing&&<button onClick={function(){if(window.confirm("このトレード記録を削除しますか？"))p.onRemoveTrade(kind,t.id);}} style={{background:"transparent",border:"none",color:"#4a5a70",fontSize:13,cursor:"pointer"}}>🗑</button>}
             <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
           </div>
@@ -5323,7 +5337,14 @@ function TradeDetailModal(p){
           </div>
         )}
 
-        {editing?(
+        {t.status==="skipped"?(
+          // 見送りは買値・利確・損切り・株数を持たないので、登録時の現在値だけを出す
+          <div style={{background:"#071428",border:"1px solid #9a8cb840",borderRadius:6,padding:"6px 8px"}}>
+            <div style={{fontSize:10,color:"#9a8cb8",marginBottom:2}}>見送り時の価格</div>
+            <div style={{fontSize:15,fontWeight:800,color:"#d8eeff"}}>{t.lastPrice!=null?fmtMoney(t.lastPrice,isJP):"—"}</div>
+            <div style={{fontSize:11,color:"#4a7090",marginTop:2}}>記録 {fmtJstDateTime(t.addedAt)}<span style={{color:"#2a6090",marginLeft:6}}>（日本時間）</span></div>
+          </div>
+        ):editing?(
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
               <div><div style={{fontSize:10,color:"#22d3a0",marginBottom:2}}>買い</div><input type="number" value={buyVal} onChange={function(e){setBuyVal(e.target.value);}} style={editInp}/></div>
@@ -5371,7 +5392,7 @@ function TradeDetailModal(p){
         {t.status==="done"&&(t.openGap||t.openFill)&&<div style={{fontSize:11,color:"#f59e0b"}}>{t.openGap?"寄りでライン越え（即時手じまい）":"寄り付きで始値約定"}</div>}
         {t.status==="active"&&unrealized!=null&&<div style={{fontSize:13,color:unrealized>=0?"#22d3a0":"#f43f5e"}}>含み損益 {fmtPnl(unrealized,isJP)}</div>}
 
-        {!editing&&t.status!=="done"&&<button onClick={forceComplete} style={{background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:8,color:"#f43f5e",padding:"8px",fontSize:12,fontWeight:700,cursor:"pointer"}}>⏹ 現在価格で強制完了</button>}
+        {!editing&&(t.status==="waiting"||t.status==="active")&&<button onClick={forceComplete} style={{background:"#2a0a12",border:"1px solid #f43f5e60",borderRadius:8,color:"#f43f5e",padding:"8px",fontSize:12,fontWeight:700,cursor:"pointer"}}>⏹ 現在価格で強制完了</button>}
 
         {isJP&&<a href="ispeed://" onClick={function(){var code=t.ticker.replace(".T","");if(navigator.clipboard){navigator.clipboard.writeText(code).catch(function(){});}}} style={{background:"#1a0a0a",border:"1px solid #f87171",borderRadius:8,color:"#fca5a5",padding:"10px",fontSize:12,fontWeight:700,fontFamily:"monospace",textDecoration:"none",textAlign:"center",display:"block"}}>📱 iSPEED</a>}
 
@@ -6872,8 +6893,8 @@ export default function App(){
   // ── トレードシミュレーター：状態管理・登録・削除・価格判定 ───────────────────
   var ptS=useState(function(){return loadTrades("personal");});var personalTrades=ptS[0],setPersonalTrades=ptS[1];
   var tradeRefreshingS=useState(false);var tradeRefreshing=tradeRefreshingS[0],setTradeRefreshing=tradeRefreshingS[1];
-  function addTradeHandler(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence){
-    var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence);
+  function addTradeHandler(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence,skip){
+    var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence,skip);
     setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,next);
   }
   function removeTradeHandler(kind,id){
@@ -6893,7 +6914,7 @@ export default function App(){
   function refreshTradePrices(){
     var tickers=[];
     personalTrades.forEach(function(t){
-      if(t.status!=="done"&&tickers.indexOf(t.ticker)<0)tickers.push(t.ticker);
+      if((t.status==="waiting"||t.status==="active")&&tickers.indexOf(t.ticker)<0)tickers.push(t.ticker);
     });
     if(!tickers.length)return;
     setTradeRefreshing(true);
@@ -6992,7 +7013,7 @@ export default function App(){
         favList.forEach(function(ticker){if(uTickers.indexOf(ticker)<0){var isJP=ticker.endsWith(".T"),code=ticker.replace(".T","");universe.push({ticker:ticker,name:code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});}});
         // トレード登録中（待機中・進行中）の銘柄も、カード表示のため必ずuniverseに含める
         loadTrades("personal").forEach(function(t){
-          if(t.status==="done")return;
+          if(!(t.status==="waiting"||t.status==="active"))return;
           if(!universe.some(function(u){return u.ticker===t.ticker;})){
             var isJP=t.ticker.endsWith(".T"),code=t.ticker.replace(".T","");
             universe.push({ticker:t.ticker,name:t.name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
@@ -7043,7 +7064,7 @@ export default function App(){
           universe.push({ticker:ticker,name:name||code,market:isJP?"JP":"US",tvSymbol:(isJP?"TSE:":"NASDAQ:")+code});
         }
         favList.forEach(function(t){push(t);});
-        loadTrades("personal").forEach(function(t){if(t.status!=="done")push(t.ticker,t.name);});
+        loadTrades("personal").forEach(function(t){if(t.status==="waiting"||t.status==="active")push(t.ticker,t.name);});
         // 登録が無いのは「エラー」ではないのでリトライせずそのまま終了する
         if(universe.length===0){setProgress({done:0,total:0,msg:"⚠️ お気に入り銘柄が登録されていません"});return;}
         await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
