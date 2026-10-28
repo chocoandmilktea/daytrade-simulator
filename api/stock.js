@@ -1,6 +1,6 @@
 // api/stock.js
 // 個別銘柄の詳細データ取得
-//   日本株(.T): Yahoo Financeの15分足 ＋ 決算発表予定日(東証) ＋ TOPIX・PER/PBR等(立花証券API)
+//   日本株(.T): Yahoo Financeの15分足・日足3か月 ＋ 決算発表予定日(東証) ＋ TOPIX・PER/PBR等(立花証券API)
 //   それ以外  : 市況指数（VIX・日経平均・NYダウ・S&P500・ドル円）用のYahoo Finance 15分足
 // ※米国株の個別銘柄分析は使用していないため、米国株専用の項目取得は削除済み
 
@@ -63,7 +63,8 @@ async function fetchJPPayload(ticker) {
 
   // Yahoo Finance（分足）・決算発表予定日・TOPIX・PER/PBR等は互いに依存関係が無いため並列取得する
   // （以前は上から順番に待っていたため、その分だけ余計に時間がかかっていた）
-  const [yahooResult, earningsResult, topixResult, detailResult] = await Promise.allSettled([
+  // 日足3か月分は「今の状態」（src/lib/marketState.js）の計算用。取れなくても他の項目はそのまま返す
+  const [yahooResult, earningsResult, topixResult, detailResult, dailyResult] = await Promise.allSettled([
     fetch(url, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -77,6 +78,7 @@ async function fetchJPPayload(ticker) {
     fetchJPEarningsMap(),
     fetchTopixChange(),
     fetchTachibanaIssueDetail(code4),
+    fetchYahooDaily(ticker),
   ]);
 
   if (yahooResult.status === "rejected") throw yahooResult.reason;
@@ -130,11 +132,28 @@ async function fetchJPPayload(ticker) {
   if (pbr && (!isFinite(pbr) || pbr <= 0 || pbr > 1000)) pbr = null;
   if (per && (!isFinite(per) || per <= 0 || per > 10000)) per = null;
 
+  // 現在値の時刻（Unix秒）。場中版と引け後版の切り替えに使う
+  const regularMarketTime = typeof meta.regularMarketTime === "number" ? meta.regularMarketTime : null;
+  let daily = null;
+  if (dailyResult.status === "fulfilled") {
+    daily = dailyResult.value;
+    // Yahooの日足は、その日の行の終値を引け後も空のまま返すことがある（始値・高値・安値・出来高は入る）。
+    // 最後の行が現在値の時刻と同じ日なら、終値を現在値で埋める
+    const n = daily.dates.length;
+    if (n && daily.closes[n - 1] == null && regularMarketTime != null && currentPrice > 0
+      && daily.dates[n - 1] === toLocalDates([regularMarketTime], meta.gmtoffset != null ? meta.gmtoffset : 32400)[0]) {
+      daily.closes[n - 1] = currentPrice;
+    }
+  } else {
+    console.log("[stock] 日足の取得エラー:", ticker, dailyResult.reason?.message);
+  }
+
   return {
     chart: {
       result: [{
         meta: {
           regularMarketPrice: currentPrice,
+          regularMarketTime: regularMarketTime,
           chartPreviousClose: previousClose,
           regularMarketPreviousClose: officialPrevClose,
           dataInterval: "15m",
@@ -148,9 +167,68 @@ async function fetchJPPayload(ticker) {
         earningsDate: earningsDate,
         exRightsDate: exRightsDate,
         topixChange: topixChange,
+        daily: daily,
       }],
     },
   };
+}
+
+// ── 日足3か月分（Yahoo Finance）──────────────────────────────────────
+// 25日線・ATR・20日の騰落率の標準偏差・連続上昇日数・売買代金の計算用（src/lib/marketState.js）。
+// api/daily.js は handler しか持たず関数を使い回せないため、同じURLでここから直接取る。
+// 高値・安値・出来高の欠けは埋めない（ATR・売買代金を欠けたまま計算しないため）。
+// 終値の無い行は、最後の行（その日の行）だけ残して呼び出し側で埋めるか判断する
+async function fetchYahooDaily(ticker) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
+  const r = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", "Accept": "application/json" },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error(`Yahoo daily returned ${r.status}`);
+  const json = await r.json();
+  const result = json?.chart?.result?.[0];
+  if (!result || !result.timestamp) throw new Error("no JP daily data");
+  const q = result.indicators?.quote?.[0] || {};
+  const dates = toLocalDates(result.timestamp, result.meta?.gmtoffset != null ? result.meta.gmtoffset : 32400);
+  const out = { dates: [], opens: [], highs: [], lows: [], closes: [], volumes: [] };
+  for (let i = 0; i < dates.length; i++) {
+    const c = q.close ? q.close[i] : null;
+    if (c == null && i !== dates.length - 1) continue;
+    out.dates.push(dates[i]);
+    out.opens.push(q.open ? q.open[i] : null);
+    out.highs.push(q.high ? q.high[i] : null);
+    out.lows.push(q.low ? q.low[i] : null);
+    out.closes.push(c == null ? null : c);
+    out.volumes.push(q.volume ? q.volume[i] : null);
+  }
+  return out;
+}
+
+// ── 複数銘柄の現在値・約定時刻・前日終値・始値・当日安値（立花 /quotes）────────────
+// tachibana-server の /quotes を呼ぶ。api/sync.js（resource=tachibana-quotes）と api/_scan.js から使う。
+// 古い値を今の値として使わせないため、withFallback（控え値）もキャッシュも使わない。
+// 失敗（時間切れ・HTTP 502 など）はそのまま投げる。呼び出し側はその回の銘柄を Yahoo の値で計算する。
+// URL は /issue-detail の中継先（TACHIBANA_ISSUE_DETAIL_API）の末尾を /quotes に置き換えて作る
+// （同じ tachibana-server のため。専用の環境変数は増やさない）。合言葉は TACHIBANA_RELAY_SECRET
+export const TACHIBANA_QUOTES_TIMEOUT_MS = 4000;
+
+export async function fetchTachibanaQuotes(codes) {
+  const base = process.env.TACHIBANA_ISSUE_DETAIL_API;
+  if (!base) throw new Error("TACHIBANA_ISSUE_DETAIL_API not set");
+  const u = new URL(base);
+  if (!/\/issue-detail\/?$/.test(u.pathname)) throw new Error("TACHIBANA_ISSUE_DETAIL_API の末尾が /issue-detail ではありません");
+  u.pathname = u.pathname.replace(/\/issue-detail\/?$/, "/quotes");
+  u.search = "";
+  u.searchParams.set("codes", codes.join(","));
+
+  const headers = {};
+  if (process.env.TACHIBANA_RELAY_SECRET) headers["X-Relay-Secret"] = process.env.TACHIBANA_RELAY_SECRET;
+
+  const res = await fetch(u.toString(), { headers, signal: AbortSignal.timeout(TACHIBANA_QUOTES_TIMEOUT_MS) });
+  if (!res.ok) throw new Error("quotes " + res.status);
+  const json = await res.json();
+  if (!json || !Array.isArray(json.quotes) || !json.fetchedAt) throw new Error("quotes: 応答の形が違います");
+  return json;
 }
 
 // ── 決算発表予定日キャッシュ ──────────────────────────────────────────

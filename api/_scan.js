@@ -24,8 +24,9 @@
 
 import { Redis } from "@upstash/redis";
 import { gunzipSync } from "zlib";
-import { fetchStockPayload } from "./stock.js";
+import { fetchStockPayload, fetchTachibanaQuotes } from "./stock.js";
 import { analyzeStock } from "../src/lib/analyze.js";
+import { calcMarketState, isTachibanaQuoteTime, toTachibanaQuoteSet } from "../src/lib/marketState.js";
 
 const redis = Redis.fromEnv();
 
@@ -319,6 +320,9 @@ export function toPriceData(payload) {
     earningsDate: result.earningsDate || null,
     exRightsDate: result.exRightsDate || null,
     topixChange: result.topixChange != null ? result.topixChange : null,
+    // 以下2つは「今の状態」（marketState）の計算用。analyzeStock は読まない
+    daily: result.daily || null,
+    marketTime: meta.regularMarketTime != null ? meta.regularMarketTime : null,
   };
 }
 
@@ -423,6 +427,19 @@ export async function runScanBatch(opts) {
     if (s) batch.push(s);
   });
 
+  // 「今の状態」用の立花の値は、このバッチの銘柄をまとめて1回だけ取る（日本時間の平日 9:00〜15:30 のみ）。
+  // 株価の取得と同時に進め、待つのはループの後。失敗・時間切れ（4秒）なら全銘柄を Yahoo の値で計算する
+  var quotesPromise = Promise.resolve(null);
+  if (batch.length && isTachibanaQuoteTime(Date.now())) {
+    quotesPromise = fetchTachibanaQuotes(batch.map(function (b) { return b.ticker.replace(".T", ""); }))
+      .then(toTachibanaQuoteSet)
+      .catch(function (e) {
+        console.log("[scan] 立花の時価の取得に失敗（Yahooの値で計算）: " + e.message);
+        return null;
+      });
+  }
+  var priceData = {};
+
   var rows = [];
   var failed = [];
   for (var i = 0; i < batch.length; i++) {
@@ -438,6 +455,7 @@ export async function runScanBatch(opts) {
       // 鮮度チェック：取得データの最終日付が対象日と違えば stale（祝日・メンテ時間帯の検出用。
       // 除外はしない＝呼び出し側・集計側で判断できるように印だけ付ける）
       var lastDate = pd.dates && pd.dates.length ? pd.dates[pd.dates.length - 1] : null;
+      priceData[stock.ticker] = pd;
       rows.push({
         ticker: stock.ticker,
         score: s.save.score,
@@ -454,6 +472,17 @@ export async function runScanBatch(opts) {
       console.log("[scan] " + stock.ticker + " スキップ: " + e.message);
     }
   }
+
+  // 「今の状態」を各行に足す。計算に失敗しても行は保存する（スコアの保存を止めないため）
+  var quoteSet = await quotesPromise;
+  rows.forEach(function (row) {
+    try {
+      row.marketState = calcMarketState({ ticker: row.ticker, market: "JP" }, priceData[row.ticker], quoteSet);
+    } catch (e) {
+      row.marketState = null;
+      console.log("[scan] " + row.ticker + " 状態の計算に失敗: " + e.message);
+    }
+  });
 
   var stored = 0;
   if (rows.length) {

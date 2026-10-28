@@ -190,6 +190,29 @@ async function handleScanResult(req, res) {
   }
 }
 
+// ④ 複数銘柄の立花の時価（GET ?codes=7203,6758）。手動スキャンが1回につき1回だけ呼ぶ
+// tachibana-server の /quotes へ中継する。合言葉はサーバー側の環境変数から付けるため、ブラウザには渡さない。
+// 日本時間の平日 9:00〜15:30 以外は立花を呼ばずに outside:true を返す（アプリは Yahoo の値を使う）。
+// 失敗（時間切れ4秒・tachibana-server の 502 など）は 502 で返す。控え値（withFallback）は使わない
+async function handleTachibanaQuotes(req, res) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
+  const { isTachibanaQuoteTime, TACHIBANA_QUOTES_MAX } = await import('../src/lib/marketState.js');
+  const seen = {};
+  const codes = String(req.query.codes || '').split(',').map(function (c) { return c.trim().toUpperCase().replace(/\.T$/, ''); })
+    .filter(function (c) { if (!/^[0-9A-Z]{4}$/.test(c) || seen[c]) return false; seen[c] = true; return true; });
+  if (!codes.length) return res.status(400).json({ error: 'codes required' });
+  if (codes.length > TACHIBANA_QUOTES_MAX) return res.status(400).json({ error: 'too many codes (max ' + TACHIBANA_QUOTES_MAX + ')' });
+  if (!isTachibanaQuoteTime()) return res.status(200).json({ outside: true, quotes: [] });
+  try {
+    // api/stock.js は xlsx を読み込むため、他の resource のコールドスタートを重くしないよう動的importにする
+    const { fetchTachibanaQuotes } = await import('./stock.js');
+    return res.status(200).json(await fetchTachibanaQuotes(codes));
+  } catch (e) {
+    console.log('[tachibana-quotes] 取得失敗: ' + e.message);
+    return res.status(502).json({ error: e.message });
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -202,6 +225,7 @@ export default async function handler(req, res) {
   if (resource === 'scan-universe') return handleScanUniverse(req, res);
   if (resource === 'scan-run') return handleScanRun(req, res);
   if (resource === 'scan-result') return handleScanResult(req, res);
+  if (resource === 'tachibana-quotes') return handleTachibanaQuotes(req, res);
 
   // ここから下はデバイス間同期処理
   const { userId } = req.query;
