@@ -6785,13 +6785,14 @@ export default function App(){
   var predLoadS=useState(false);var predictionLoading=predLoadS[0],setPredictionLoading=predLoadS[1];
   var selStockS=useState(null);var selectedStock=selStockS[0],setSelectedStock=selStockS[1];
   // 開いている銘柄詳細は選んだ時点のスキャン結果を持ち続けるため、再スキャン（全体・1銘柄）で一覧が
-  // 入れ替わったら「今の状態」だけを新しい結果のものに差し替える。スコアなど他の表示は今までどおり変えない
+  // 入れ替わったら、同じ銘柄コードの新しい結果に丸ごと入れ替える（スコアと今の状態などの時刻をそろえるため）。
+  // 詳細パネルは銘柄コードを key にしていて、入力値（損益シミュレーション等）の初期化も銘柄コードが変わったときだけなので、
+  // 同じ銘柄の入れ替えでは入力値は消えない。一覧に無い銘柄を開いているときは入れ替えない
   useEffect(function(){
     setSelectedStock(function(prev){
       if(!prev) return prev;
       var hit=stocks.find(function(s){return s.ticker===prev.ticker;});
-      if(!hit||hit.marketState===prev.marketState) return prev;
-      return Object.assign({},prev,{marketState:hit.marketState});
+      return hit||prev;
     });
   },[stocks]);
   var k=useState(loadActiveTab);var activeTab=k[0],setActiveTab=k[1];
@@ -7236,7 +7237,19 @@ export default function App(){
   },[vix,startDayNightFill]);
   function startFavsOnly(){setStartMode("favs");scanFavsOnly();}
   var rescanLoadingS=useState({});var rescanLoading=rescanLoadingS[0],setRescanLoading=rescanLoadingS[1];
-  var rescanOne=useCallback(async function(ticker){
+  // 実行中の1銘柄再スキャン（銘柄コード → その Promise）。銘柄を選ぶとカード側と詳細側の両方から呼ばれるため、
+  // 同じ銘柄が実行中なら新しく始めずにその結果を使う（立花の中継の1分10回の上限を2回ずつ消費しないため）
+  var rescanInflightRef=useRef({});
+  var rescanOne=useCallback(function(ticker){
+    var inflight=rescanInflightRef.current;
+    if(inflight[ticker]) return inflight[ticker];
+    var job=rescanOneRun(ticker);
+    inflight[ticker]=job;
+    function done(){if(inflight[ticker]===job)delete inflight[ticker];}
+    job.then(done,done);
+    return job;
+  },[stocks]);
+  async function rescanOneRun(ticker){
     setRescanLoading(function(prev){var n=Object.assign({},prev);n[ticker]=true;return n;});
     delete CACHE[ticker];
     try{
@@ -7254,7 +7267,7 @@ export default function App(){
     }finally{
       setRescanLoading(function(prev){var n=Object.assign({},prev);delete n[ticker];return n;});
     }
-  },[stocks]);
+  }
   // 「今の銘柄でリロード」：業種の再選定は行わず、現在表示中の銘柄だけ最新データで再分析
   var reloadCurrentUniverse=useCallback(async function(){
     setLoading(true);
