@@ -12,7 +12,7 @@ import {
   DAILY_HIST_MAX
 } from "./lib/analyze";
 // 銘柄の「今の状態」（注意／すでに上昇／大きな動きなし／データ不足）。スキャン結果の marketState に入れる
-import { calcMarketState, isTachibanaQuoteTime, toTachibanaQuoteSet, TACHIBANA_QUOTES_MAX } from "./lib/marketState";
+import { calcMarketState, isTachibanaQuoteTime, toTachibanaQuoteSet, TACHIBANA_QUOTES_MAX, EXTENDED_SCORE, MARKET_STATE_LABELS } from "./lib/marketState";
 
 // ── スマホ幅判定（768px未満をスマホ扱い。画面回転・分割表示にも追従）─────────
 // iPadのSafariは「デスクトップ用Webサイトを表示」が既定のため、画面を半分にしても
@@ -669,10 +669,13 @@ async function fetchYahooSafe(ticker){
 // 日本時間の平日 9:00〜15:30 だけ、一覧の日本株をまとめて api/sync.js?resource=tachibana-quotes に問い合わせる。
 // 時間外・失敗・時間切れ（中継側4秒）・HTTP 502 は null を返し、全銘柄を Yahoo の値で計算する（例外は投げない）。
 // 1回で送れるのは TACHIBANA_QUOTES_MAX 件まで。それを超えた分の銘柄は Yahoo の値で計算する
+// 送るのは末尾の .T を外したコードが日本株の形（先頭が数字の4文字・数字と英大文字）のものだけ。
+// 形の違うコードは送らず、その銘柄だけ Yahoo の値で計算する（中継側でまとめて弾かれないようにするため）
 var TACHIBANA_QUOTES_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-quotes";
+var JP_QUOTE_CODE_RE=/^[0-9][0-9A-Z]{3}$/;
 async function fetchQuotesForScan(universe){
   if(!isTachibanaQuoteTime(Date.now()))return null;
-  var codes=universe.filter(function(s){return s.ticker&&s.ticker.endsWith(".T");}).map(function(s){return s.ticker.replace(".T","");}).slice(0,TACHIBANA_QUOTES_MAX);
+  var codes=universe.filter(function(s){return s.ticker&&/\.T$/.test(s.ticker);}).map(function(s){return s.ticker.replace(/\.T$/,"");}).filter(function(c){return JP_QUOTE_CODE_RE.test(c);}).slice(0,TACHIBANA_QUOTES_MAX);
   if(!codes.length)return null;
   try{
     var res=await fetch(TACHIBANA_QUOTES_API+"&codes="+encodeURIComponent(codes.join(",")),{signal:AbortSignal.timeout(8000),cache:"no-store"});
@@ -915,6 +918,9 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,
   // → 将来「自分の勝ちトレードに実際に効いていたシグナル」を分析できるようにする土台。今は記録のみ
   // ※🔮統計予想（forecastAtAdd）は検証で効果が無かったため新規には記録しない。過去の記録に残る値は消さない
   var sigKeysAtAdd=(s.signals||[]).map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
+  // 登録時点の「今の状態」。後から状態別に成績を見られるよう、まとめた物ではなく項目ごとに分けて残す。
+  // スキャン前・米国株などで marketState が無いときは null（この項目が無い過去の記録と同じく「—」表示）
+  var ms=s.marketState||null;
   list.push({
     id:"t"+Date.now()+Math.random().toString(36).slice(2,6),
     ticker:s.ticker,name:s.name,market:s.market,
@@ -930,6 +936,10 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,
     scoreAtAdd:s.score!=null?s.score:null, // 登録時点のスコア
     styleAtAdd:s.tradeType||null, // 登録時点の手法バッジ（short=スキャル/mid=デイトレ/stable=スイング）
     sigKeysAtAdd:sigKeysAtAdd, // 登録時点で点灯していたシグナル一覧
+    marketStateAtAdd:ms?ms.state:null, // 登録時点の今の状態（caution/extended/calm/noData）
+    marketScoreAtAdd:ms&&ms.score!=null?ms.score:null, // 登録時点の上がりきり度の合計点
+    marketAsOfAtAdd:ms?ms.asOf:null, // 上の2つの計算に使った値の時刻（日本時間の ISO 文字列）
+    marketDelayedAtAdd:ms?!!ms.delayed:null, // その値が15分遅れ（場中に Yahoo の値を使った）か
     decisionTags:normDecisionTags(decisionTags), // 何で決めたか（app/chart/board/news/gut・複数可・空＝未記録）
     confidence:normConfidence(confidence), // 自信の度合い（1低い/2ふつう/3高い・null＝未記録）
     lastPrice:curPrice,
@@ -3787,6 +3797,29 @@ function calcS1(breakdown){
   return sum;
 }
 
+// ── 「今の状態」（marketState）の表示用 ─────────────────────────────────
+// 色は状態によらず控えめな灰色系で統一する（緑・赤は「買い」「売り」と読まれやすいため使わない）
+var MS_COLOR={bg:"#101826",border:"#2a4060",text:"#8aa8c8"};
+var MS_CAUTION_LABEL={rough:"荒い",lowTurnover:"売買代金が少ない",bigDrop:"大きく下がった"};
+// 合計点は切り捨てで整数にする（四捨五入だと 59.6 が 60 と出て「すでに上昇」の境目と食い違うため）
+function msScoreText(ms){return ms&&ms.score!=null?String(Math.floor(ms.score)):"";}
+// カードに出す文字。「すでに上昇」は合計点つき、「注意」「データ不足」は文字だけ、それ以外は出さない
+function msCardText(s){
+  var ms=s&&s.market==="JP"?s.marketState:null;
+  if(!ms) return null;
+  if(ms.state==="extended") return ms.label+" "+msScoreText(ms);
+  if(ms.state==="caution"||ms.state==="noData") return ms.label;
+  return null;
+}
+// 値の時刻と出どころ。例: 「立花 10:09 時点」「Yahoo・15分遅れ 10:09 時点」「引け後（10/30）」
+// 今日以外の場中の値は日付も添える（古いスキャン結果を開いたままのときに今日の値と誤読しないため）
+function msAsOfText(ms){
+  if(!ms||!ms.asOf) return null;
+  var date=ms.asOf.slice(0,10),md=String(Number(ms.asOf.slice(5,7)))+"/"+String(Number(ms.asOf.slice(8,10)));
+  if(ms.mode==="close") return "引け後（"+md+"）";
+  var src=ms.source==="tachibana"?"立花":(ms.delayed?"Yahoo・15分遅れ":"Yahoo");
+  return src+" "+(date!==obsTodayJst()?md+" ":"")+ms.asOf.slice(11,16)+" 時点";
+}
 function StockCard(p){
   var s=p.s,toggleFav=p.toggleFav,isFav=p.isFav,cross=p.cross,onRescan=p.onRescan,rescanLoading=p.rescanLoading;
   var star=starStyle(s.ticker,isFav,p.personalTrades);
@@ -3834,6 +3867,7 @@ function StockCard(p){
             {(function(){var mi=momentumInfo(s.momentum);return mi&&<span style={bStyle(mi.bg,"1px solid "+mi.color,mi.color)} title={"初動スコア "+mi.score+"/100（対TOPIX累積"+(mi.relSum>=0?"+":"")+mi.relSum+"%）。これから数日で動き出しそうな銘柄を、上昇済みスコアとは別の観点で評価した点数。60点以上が候補"}>🌱初動{mi.score}</span>;})()}
             {(function(){var ri=relStrengthInfo(s.relStrength);return ri&&<span style={bStyle(ri.strong?"#052e16":"#1f0010","1px solid "+(ri.strong?"#22d3a0":"#f43f5e"),ri.strong?"#22d3a0":"#f43f5e")} title={"対TOPIX相対(前日比差): "+ri.label}>{ri.strong?"🔥対TOPIX":"🧊対TOPIX"}{ri.label}</span>;})()}{(function(){var dn=DAYNIGHT[s.ticker];if(!dn)return null;var pos=dn.day>0;return <span style={bStyle(pos?"#052e16":"#101826","1px solid "+(pos?"#22d3a0":"#2a4060"),pos?"#22d3a0":"#4a7090")} title={"過去1年の値動きの分解（"+dn.days+"日分）: 日中(始値→終値)の累積"+(dn.day>=0?"+":"")+dn.day+"% / 夜間(前日終値→始値)の累積"+(dn.night>=0?"+":"")+dn.night+"%。日中分がプラスなら、持ち越さないデイトレと相性が良い日中型"}>{(pos?"☀️日中+":"🌙日中")+dn.day+"%"}</span>;})()}
             {(function(){var st=sig3BadgeText(s);return st&&<span style={bStyle("#0a1a3a","#2a4060","#60a5fa")} title={"コンフルエンス・EMA整列・出来高の3つがプラスになったのを今日最初に確認した時刻と、その時の価格から今の現在値までの値動き。「前日〜」は寄り前の自動スキャンで確認済み"}>{st}</span>;})()}
+            {(function(){var mt=msCardText(s);return mt&&<span style={bStyle(MS_COLOR.bg,MS_COLOR.border,MS_COLOR.text)} title={"今の状態（予測ではありません）。"+(msAsOfText(s.marketState)||"")}>{mt}</span>;})()}
           </div>
           {(function(){
             var aw=s.actualWinRate;
@@ -4298,6 +4332,62 @@ function VerdictPanel(p){
     </div>
   );
 }
+// ── 「今の状態」パネル（銘柄詳細で総合判定の欄の代わりに出す。日本株のみ）──────
+// 5部品の値と点数は最初は閉じておき、タップで開く。米国株では呼び出し側で出さない
+var MS_PART_LABEL={change:"前日終値→今の値段",fromOpen:"始値→今の値段",liftAtr:"当日安値からの上げ幅（ATR比）",maGap:"25日線からの離れ",upStreak:"連続で上がった日数"};
+function msPartValueText(pt){
+  if(pt.value==null) return "—";
+  if(pt.key==="liftAtr") return pt.value.toFixed(2)+"倍";
+  if(pt.key==="upStreak") return pt.value+"日";
+  return (pt.value>=0?"+":"")+(pt.value*100).toFixed(2)+"%";
+}
+function MarketStatePanel(p){
+  var ms=p.ms;
+  var openS=useState(false);var open=openS[0],setOpen=openS[1];
+  var box={background:"#071428",border:"1px solid "+MS_COLOR.border,borderRadius:8,padding:"6px 10px"};
+  var head=<span style={{fontSize:10,fontWeight:700,color:"#8aa8c8"}}>📍今の状態</span>;
+  if(!ms){
+    return(
+      <div style={box}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          {head}<span style={{fontSize:10,color:"#4a7090"}}>スキャンすると表示されます</span>
+        </div>
+      </div>
+    );
+  }
+  var asOf=msAsOfText(ms);
+  return(
+    <div style={box}>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        {head}
+        <span style={{fontSize:12,fontWeight:800,color:"#d8eeff",lineHeight:1}}>{ms.label}{ms.state==="extended"&&" "+msScoreText(ms)}</span>
+        {asOf&&<span style={{fontSize:10,color:"#4a7090",marginLeft:"auto"}}>{asOf}</span>}
+      </div>
+      {ms.state==="caution"&&ms.cautions&&ms.cautions.length>0&&(
+        <div style={{fontSize:10,color:"#8aa8c8",marginTop:3}}>当たった条件: {ms.cautions.map(function(c){return MS_CAUTION_LABEL[c]||c;}).join("・")}</div>
+      )}
+      <div style={{fontSize:9,color:"#4a7090",marginTop:3}}>※予測ではありません</div>
+      {ms.parts&&ms.parts.length>0&&(
+        <div style={{marginTop:3}}>
+          <button type="button" onClick={function(){setOpen(function(v){return !v;});}} style={{background:"transparent",border:"none",padding:0,color:"#6a90b0",fontSize:10,cursor:"pointer"}}>{open?"▾":"▸"} 5部品の値と点数</button>
+          {open&&(
+            <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:3}}>
+              {ms.parts.map(function(pt){
+                return(
+                  <div key={pt.key} style={{display:"flex",justifyContent:"space-between",gap:8,fontSize:10,color:"#8aa8c8"}}>
+                    <span>{MS_PART_LABEL[pt.key]||pt.key}</span>
+                    <span style={{whiteSpace:"nowrap"}}>{msPartValueText(pt)}<span style={{color:"#4a7090",marginLeft:6}}>{pt.points!=null?pt.points.toFixed(1):"—"}/20点</span></span>
+                  </div>
+                );
+              })}
+              <div style={{fontSize:10,color:"#4a7090",marginTop:2}}>合計 {ms.score!=null?ms.score.toFixed(2):"—"}点（{EXTENDED_SCORE}点以上で「すでに上昇」）</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 // ── 買値パネル（デイトレ用・エントリー1本／横1行コンパクト表示）──────
 function BuyPlanPanel(p){
   var isMobile=useIsMobile();
@@ -4404,7 +4494,6 @@ function StockDetailPanel(p){
   var isUp=parseFloat(s.change)>=0;
   var isMobile=useIsMobile();
   var mc=MKT[s.market]||MKT["US"];
-  var bc=BADGE[s.verdict||s.timing]||BADGE[s.timing];
   var borderColor=s.score>=58?"#22d3a0":s.score>=38?"#fbbf24":"#f43f5e";
   var fromHighColor=s.fromHigh>=-10?"#f43f5e":s.fromHigh>=-30?"#fbbf24":"#22d3a0";
   var fromLowColor=s.fromLow<=20?"#22d3a0":s.fromLow<=50?"#fbbf24":"#f43f5e";
@@ -4524,7 +4613,6 @@ function StockDetailPanel(p){
           {s.market==="US"&&p.usdJpy&&<div style={{fontSize:13,color:"#4a7090"}}>¥{Math.round(s.rawPrice*p.usdJpy).toLocaleString()}</div>}
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <span style={bStyle(bc.bg,bc.border,bc.text)}>{bc.label}</span>
           {s.real!==false&&(function(){
             var pct=liveTick&&liveTick.changePct!=null?liveTick.changePct:parseFloat(s.change);
             var up=pct>=0;
@@ -4534,7 +4622,8 @@ function StockDetailPanel(p){
       </div>
 
 
-      <VerdictPanel v={s.verdictInfo}/>
+      {/* 総合判定の欄（VerdictPanel）は「今の状態」に置き換えた。総合判定の計算と VerdictPanel 自体は③で片付けるまで残す */}
+      {s.market==="JP"&&<MarketStatePanel ms={s.marketState}/>}
 
       <BuyPlanPanel plan={s.buyPlan} isJP={s.market==="JP"} intraday={intraday}/>
 
@@ -5294,6 +5383,16 @@ function TradeMiniTile(p){
 }
 
 // ── トレード詳細モーダル：ステータス表示・損益・売買価格/株数の編集 ─────────────
+// トレード記録に残した登録時の「今の状態」の表示。例: 「すでに上昇 72（10/30 10:09・15分遅れ）」
+// この項目が無い過去の記録・登録時に marketState が無かった記録は「—」
+function tradeMarketStateText(t){
+  if(!t||!t.marketStateAtAdd) return "—";
+  var txt=MARKET_STATE_LABELS[t.marketStateAtAdd]||t.marketStateAtAdd;
+  if(t.marketStateAtAdd==="extended"&&t.marketScoreAtAdd!=null) txt+=" "+Math.floor(t.marketScoreAtAdd); // 合計点はカード・詳細と同じく「すでに上昇」のときだけ添える
+  var a=t.marketAsOfAtAdd;
+  if(a) txt+="（"+String(Number(a.slice(5,7)))+"/"+String(Number(a.slice(8,10)))+" "+a.slice(11,16)+(t.marketDelayedAtAdd?"・15分遅れ":"")+"）";
+  return txt;
+}
 function TradeDetailModal(p){
   var t=p.t,kind=p.kind;
   var isJP=t.market==="JP";
@@ -5415,6 +5514,7 @@ function TradeDetailModal(p){
             </div>
           </div>
         )}
+        {isJP&&<div style={{fontSize:11,color:"#4a7090"}}>登録時の今の状態: {tradeMarketStateText(t)}</div>}
         {!(editing&&t.status==="waiting")&&<div style={{fontSize:11,color:"#4a7090"}}>{decisionSummary(t)}{editing&&<span style={{color:"#2a6090",marginLeft:6}}>（待機中のみ変更できます）</span>}</div>}
 
         {t.status==="done"&&<div style={{fontSize:16,fontWeight:800,color:t.pnl>=0?"#22d3a0":"#f43f5e"}}>{fmtPnl(t.pnl,isJP)} <span style={{fontSize:11,fontWeight:400}}>({t.pnlPercent>=0?"+":""}{t.pnlPercent.toFixed(1)}%)</span>{tradeR(t)!=null&&<span style={{fontSize:13,marginLeft:8}}>{(tradeR(t)>=0?"+":"")+tradeR(t).toFixed(2)}R</span>}{tradeRisk(t)!=null&&<span style={{fontSize:10,fontWeight:400,color:"#4a7090",marginLeft:6}}>1R=¥{Math.round(tradeRisk(t)).toLocaleString()}</span>}</div>}
@@ -6684,6 +6784,17 @@ export default function App(){
   var predResS=useState("");var predictionResult=predResS[0],setPredictionResult=predResS[1];
   var predLoadS=useState(false);var predictionLoading=predLoadS[0],setPredictionLoading=predLoadS[1];
   var selStockS=useState(null);var selectedStock=selStockS[0],setSelectedStock=selStockS[1];
+  // 開いている銘柄詳細は選んだ時点のスキャン結果を持ち続けるため、再スキャン（全体・1銘柄）で一覧が
+  // 入れ替わったら、同じ銘柄コードの新しい結果に丸ごと入れ替える（スコアと今の状態などの時刻をそろえるため）。
+  // 詳細パネルは銘柄コードを key にしていて、入力値（損益シミュレーション等）の初期化も銘柄コードが変わったときだけなので、
+  // 同じ銘柄の入れ替えでは入力値は消えない。一覧に無い銘柄を開いているときは入れ替えない
+  useEffect(function(){
+    setSelectedStock(function(prev){
+      if(!prev) return prev;
+      var hit=stocks.find(function(s){return s.ticker===prev.ticker;});
+      return hit||prev;
+    });
+  },[stocks]);
   var k=useState(loadActiveTab);var activeTab=k[0],setActiveTab=k[1];
   // タブを切り替えるたびに記憶する（次に開いたとき同じタブから始めるため）
   useEffect(function(){saveActiveTab(activeTab);},[activeTab]);
@@ -7126,7 +7237,19 @@ export default function App(){
   },[vix,startDayNightFill]);
   function startFavsOnly(){setStartMode("favs");scanFavsOnly();}
   var rescanLoadingS=useState({});var rescanLoading=rescanLoadingS[0],setRescanLoading=rescanLoadingS[1];
-  var rescanOne=useCallback(async function(ticker){
+  // 実行中の1銘柄再スキャン（銘柄コード → その Promise）。銘柄を選ぶとカード側と詳細側の両方から呼ばれるため、
+  // 同じ銘柄が実行中なら新しく始めずにその結果を使う（立花の中継の1分10回の上限を2回ずつ消費しないため）
+  var rescanInflightRef=useRef({});
+  var rescanOne=useCallback(function(ticker){
+    var inflight=rescanInflightRef.current;
+    if(inflight[ticker]) return inflight[ticker];
+    var job=rescanOneRun(ticker);
+    inflight[ticker]=job;
+    function done(){if(inflight[ticker]===job)delete inflight[ticker];}
+    job.then(done,done);
+    return job;
+  },[stocks]);
+  async function rescanOneRun(ticker){
     setRescanLoading(function(prev){var n=Object.assign({},prev);n[ticker]=true;return n;});
     delete CACHE[ticker];
     try{
@@ -7144,7 +7267,7 @@ export default function App(){
     }finally{
       setRescanLoading(function(prev){var n=Object.assign({},prev);delete n[ticker];return n;});
     }
-  },[stocks]);
+  }
   // 「今の銘柄でリロード」：業種の再選定は行わず、現在表示中の銘柄だけ最新データで再分析
   var reloadCurrentUniverse=useCallback(async function(){
     setLoading(true);
