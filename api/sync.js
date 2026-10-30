@@ -190,6 +190,62 @@ async function handleScanResult(req, res) {
   }
 }
 
+// ④ 複数銘柄の立花の時価（GET ?codes=7203,6758）。手動スキャンが1回につき1回だけ呼ぶ
+// tachibana-server の /quotes へ中継する。合言葉はサーバー側の環境変数から付けるため、ブラウザには渡さない。
+// 日本時間の平日 9:00〜15:30 以外は立花を呼ばずに outside:true を返す（アプリは Yahoo の値を使う）。
+// 失敗（時間切れ4秒・tachibana-server の 502 など）は 502 で返す。控え値（withFallback）は使わない
+//
+// 合言葉なしで受け付けるため、立花を呼ぶ回数に全体で1分あたり QUOTES_RATE_LIMIT 回の上限を付ける。
+// 上限を超えたら立花を呼ばずに 429 を返す（アプリは失敗として Yahoo の値で計算する）。
+// 自動スキャン（api/_scan.js）はこの中継を通らず stock.js の fetchTachibanaQuotes を直接呼ぶため、数に入らない
+const QUOTES_RATE_LIMIT = 10;      // 1分あたりの回数の上限（全体で）
+const QUOTES_RATE_TTL = 70;        // 分ごとの数のキーを消すまでの秒数（分の切り替わりをまたいでも数え直さないよう少し長め）
+const QUOTES_RATE_PREFIX = 'tachibana:quotes:count:';
+// 日本株の銘柄コードの形: 数字4桁（7203）、または先頭が数字で数字と英字の4文字（285A・130A）
+const JP_CODE_RE = /^[0-9][0-9A-Z]{3}$/;
+
+// 今の分の数を1つ増やして返す。キーは「分」ごと（Unix 分）で、最初の1回で TTL 付きで作る。
+// 数えるのは incr（Redis 側で1つ増やす）なので、同時に呼ばれても数え漏れない
+async function countQuotesCall() {
+  const key = QUOTES_RATE_PREFIX + Math.floor(Date.now() / 60000);
+  await redis.set(key, 0, { nx: true, ex: QUOTES_RATE_TTL });
+  return await redis.incr(key);
+}
+
+async function handleTachibanaQuotes(req, res) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'method not allowed' });
+  const { isTachibanaQuoteTime, TACHIBANA_QUOTES_MAX } = await import('../src/lib/marketState.js');
+  const raw = String(req.query.codes || '').split(',').map(function (c) { return c.trim().toUpperCase().replace(/\.T$/, ''); })
+    .filter(function (c) { return c !== ''; });
+  if (!raw.length) return res.status(400).json({ error: 'codes required' });
+  // 日本株のコードの形でないものが1つでもあれば、まとめて受け付けない
+  const bad = raw.filter(function (c) { return !JP_CODE_RE.test(c); });
+  if (bad.length) return res.status(400).json({ error: 'invalid codes: ' + bad.slice(0, 5).join(',') });
+  const seen = {};
+  const codes = raw.filter(function (c) { if (seen[c]) return false; seen[c] = true; return true; });
+  if (codes.length > TACHIBANA_QUOTES_MAX) return res.status(400).json({ error: 'too many codes (max ' + TACHIBANA_QUOTES_MAX + ')' });
+  if (!isTachibanaQuoteTime()) return res.status(200).json({ outside: true, quotes: [] });
+  // 回数の上限。数えられない（Redis の失敗）ときも立花は呼ばない（上限を確かめられないまま呼ばないため）
+  let count;
+  try {
+    count = await countQuotesCall();
+  } catch (e) {
+    console.log('[tachibana-quotes] 回数の記録に失敗: ' + e.message);
+    return res.status(503).json({ error: 'rate counter unavailable' });
+  }
+  if (count > QUOTES_RATE_LIMIT) {
+    return res.status(429).json({ error: 'too many requests (max ' + QUOTES_RATE_LIMIT + ' per minute)' });
+  }
+  try {
+    // api/stock.js は xlsx を読み込むため、他の resource のコールドスタートを重くしないよう動的importにする
+    const { fetchTachibanaQuotes } = await import('./stock.js');
+    return res.status(200).json(await fetchTachibanaQuotes(codes));
+  } catch (e) {
+    console.log('[tachibana-quotes] 取得失敗: ' + e.message);
+    return res.status(502).json({ error: e.message });
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -202,6 +258,7 @@ export default async function handler(req, res) {
   if (resource === 'scan-universe') return handleScanUniverse(req, res);
   if (resource === 'scan-run') return handleScanRun(req, res);
   if (resource === 'scan-result') return handleScanResult(req, res);
+  if (resource === 'tachibana-quotes') return handleTachibanaQuotes(req, res);
 
   // ここから下はデバイス間同期処理
   const { userId } = req.query;

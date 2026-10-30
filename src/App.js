@@ -11,6 +11,8 @@ import {
   baseSigLabel, signalQuality, INTRADAY_SESSIONS,
   DAILY_HIST_MAX
 } from "./lib/analyze";
+// 銘柄の「今の状態」（注意／すでに上昇／大きな動きなし／データ不足）。スキャン結果の marketState に入れる
+import { calcMarketState, isTachibanaQuoteTime, toTachibanaQuoteSet, TACHIBANA_QUOTES_MAX } from "./lib/marketState";
 
 // ── スマホ幅判定（768px未満をスマホ扱い。画面回転・分割表示にも追従）─────────
 // iPadのSafariは「デスクトップ用Webサイトを表示」が既定のため、画面を半分にしても
@@ -613,7 +615,7 @@ function pickOpen900(q){
 // 15分足データ取得（メイン分析用・約20営業日分。実際の取得期間はapi/stock.js側で固定）
 async function fetchYahoo(ticker){
   var now=Date.now();
-  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],opens:cached.opens?cached.opens.slice():[],dates:cached.dates?cached.dates.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,officialPrevClose:cached.officialPrevClose,officialVolume:cached.officialVolume,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,open900:cached.open900};}
+  if(CACHE[ticker]&&now-CACHE[ticker].ts<CACHE_TTL){var cached=CACHE[ticker].data;return{closes:cached.closes.slice(),highs:cached.highs.slice(),lows:cached.lows.slice(),volumes:cached.volumes?cached.volumes.slice():[],opens:cached.opens?cached.opens.slice():[],dates:cached.dates?cached.dates.slice():[],currentPrice:cached.currentPrice,previousClose:cached.previousClose,officialPrevClose:cached.officialPrevClose,officialVolume:cached.officialVolume,real:cached.real,per:cached.per,pbr:cached.pbr,analystTarget:cached.analystTarget,earningsDate:cached.earningsDate,exRightsDate:cached.exRightsDate,topixChange:cached.topixChange,open900:cached.open900,daily:cached.daily,marketTime:cached.marketTime};}
   var json=await enqueueStock(async function(){
     var res=await fetch(VERCEL_API+"?ticker="+encodeURIComponent(ticker),{signal:AbortSignal.timeout(25000),cache:"no-store"});
     var body=await res.json().catch(function(){return null;});
@@ -640,9 +642,11 @@ async function fetchYahoo(ticker){
   function fillVol(arr){var out=(arr||[]).slice();for(var j=0;j<out.length;j++)if(out[j]==null)out[j]=0;return out;}
   var per=result.per||null,pbr=result.pbr||null,analystTarget=result.analystTarget||null,earningsDate=result.earningsDate||null,exRightsDate=result.exRightsDate||null,topixChange=result.topixChange!=null?result.topixChange:null;
   var filledClose=fill(q.close);
-  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fillVol(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,officialPrevClose:(meta.regularMarketPreviousClose!=null?meta.regularMarketPreviousClose:null),officialVolume:(meta.regularMarketVolume!=null?meta.regularMarketVolume:null),real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,open900:pickOpen900(q)};
+  var data={closes:filledClose,highs:fill(q.high),lows:fill(q.low),volumes:fillVol(q.volume),opens:fill(q.open),dates:q.date||[],currentPrice:meta.regularMarketPrice||filledClose[filledClose.length-1],previousClose:meta.chartPreviousClose||0,officialPrevClose:(meta.regularMarketPreviousClose!=null?meta.regularMarketPreviousClose:null),officialVolume:(meta.regularMarketVolume!=null?meta.regularMarketVolume:null),real:true,per:per,pbr:pbr,analystTarget:analystTarget,earningsDate:earningsDate,exRightsDate:exRightsDate,topixChange:topixChange,open900:pickOpen900(q),
+    // 以下2つは「今の状態」（marketState）の計算用。日足3か月分と現在値の時刻（Unix秒）。スコア計算では読まない
+    daily:result.daily||null,marketTime:(meta.regularMarketTime!=null?meta.regularMarketTime:null)};
   CACHE[ticker]={ts:now,data:data};
-  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),opens:data.opens.slice(),dates:data.dates.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,officialPrevClose:data.officialPrevClose,officialVolume:data.officialVolume,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,open900:data.open900};
+  return{closes:data.closes.slice(),highs:data.highs.slice(),lows:data.lows.slice(),volumes:data.volumes.slice(),opens:data.opens.slice(),dates:data.dates.slice(),currentPrice:data.currentPrice,previousClose:data.previousClose,officialPrevClose:data.officialPrevClose,officialVolume:data.officialVolume,real:data.real,per:data.per,pbr:data.pbr,analystTarget:data.analystTarget,earningsDate:data.earningsDate,exRightsDate:data.exRightsDate,topixChange:data.topixChange,open900:data.open900,daily:data.daily,marketTime:data.marketTime};
 }
 
 
@@ -659,6 +663,32 @@ async function fetchYahooSafe(ticker){
       return genSim(ticker,err2.message);
     }
   }
+}
+
+// ── 「今の状態」用の立花の値（スキャン1回につき1回だけ取る）───────────────────
+// 日本時間の平日 9:00〜15:30 だけ、一覧の日本株をまとめて api/sync.js?resource=tachibana-quotes に問い合わせる。
+// 時間外・失敗・時間切れ（中継側4秒）・HTTP 502 は null を返し、全銘柄を Yahoo の値で計算する（例外は投げない）。
+// 1回で送れるのは TACHIBANA_QUOTES_MAX 件まで。それを超えた分の銘柄は Yahoo の値で計算する
+var TACHIBANA_QUOTES_API="https://daytrade-simulator.vercel.app/api/sync?resource=tachibana-quotes";
+async function fetchQuotesForScan(universe){
+  if(!isTachibanaQuoteTime(Date.now()))return null;
+  var codes=universe.filter(function(s){return s.ticker&&s.ticker.endsWith(".T");}).map(function(s){return s.ticker.replace(".T","");}).slice(0,TACHIBANA_QUOTES_MAX);
+  if(!codes.length)return null;
+  try{
+    var res=await fetch(TACHIBANA_QUOTES_API+"&codes="+encodeURIComponent(codes.join(",")),{signal:AbortSignal.timeout(8000),cache:"no-store"});
+    if(!res.ok){console.log("[quotes] 立花の時価の取得失敗 HTTP "+res.status+"（Yahooの値で計算）");return null;}
+    return toTachibanaQuoteSet(await res.json());
+  }catch(e){
+    console.log("[quotes] 立花の時価の取得失敗: "+e.message+"（Yahooの値で計算）");
+    return null;
+  }
+}
+// スコア計算の済んだ結果に marketState を足す。表示・並べ替え・スコアには使わない
+function attachMarketState(results,pdMap,quoteSet){
+  results.forEach(function(s){
+    try{s.marketState=calcMarketState(s,pdMap[s.ticker],quoteSet);}
+    catch(e){s.marketState=null;console.error("marketState error",s.ticker,e);}
+  });
 }
 
 // ── スキャン処理全体の自動リトライ ────────────────────────────────────────
@@ -7025,12 +7055,15 @@ export default function App(){
         setProgress({done:0,total:universe.length,msg:null});
         // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
         // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
-        var results=[];
+        var results=[],pdMap={};
+        var quotesP=fetchQuotesForScan(universe); // 「今の状態」用の立花の値。株価の取得と同時に1回だけ取る
         await Promise.all(universe.map(async function(stock){
           var pd=await fetchYahooSafe(stock.ticker);
+          pdMap[stock.ticker]=pd;
           try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
           setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
         }));
+        attachMarketState(results,pdMap,await quotesP);
         results.sort(function(x,y){return y.score-x.score;});
         setStocks(results);
         setTs(new Date().toLocaleTimeString("ja-JP"));
@@ -7069,12 +7102,15 @@ export default function App(){
         if(universe.length===0){setProgress({done:0,total:0,msg:"⚠️ お気に入り銘柄が登録されていません"});return;}
         await fillJPNames(universe); // 会社名がコードのままの銘柄に正式名称を補う
         setProgress({done:0,total:universe.length,msg:null});
-        var results=[];
+        var results=[],pdMap={};
+        var quotesP=fetchQuotesForScan(universe); // 「今の状態」用の立花の値。株価の取得と同時に1回だけ取る
         await Promise.all(universe.map(async function(stock){
           var pd=await fetchYahooSafe(stock.ticker);
+          pdMap[stock.ticker]=pd;
           try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
           setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
         }));
+        attachMarketState(results,pdMap,await quotesP);
         results.sort(function(x,y){return y.score-x.score;});
         setStocks(results);
         setTs(new Date().toLocaleTimeString("ja-JP"));
@@ -7096,8 +7132,11 @@ export default function App(){
     try{
       var existing=stocks.find(function(s){return s.ticker===ticker;});
       if(!existing) return;
+      var quotesP=fetchQuotesForScan([existing]); // 「今の状態」用の立花の値（この1銘柄だけ）
       var pd=await fetchYahooSafe(ticker);
       var updated=analyzeStock(existing,pd,vix);
+      var pdMap={};pdMap[ticker]=pd;
+      attachMarketState([updated],pdMap,await quotesP);
       setStocks(function(prev){return prev.map(function(s){return s.ticker===ticker?updated:s;});});
       // 続けて押されたときにまとめて1回で送るため、少し待ってから送る
       if(updated.save&&updated.save.daily)pushSyncSoon("1銘柄の再スキャン");
@@ -7116,12 +7155,15 @@ export default function App(){
         setProgress({done:0,total:universe.length,msg:attempt>0?"🔄 再試行中("+attempt+"/"+SCAN_MAX_RETRY+")...":null});
         // 実際の同時実行制御はSTOCK_QUEUE側で行うため、ここでは
         // 全銘柄分をまとめて呼び出すだけでよい（バッチ分割・待機は不要）
-        var results=[];
+        var results=[],pdMap={};
+        var quotesP=fetchQuotesForScan(universe); // 「今の状態」用の立花の値。株価の取得と同時に1回だけ取る
         await Promise.all(universe.map(async function(stock){
           var pd=await fetchYahooSafe(stock.ticker);
+          pdMap[stock.ticker]=pd;
           try{results.push(analyzeStock(stock,pd,vix));}catch(e){console.error("analyzeStock error",stock.ticker,e);}
           setProgress(function(p){return{done:p.done+1,total:p.total,msg:null};});
         }));
+        attachMarketState(results,pdMap,await quotesP);
         results.sort(function(x,y){return y.score-x.score;});
         setStocks(results);
         setTs(new Date().toLocaleTimeString("ja-JP"));
