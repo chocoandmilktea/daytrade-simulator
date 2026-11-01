@@ -54,6 +54,7 @@
 | 2026-08-30 | merge | tachibana-server | PR#20 寄り前収集の終了後に予想生成を自動呼び出し。生ログ保存成功時のみ `POST /api/sync?resource=premarket-prediction&date=<当日>` を1回叩く（タイムアウト30秒・リトライなし）。失敗時は `[warn]` 1行のみで収集の成否に影響させず、`errorCount`・`tickErrorCount` にも加算しない。予想の計算は Vercel 側（PR#56）にあり本変更では行わない | 無 |
 | 2026-08-30 | deploy | tachibana-server | 上記マージに伴うコンテナ全体の自動再デプロイ。日曜のため安全帯の制約なし（メンテ帯 3:00〜8:30 のみ回避）。起動ログで「分割 80件」と起動時 `[err]` 0件を確認 | 無 |
 | 2026-09-22 | merge | daytrade-simulator | `PM_Q_SLOPE`・`PM_Q_INTERCEPT`・`TACHIBANA_MARKET_PRICE_API` のコード上の参照を削除。詳細は 2026-09-22 の詳述セクション参照。PR #82 | 有 |
+| 2026-11-01 | config | GitHub Actions: forecast.yml / Secrets: SYNC_URL・USER_ID | 予測ワークフローを撤去し、Secrets の参照が無くなった。詳細は 2026-11-01 の詳述セクション参照 | 有 |
 
 ## 2026-08-24（月）— `PREMARKET_MAX=100` 実測判定：通過
 
@@ -138,3 +139,31 @@
 - `public/backtest.html`
 - `api/sync.js` の resource `premarket-log` / `premarket-summary`（`mode=calib`・`mode=coverage` を含む）/ `premarket-prediction`
 - Redis キー `premarket:log:<日付>` / `premarket:log:partial:<日付>` / `premarket:pred:<日付>` への書き込み経路。**既存キーは TTL（最長30日）で自然に消えるまで残る**
+
+## 2026-11-01（日）— 予測ワークフローの撤去に伴う Secrets の参照削除
+
+アプリを「予測ではなく今の状態を見せる」方針にしたため、毎晩の予測作り（Chronos）と、アプリ側の予測表示・予測の記録をすべて外した。これに伴い、次の GitHub Actions の Secrets を読むワークフローとスクリプトがリポジトリから無くなった。
+
+**参照が無くなった Secrets・環境変数**
+
+- `SYNC_URL` … `.github/workflows/forecast.yml` が `scripts/forecast.py` に渡していた。両ファイルとも削除
+- `USER_ID` … 同上
+- `MODEL`（既定 `amazon/chronos-bolt-small`）… `scripts/forecast.py` だけが読んでいた。Secrets には登録されていない
+
+**人間が別途行う作業**
+
+- **GitHub の Settings → Secrets and variables → Actions に残っている `SYNC_URL` と `USER_ID` の削除は、このマージには含まれない。** 人間が画面から削除する予定
+- ほかのワークフロー・スクリプトはこの2つを読んでいないため、削除しても動作に影響はない
+- Vercel 側の `SCAN_SYNC_USER_ID` は別物で、自動スキャンが使い続けるため消さないこと
+
+**あわせて削除したもの**
+
+- `.github/workflows/forecast.yml`（毎晩 0:00 JST・平日の予測バッチと、その結果の自動コミット）
+- `scripts/forecast.py`
+- `public/forecasts.json`
+- `src/App.js` の予測表示（日足チャートの予測の帯・AI予測の点線、Chronos予測の的中率の表）と、予測の記録・同期での `forecasts` の送受信
+
+**残したもの**
+
+- `api/sync.js` は古い版のアプリのために `forecasts` を受け取り・返し続ける（変更なし）
+- 端末内の `localStorage` の `fc_log_v1`・`fc_last_run` は読み書きをやめただけで、中身を消す処理は足していない
