@@ -524,7 +524,6 @@ async function fetchDaily(ticker){
       DAILY_CACHE[ticker]={ts:now,data:result};
       delete DAILY_FAIL[ticker]; // 成功したので失敗の印を消す
       try{var dn=computeDayNight(result);if(dn)DAYNIGHT[ticker]=dn;}catch(e){}
-      try{updateForecastLog(ticker,result);}catch(e){}
       return result;
     }catch(e){DAILY_FAIL[ticker]=Date.now();return null;}
   })();
@@ -1351,183 +1350,6 @@ function buildVolumeRankingPrompt(stocks,topN,jpLimited,dailyByTicker){
 // ────────────────────────────────────────────────────────────────────────────
 
 function calcSMA(arr,p){return arr.map(function(_,i){if(i<p-1)return null;var s=0;for(var j=i-p+1;j<=i;j++)s+=arr[j];return s/p;});}
-
-// ===== 予測レンジ（簡易版） =====
-// 直近period日の値動きの荒さσを求める。σ＝1日あたり何%動くかの目安（対数ベース）
-function calcVolSigma(closes,period){
-  if(!closes||closes.length<period+2)return null;
-  var r=[],st=closes.length-period;
-  for(var i=st;i<closes.length;i++){
-    if(closes[i-1]>0&&closes[i]>0)r.push(Math.log(closes[i]/closes[i-1]));
-  }
-  if(r.length<5)return null;
-  var m=0;for(var a=0;a<r.length;a++)m+=r[a];m/=r.length;
-  var v=0;for(var b=0;b<r.length;b++)v+=(r[b]-m)*(r[b]-m);
-  return Math.sqrt(v/(r.length-1));
-}
-// days営業日先のレンジ。√days＝時間の平方根ルール（日数が伸びるほど緩やかに広がる）
-function volBandAt(price,sigma,days,k){
-  var w=k*sigma*Math.sqrt(days);
-  return{u:price*Math.exp(w),l:price*Math.exp(-w)};
-}
-var BAND_K68=1.0, BAND_K90=1.645, BAND_DAYS=5; // 68%帯・90%帯・予測日数
-
-// ===== 予測レンジの記録と較正 =====
-// 保存するのは {t:銘柄, d:予測日, p:基準価格, s:σ, a:5営業日後の実際の終値} だけ。
-// 帯そのものは持たない。p・s・aさえあれば、どんな係数kでも後から成績を計算し直せる
-var FC_KEY="fc_log_v1", FC_MAX_DAYS=180, FC_MAX_ROWS=3000, FC_MIN_SAMPLES=30;
-var FC_CAL_CACHE=null, FC_CAL_TS=0;
-function fcLoad(){try{var v=localStorage.getItem(FC_KEY);return v?JSON.parse(v):[];}catch(e){return[];}}
-function fcSave(list){try{localStorage.setItem(FC_KEY,JSON.stringify(list));FC_CAL_CACHE=null;}catch(e){}}
-function fcIsFav(t){try{return JSON.parse(localStorage.getItem("fav_tickers")||"[]").indexOf(t)>=0;}catch(e){return false;}}
-
-// 日足を取ったタイミングで呼ぶ。(1)期日が来た予測の答え合わせ (2)当日分の記録
-function updateForecastLog(ticker,d){
-  if(!fcIsFav(ticker))return;                                   // お気に入り銘柄のみ対象
-  if(!d||!d.closes||!d.dates||d.closes.length<30)return;
-  var list=fcLoad(),changed=false,n=d.closes.length;
-  var idx={};for(var i=0;i<d.dates.length;i++)idx[d.dates[i]]=i;
-
-  // (1) 答え合わせ：予測日から5営業日後の終値が出ていれば書き込む
-  for(var j=0;j<list.length;j++){
-    var r=list[j];
-    if(r.t!==ticker||r.a!=null)continue;
-    var bi=idx[r.d];
-    if(bi==null||bi+BAND_DAYS>=n)continue;
-    r.a=d.closes[bi+BAND_DAYS];changed=true;
-  }
-
-  // (2) 当日分を記録（同じ銘柄・同じ日は1件だけ）
-  var today=d.dates[n-1];
-  var dup=false;for(var k=0;k<list.length;k++){if(list[k].t===ticker&&list[k].d===today){dup=true;break;}}
-  if(!dup){
-    var sg=calcVolSigma(d.closes,20);
-    if(sg>0){
-      var rec={t:ticker,d:today,p:d.closes[n-1],s:Math.round(sg*100000)/100000};
-      var cx=CHRONOS&&CHRONOS.items?CHRONOS.items[ticker]:null;
-      // cr = Chronosが見込む「5営業日後の倍率」。基準価格が違っても比較できるよう倍率で持つ
-      if(cx&&cx.p>0&&cx.q50&&cx.q50.length>=BAND_DAYS)rec.cr=Math.round(cx.q50[BAND_DAYS-1]/cx.p*10000)/10000;
-      list.push(rec);changed=true;
-    }
-  }
-
-  if(!changed)return;
-  // 古い記録は捨てる（180日より前 or 3000件超）
-  var limit=new Date(Date.now()-FC_MAX_DAYS*86400000).toISOString().slice(0,10);
-  list=list.filter(function(r){return r.d>=limit;});
-  if(list.length>FC_MAX_ROWS)list=list.slice(list.length-FC_MAX_ROWS);
-  fcSave(list);
-}
-
-// 実測から係数を求める。z=|ln(実績/基準)|/(σ√5) の分位点が、そのまま最適なkになる
-function fcCalibration(){
-  var now=Date.now();
-  if(FC_CAL_CACHE&&now-FC_CAL_TS<60000)return FC_CAL_CACHE;
-  var list=fcLoad(),z=[],rt=Math.sqrt(BAND_DAYS),total=list.length;
-  for(var i=0;i<list.length;i++){
-    var r=list[i];
-    if(r.a>0&&r.p>0&&r.s>0)z.push(Math.abs(Math.log(r.a/r.p))/(r.s*rt));
-  }
-  var out;
-  if(z.length<FC_MIN_SAMPLES){
-    out={n:z.length,total:total,k68:1,k90:1,ready:false};
-  }else{
-    z.sort(function(a,b){return a-b;});
-    function q(pp){return z[Math.min(z.length-1,Math.floor(pp*z.length))];}
-    function cov(k){var c=0;for(var i2=0;i2<z.length;i2++)if(z[i2]<=k)c++;return Math.round(c/z.length*100);}
-    out={n:z.length,total:total,k68:q(0.68)/BAND_K68,k90:q(0.90)/BAND_K90,ready:true,cov68:cov(BAND_K68),cov90:cov(BAND_K90)};
-  }
-  FC_CAL_CACHE=out;FC_CAL_TS=now;return out;
-}
-
-// ── Chronos予測の答え合わせ ────────────────────────────────────────────────
-// fc_log_v1に貯まった cr(予測倍率) と a(5営業日後の実績終値) を突き合わせ、
-// 「Chronosの予測が実際に当たっているか」を集計する。
-// 単独の的中率だけでは相場の地合いに引きずられるため、必ず基準線と並べて表示する。
-var CHR_NEUTRAL=0.003; // 予測幅が±0.3%未満は「横ばい予測」とみなし方向判定から除外
-var CHR_BANDS=[{min:0.003,max:0.01,label:"±0.3〜1%"},{min:0.01,max:0.03,label:"±1〜3%"},{min:0.03,max:99,label:"±3%以上"}];
-var CHR_ACC_CACHE=null,CHR_ACC_TS=0;
-function calcChronosAccuracy(){
-  var now=Date.now();
-  if(CHR_ACC_CACHE&&now-CHR_ACC_TS<60000)return CHR_ACC_CACHE;
-  var rows=fcLoad().filter(function(r){return r.cr>0&&r.a>0&&r.p>0;});
-  var win=0,tot=0,up=0,upTot=0;   // up/upTot = 常に「上昇」と予測した場合の的中率（基準線）
-  var errC=[],errFlat=[];         // 予測倍率の誤差 / 横ばい(1.0倍)と置いた場合の誤差
-  var bands=CHR_BANDS.map(function(b){return{label:b.label,w:0,t:0};});
-  rows.forEach(function(r){
-    var pred=r.cr,act=r.a/r.p;
-    errC.push(Math.abs(pred-act));errFlat.push(Math.abs(1-act));
-    upTot++;if(act>1)up++;
-    var mag=Math.abs(pred-1);
-    if(mag<CHR_NEUTRAL)return;
-    var hit=(pred>1)===(act>1);
-    tot++;if(hit)win++;
-    for(var i=0;i<CHR_BANDS.length;i++){
-      if(mag>=CHR_BANDS[i].min&&mag<CHR_BANDS[i].max){bands[i].t++;if(hit)bands[i].w++;break;}
-    }
-  });
-  function med(a){if(!a.length)return null;a.sort(function(x,y){return x-y;});return a[Math.floor(a.length/2)];}
-  var mc=med(errC),mf=med(errFlat);
-  CHR_ACC_CACHE={
-    total:tot,winRate:tot?Math.round(win/tot*100):null,
-    baseRate:upTot?Math.round(up/upTot*100):null,baseTotal:upTot,
-    maeC:mc!=null?Math.round(mc*1000)/10:null,      // %表示に変換
-    maeFlat:mf!=null?Math.round(mf*1000)/10:null,
-    bands:bands.map(function(b){return{label:b.label,winRate:b.t?Math.round(b.w/b.t*100):null,total:b.t};})
-  };
-  CHR_ACC_TS=now;return CHR_ACC_CACHE;
-}
-// 集計結果を「スコアに統合してよいか」の一言コメントに変換する
-function chronosVerdict(a){
-  if(a.total<20)return{msg:"判定にはあと"+(20-a.total)+"件必要です（方向判定20件以上で評価）",col:"#4a7090"};
-  if(a.winRate==null||a.baseRate==null)return{msg:"データ不足",col:"#4a7090"};
-  var d=a.winRate-a.baseRate;
-  if(d>=5)return{msg:"✅ 基準線を"+d+"ポイント上回っています。スコアへの統合（アンサンブル）を検討する価値があります",col:"#22d3a0"};
-  if(d<=-5)return{msg:"⚠️ 基準線を"+Math.abs(d)+"ポイント下回っています。今のままスコアに反映するのは避けたほうが無難です",col:"#f43f5e"};
-  return{msg:"→ 基準線とほぼ同等（差"+(d>=0?"+":"")+d+"ポイント）。もう少しデータを溜めてから判断してください",col:"#fbbf24"};
-}
-
-// 別デバイスの記録と突き合わせる。同じ銘柄・同じ日は「答え合わせ済み」を優先して残す
-function fcMerge(remote){
-  if(!remote||!remote.length)return;
-  var map={},list=fcLoad();
-  function put(r){
-    if(!r||!r.t||!r.d)return;
-    var key=r.t+"|"+r.d,old=map[key];
-    if(!old||(old.a==null&&r.a!=null))map[key]=r;
-  }
-  list.forEach(put);remote.forEach(put);
-  var merged=Object.keys(map).map(function(k){return map[k];});
-  merged.sort(function(a,b){return a.d<b.d?-1:a.d>b.d?1:0;});
-  if(merged.length>FC_MAX_ROWS)merged=merged.slice(merged.length-FC_MAX_ROWS);
-  fcSave(merged);
-}
-
-// GitHub Actionsが毎晩作る予測ファイルを1回だけ読む（無い場合はnullのまま動く）
-var CHRONOS=null, CHRONOS_P=null;
-function loadChronos(){
-  if(CHRONOS_P)return CHRONOS_P;
-  CHRONOS_P=fetch("/forecasts.json",{cache:"no-store"})
-    .then(function(r){return r.ok?r.json():null;})
-    .then(function(j){CHRONOS=j;return j;})
-    .catch(function(){return null;});
-  return CHRONOS_P;
-}
-
-// お気に入り全銘柄の予測を1日1回まとめて記録する（1銘柄ずつ開かなくても貯まるように）
-var FC_RUN_KEY="fc_last_run";
-function fcTodayJST(){return new Date(Date.now()+9*3600000).toISOString().slice(0,10);}
-async function recordFavForecasts(favs){
-  if(!favs||!favs.length)return;
-  var today=fcTodayJST();
-  try{if(localStorage.getItem(FC_RUN_KEY)===today)return;}catch(e){} // その日すでに実行済みなら何もしない
-  await loadChronos(); // 記録にChronosの予測も含めたいので先に読む
-  for(var i=0;i<favs.length;i++){
-    await fetchDaily(favs[i]); // この中で updateForecastLog が走る
-    await new Promise(function(r){setTimeout(r,400);}); // Yahooに負担をかけない間隔
-  }
-  try{localStorage.setItem(FC_RUN_KEY,today);}catch(e){}
-}
 
 // "YYYY-MM-DD"がその市場の取引日かどうか（土日・東証の祝日を除く）。
 // 休場中に記録された古いscoreHistを、スコア推移の集計から除くために使う
@@ -2729,20 +2551,9 @@ function dailyVWAPSeries(closes,highs,lows,volumes,dates){
   }
   return result;
 }
-// 日足6ヶ月チャート＋予測レンジ（右端に帯を描く）
-// 帯は右端15%の枠に5営業日分を割り当てて描く（そのままだと細すぎて見えないため）
-function DailyChartWithBand(p){
-  var d=p.daily,H=p.height||180,W=360,FX=306,BARS=126; // BARS=約6ヶ月
-  var cal=fcCalibration(); // 実測から求めた較正係数（件数が足りないうちは1のまま）
-  var k68=p.k68||cal.k68,k90=p.k90||cal.k90;
-  var chS=useState(null);var ch=chS[0],setCh=chS[1]; // この銘柄のChronos予測
-  useEffect(function(){
-    var alive=true;
-    loadChronos().then(function(j){
-      if(alive)setCh(j&&j.items&&p.ticker?(j.items[p.ticker]||null):null);
-    });
-    return function(){alive=false;};
-  },[p.ticker]);
+// 日足6ヶ月チャート（終値の線＋25日・75日移動平均線）
+function DailyChart(p){
+  var d=p.daily,H=p.height||180,W=360,BARS=126; // BARS=約6ヶ月
   if(!d||!d.closes||d.closes.length<30)
     return(<div style={{height:H,display:"flex",alignItems:"center",justifyContent:"center",color:"#4a7090",fontSize:11}}>日足データ取得中…</div>);
 
@@ -2750,55 +2561,21 @@ function DailyChartWithBand(p){
   var ma25a=trailingSMA(full,25),ma75a=trailingSMA(full,75);
   var closes=full.slice(-BARS),ma25=ma25a.slice(-BARS),ma75=ma75a.slice(-BARS);
   var dates=(d.dates||[]).slice(-BARS);
-  var n=closes.length,last=closes[n-1];
-  var sigma=calcVolSigma(full,20);
+  var n=closes.length;
 
-  // 1〜5営業日先の帯を作る
-  var b68=[],b90=[];
-  if(sigma){
-    for(var t=1;t<=BAND_DAYS;t++){
-      b68.push(volBandAt(last,sigma,t,BAND_K68*k68));
-      b90.push(volBandAt(last,sigma,t,BAND_K90*k90));
-    }
-  }
-
-  // 縦軸の範囲（帯の一番外側まで入るようにする）
+  // 縦軸の範囲（終値と移動平均線がすべて入るようにする）
   var vals=closes.slice();
   [ma25,ma75].forEach(function(arr){arr.forEach(function(v){if(v!=null)vals.push(v);});});
-  if(b90.length){vals.push(b90[BAND_DAYS-1].u);vals.push(b90[BAND_DAYS-1].l);}
-  // Chronosの予測は「予測時点の株価」を基準にしているので、現在値に合わせて倍率で寄せる
-  var chScale=(ch&&ch.p>0)?last/ch.p:1;
-  var chQ50=(ch&&ch.q50&&ch.q50.length>=BAND_DAYS)?ch.q50.map(function(v){return v*chScale;}):null;
-  if(chQ50)chQ50.forEach(function(v){vals.push(v);});
   var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals);
   var rng=(mx-mn)||1;mn-=rng*0.05;mx+=rng*0.05;rng=mx-mn;
 
   function toY(v){return H-((v-mn)/rng)*(H-6)-3;}
-  function toXh(i){return n>1?(i/(n-1))*FX:0;}        // 履歴部のX
-  function toXf(t){return FX+(t/BAND_DAYS)*(W-FX);}   // 予測部のX
+  function toXh(i){return n>1?(i/(n-1))*W:0;}
   function lineOf(arr){
     var o=[];for(var i=0;i<arr.length;i++){if(arr[i]!=null)o.push(toXh(i)+","+toY(arr[i]));}
     return o.join(" ");
   }
-  function bandPts(b){
-    var up=[],lo=[];
-    for(var t=1;t<=BAND_DAYS;t++){up.push(toXf(t)+","+toY(b[t-1].u));lo.unshift(toXf(t)+","+toY(b[t-1].l));}
-    return FX+","+toY(last)+" "+up.join(" ")+" "+lo.join(" ");
-  }
-  function fmt(v){return Math.round(v).toLocaleString();}
   var dateLabels=dates.length>1?pickDateLabels(dates,5):[]; // 日付ラベル＋その位置の縦目盛線
-  // Chronosの5日後が、簡易版の帯の内側か外側かを見る（外側＝平常の値動きを超える動き）
-  var chLine=null,chJudge=null;
-  if(chQ50&&b68.length){
-    var cp=[FX+","+toY(last)];
-    for(var ct=1;ct<=BAND_DAYS;ct++)cp.push(toXf(ct)+","+toY(chQ50[ct-1]));
-    chLine=cp.join(" ");
-    var ce=chQ50[BAND_DAYS-1];
-    var lv=(ce>b90[BAND_DAYS-1].u||ce<b90[BAND_DAYS-1].l)?2:(ce>b68[BAND_DAYS-1].u||ce<b68[BAND_DAYS-1].l)?1:0;
-    chJudge={v:ce,up:ce>last,pct:(ce/last-1)*100,lv:lv,
-             txt:lv===2?"平常を大きく超える":lv===1?"平常よりやや大きい":"平常の範囲内",
-             col:lv===2?"#fbbf24":lv===1?"#a3e635":"#6a90b0"};
-  }
   var priceLevels=[mx,mn+rng*2/3,mn+rng/3,mn]; // 右端に出す価格目盛（4本）
   var GUTTER=46; // 価格ラベル用の右余白
 
@@ -2815,17 +2592,12 @@ function DailyChartWithBand(p){
             return(<line key={"h"+i} x1={0} y1={toY(v)} x2={W} y2={toY(v)} stroke="#1a2c44" strokeWidth={1} vectorEffect="non-scaling-stroke"/>);
           })}
           {dateLabels.map(function(t,i){
-            if(i===0)return null; // 左端は枠と重なるので引かない
+            if(i===0||i===dateLabels.length-1)return null; // 両端は枠と重なるので引かない
             return(<line key={"g"+i} x1={toXh(t.index)} y1={0} x2={toXh(t.index)} y2={H} stroke="#1a2c44" strokeWidth={1} vectorEffect="non-scaling-stroke"/>);
           })}
-          {b90.length>0&&<polygon points={bandPts(b90)} fill="#38bdf8" opacity={0.10}/>}
-          {b68.length>0&&<polygon points={bandPts(b68)} fill="#38bdf8" opacity={0.20}/>}
-          <line x1={FX} y1={0} x2={FX} y2={H} stroke="#2a4060" strokeWidth={1} strokeDasharray="2,2" vectorEffect="non-scaling-stroke"/>
-          <line x1={FX} y1={toY(last)} x2={W} y2={toY(last)} stroke="#8a9bb0" strokeWidth={1} strokeDasharray="3,2" vectorEffect="non-scaling-stroke"/>
           <polyline points={lineOf(ma75)} fill="none" stroke="#f472b6" strokeWidth={1} vectorEffect="non-scaling-stroke"/>
           <polyline points={lineOf(ma25)} fill="none" stroke="#a3e635" strokeWidth={1} vectorEffect="non-scaling-stroke"/>
           <polyline points={lineOf(closes)} fill="none" stroke="#e8eef5" strokeWidth={0.9} vectorEffect="non-scaling-stroke"/>
-          {chLine&&<polyline points={chLine} fill="none" stroke="#fbbf24" strokeWidth={1.3} strokeDasharray="4,2" vectorEffect="non-scaling-stroke"/>}
         </svg>
       </div>
       <div style={{width:GUTTER,flexShrink:0,position:"relative",height:H}}>
@@ -2839,27 +2611,13 @@ function DailyChartWithBand(p){
         <div style={{display:"flex",gap:4}}>
         <div style={{position:"relative",flex:1,minWidth:0,height:13,marginTop:1}}>
           {dateLabels.map(function(t,i){
-            return(<span key={i} style={{position:"absolute",left:(toXh(t.index)/W)*100+"%",top:0,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",transform:i===0?"translateX(0%)":"translateX(-50%)"}}>{t.label}</span>);
+            // 右端のラベルはチャートの右端に揃える（中央揃えだと右の価格目盛に食い込むため）
+            var tf=i===0?"translateX(0%)":i===dateLabels.length-1?"translateX(-100%)":"translateX(-50%)";
+            return(<span key={i} style={{position:"absolute",left:(toXh(t.index)/W)*100+"%",top:0,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",transform:tf}}>{t.label}</span>);
           })}
-          <span style={{position:"absolute",right:0,top:0,fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>+5日</span>
         </div>
         <div style={{width:GUTTER,flexShrink:0}}/>
         </div>
-      )}
-      {sigma?(
-        <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:10,color:"#6a90b0",padding:"5px 4px 2px",fontFamily:"monospace"}}>
-          <span>1日後 <b style={{color:"#38bdf8"}}>{fmt(b68[0].l)}〜{fmt(b68[0].u)}</b></span>
-          <span>5日後 <b style={{color:"#38bdf8"}}>{fmt(b68[4].l)}〜{fmt(b68[4].u)}</b></span>
-          <span style={{color:"#4a7090"}}>(68%目安・濃い帯)</span>
-          {chJudge&&<span style={{color:chJudge.col}} title="毎晩の自動予測(Chronos)。黄色い点線がその中心線">
-            ┈AI予測 {fmt(chJudge.v)} {chJudge.up?"↑":"↓"}{(chJudge.pct>0?"+":"")+chJudge.pct.toFixed(1)}%・{chJudge.txt}
-          </span>}
-          {cal.ready
-            ? <span style={{color:"#22d3a0"}} title={"較正前の実カバー率: 68%帯="+cal.cov68+"% / 90%帯="+cal.cov90+"%"}>較正済 判定{cal.n}件</span>
-            : <span style={{color:"#4a7090"}} title="記録は毎日たまります。判定は5営業日後に自動でつきます">記録{cal.total}件 / 判定{cal.n}件（較正まで{FC_MIN_SAMPLES}件）</span>}
-        </div>
-      ):(
-        <div style={{fontSize:10,color:"#4a7090",padding:"5px 4px"}}>データ不足のため予測レンジは非表示</div>
       )}
     </div>
   );
@@ -4190,17 +3948,17 @@ function StockDetailPanel(p){
         <button onClick={function(){setShowTrade(function(v){return !v;});}} title="トレード登録" style={{flexShrink:0,background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
       </div>
 
-      {/* チャート（1分足／日足6ヶ月＋予測レンジ を切替） */}
+      {/* チャート（1分足／日足6ヶ月 を切替） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px",marginTop:-6}}>
         <div style={{display:"flex",gap:6,padding:"2px 0 4px",alignItems:"center"}}>
           <TabBtn active={chartMode==="1m"} color="#38bdf8" label="1分足" onClick={function(){setChartMode("1m");}}/>
-          <TabBtn active={chartMode==="1d"} color="#38bdf8" label="日足＋予測" onClick={function(){setChartMode("1d");}}/>
+          <TabBtn active={chartMode==="1d"} color="#38bdf8" label="日足" onClick={function(){setChartMode("1d");}}/>
           {/* 今表示しているチャートの種類（もとはチャート内の右上にあった表示） */}
           <span style={{marginLeft:"auto",flexShrink:0,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px"}}>{chartMode==="1m"?"1分足":"日足6ヶ月"}</span>
         </div>
         {chartMode==="1m"
           ? <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?150:250}/>
-          : <DailyChartWithBand daily={daily} ticker={s.ticker} height={isMobile?150:250}/>}
+          : <DailyChart daily={daily} height={isMobile?150:250}/>}
       </div>
 
             {/* シグナル詳細（出来高急増後の値動きを内包）／板情報・利確損切りライン（右） */}
@@ -5729,7 +5487,6 @@ function SignalAccuracyContent(p){
   var data=tickers?calcSignalAccuracyMulti(tickers):calcFavSignalAccuracyMulti();
   var emptyLabel=tickers?(label+"の登録銘柄"):"お気に入り銘柄";
   var horizons=[{k:"d1",h:"1日後"},{k:"d3",h:"3日後"},{k:"d5",h:"5日後"}];
-  var chrAcc=calcChronosAccuracy(),chrV=chronosVerdict(chrAcc);
   var regime=getRegimeSignalStats();
   var phase=getTrendPhaseSignalStats();
   // トレンド局面別：初動・過熱の両方で5件以上あるシグナルを、差が大きい順に最大12件
@@ -5802,51 +5559,6 @@ function SignalAccuracyContent(p){
           <div style={{fontSize:11,color:"#a78bfa",marginTop:4}}>※<b>🔄</b>＝50件以上あるのに1日後の的中率が40%未満のシグナル。外れ方が安定しているため「逆に読むと◯%」の目安を表示しています。まだ観測段階で、スコア計算は変えていません</div>
         </div>
       )}
-      <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
-        <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🌙 Chronos予測 的中率（5営業日後）</div>
-        <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>毎晩自動生成される予測が、5営業日後に実際に当たったかを集計（お気に入り銘柄が対象）。予測幅±0.3%未満は「横ばい」とみなし方向判定から除きます</div>
-        {chrAcc.baseTotal===0?(
-          <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"12px 0"}}>まだ答え合わせ済みのデータがありません。お気に入り銘柄を毎日スキャンし、5営業日経つと溜まっていきます。</div>
-        ):(
-          <div>
-            <div style={{display:"flex",fontSize:11,color:"#2a6090",padding:"4px 8px",borderBottom:"1px solid #0f2040"}}>
-              <div style={{flex:1}}>項目</div>
-              <div style={{width:52,textAlign:"right"}}>的中率</div>
-              <div style={{width:40,textAlign:"right"}}>件数</div>
-            </div>
-            <div style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830",opacity:chrAcc.total>=5?1:0.5}}>
-              <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>Chronos 方向的中率</div>
-              <div style={{width:52,textAlign:"right",color:cellColor(chrAcc.winRate),fontWeight:700}}>{chrAcc.winRate!=null?chrAcc.winRate+"%":"-"}</div>
-              <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{chrAcc.total}</div>
-            </div>
-            <div style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830"}}>
-              <div style={{flex:1,color:"#6a8aa8",fontFamily:"monospace"}}>基準線：常に「上昇」</div>
-              <div style={{width:52,textAlign:"right",color:"#6a8aa8",fontWeight:700}}>{chrAcc.baseRate!=null?chrAcc.baseRate+"%":"-"}</div>
-              <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{chrAcc.baseTotal}</div>
-            </div>
-            <div style={{fontSize:11,color:"#2a6090",marginTop:10,marginBottom:4}}>予測幅別（予測の強さごと）</div>
-            {chrAcc.bands.map(function(b,i){
-              return(
-                <div key={i} style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px",borderBottom:"1px solid #0a1830",opacity:b.total>=5?1:0.5}}>
-                  <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>{b.label}</div>
-                  <div style={{width:52,textAlign:"right",color:cellColor(b.winRate),fontWeight:700}}>{b.winRate!=null?b.winRate+"%":"-"}</div>
-                  <div style={{width:40,textAlign:"right",color:"#4a7090"}}>{b.total}</div>
-                </div>
-              );
-            })}
-            <div style={{fontSize:11,color:"#2a6090",marginTop:10,marginBottom:4}}>値幅の誤差（中央値・小さいほど良い）</div>
-            <div style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px"}}>
-              <div style={{flex:1,color:"#b8cce0",fontFamily:"monospace"}}>Chronos予測</div>
-              <div style={{width:92,textAlign:"right",color:(chrAcc.maeC!=null&&chrAcc.maeFlat!=null&&chrAcc.maeC<chrAcc.maeFlat)?"#22d3a0":"#f43f5e",fontWeight:700}}>{chrAcc.maeC!=null?chrAcc.maeC+"%":"-"}</div>
-            </div>
-            <div style={{display:"flex",alignItems:"center",fontSize:13,padding:"6px 8px"}}>
-              <div style={{flex:1,color:"#6a8aa8",fontFamily:"monospace"}}>基準線：横ばい予測</div>
-              <div style={{width:92,textAlign:"right",color:"#6a8aa8",fontWeight:700}}>{chrAcc.maeFlat!=null?chrAcc.maeFlat+"%":"-"}</div>
-            </div>
-            <div style={{marginTop:10,padding:"8px 10px",background:chrV.col+"14",border:"1px solid "+chrV.col+"44",borderRadius:6,fontSize:12,color:chrV.col,lineHeight:1.6}}>{chrV.msg}</div>
-          </div>
-        )}
-      </div>
       <div style={{marginTop:16,paddingTop:12,borderTop:"1px solid #0f2040"}}>
         <div style={{fontSize:13,fontWeight:700,color:"#e0f0ff",marginBottom:4}}>🌤 地合い別 シグナル的中率</div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:8}}>TOPIXプラスの日とマイナスの日で、シグナルの効き方がどう変わるかを比較します（差が大きい順）</div>
@@ -6284,7 +5996,6 @@ export default function App(){
       var payload={
         favs:nextFavs,
         scoreHist:getAllScoreHist(),
-        forecasts:fcLoad(),
         groups:nextGroups,
         groupNames:nextGroupNames,
         appTrades:[], // アプリ予想は廃止（サーバー側の旧データも空で上書きする）
@@ -6740,7 +6451,6 @@ export default function App(){
         if(data.personalTrades){saveTrades("personal",data.personalTrades);setPersonalTrades(data.personalTrades);}
         // 置き換えではなく日付単位で混ぜる（送っていない間の端末の記録を消さないため）
         if(data.scoreHist)applyServerScoreHist(data.scoreHist);
-        if(data.forecasts){try{fcMerge(data.forecasts);}catch(e){}}
         // 「前回の業種」も端末間で揃える（サーバー側スキャンが見ている値と一致させるため）
         if(data.lastSectors&&data.lastSectors.length){try{localStorage.setItem("last_sectors",JSON.stringify(data.lastSectors));}catch(e){}}
         recordSyncLoad(loadStatus>=200&&loadStatus<300?"成功":"失敗（HTTP "+loadStatus+"）",!(loadStatus>=200&&loadStatus<300));
@@ -6756,11 +6466,6 @@ export default function App(){
     if(!syncLoaded||!syncLoadOkRef.current)return;
     autoTrimDailyHist();
   },[syncLoaded]);
-  // お気に入りが揃ったら、その日ぶんの予測をまとめて記録する（1日1回だけ動く）
-  useEffect(function(){
-    if(!syncLoaded)return;
-    recordFavForecasts(favs);
-  },[syncLoaded,favs]);
   var TABS=[["fav","⭐"],["trade","🎯"],["event","📅"],["index","🌍"],["market","📡"],["news","📰"],["sync","🔗"],["guide","📘"]];
   var TAB_LABELS={"fav":"メイン","trade":"トレード","event":"決算・権利落ち","index":"リンク","market":"市場予測","news":"ニュース","sync":"デバイス同期","guide":"使い方"};
 

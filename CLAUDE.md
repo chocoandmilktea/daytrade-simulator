@@ -88,16 +88,6 @@
 ※ `KV_REST_API_URL` と `KV_REST_API_TOKEN` は当リポジトリのコードには書かれていないが、`@upstash/redis` が `UPSTASH_REDIS_REST_` 系の代替名として読む。Vercel の Upstash 連携がこの名前を注入することがあり、コードを `grep` しても出てこないのに効く場合がある
 ※ `TACHIBANA_WATCH_API` と `TACHIBANA_QUOTE_API` は `tachibana-server` 側の環境変数。`src/App.js` にも同名の定数があるが、そちらは直書きの JS 定数であり環境変数ではない
 
-### GitHub Actions
-
-| 変数名 | 必須・任意 | 用途 |
-| --- | --- | --- |
-| `SYNC_URL` | 必須 | 予測バッチが同期APIを読むためのアプリURL。未設定なら `KeyError` で即失敗する |
-| `USER_ID` | 必須 | 予測対象のお気に入りを引くデバイス同期ID。未設定なら `KeyError` で即失敗する |
-| `MODEL` | 任意（既定 `amazon/chronos-bolt-small`） | 予測モデル名。`forecast.yml` が渡していないため現状は常に既定値で動く |
-
-※ `forecast.yml` の `Commit result` ステップの push は、明示的なトークン参照を持たず、`actions/checkout` が埋め込む既定のトークン（`permissions` の `contents: write`）に依存する
-
 変数ごとの参照箇所の詳細は `docs/ENV_AUDIT.md` にある（2026-08-20 時点で凍結）。
 
 ## 構成・データ源
