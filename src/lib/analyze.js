@@ -12,7 +12,6 @@
 //   opts.scoreHist        … sh_<ticker> の既存履歴（未指定なら空）
 //   opts.intradayHist     … sh_intraday_<ticker> の既存履歴（未指定なら空）
 //   opts.resolveEventDate … 決算日・権利落ち日のローカル記憶（未指定なら取得値をそのまま使う）
-//   opts.buildVerdict     … 🚦総合判定の組み立て（未指定なら判定なし＝null）
 // スコア履歴の保存はこのファイルでは行わない。保存に必要な値は戻り値の save に入れて返す。
 
 // ── 基本テクニカル指標 ────────────────────────────────────────────────────
@@ -197,30 +196,6 @@ export function sigStatDays(st){
 // この定数を import して同じ件数で切り詰める
 export var DAILY_HIST_MAX=20;
 
-// スコア高銘柄の翌日実績を算出
-// scoreHist: [{d,s,p},...] pは記録日の終値
-// threshold: 対象スコア下限（デフォルト60）
-// 戻り値: {winRate, total, byBand}
-export function calcActualWinRate(scoreHist,threshold,isJP){
-  threshold=threshold||60;
-  var wins=0,total=0;
-  var byBand={"60":{w:0,t:0},"80":{w:0,t:0},"100":{w:0,t:0}};
-  for(var i=0;i<scoreHist.length-1;i++){
-    var cur=scoreHist[i],nxt=scoreHist[i+1];
-    if(cur.s<threshold||cur.p==null||nxt.p==null) continue;
-    if(bizDayDiff(cur.d,nxt.d,isJP)!==1) continue; // 記録が飛んだペア（数日分の値動き）は翌日実績に含めない
-    var move=priceMoveState(cur.p,nxt.p);
-    if(move===0) continue; // 誤差レベルの値動きは集計対象外
-    var won=move>0;
-    wins+=won?1:0;
-    total++;
-    var band=cur.s>=100?"100":cur.s>=80?"80":"60";
-    byBand[band].t++;
-    if(won) byBand[band].w++;
-  }
-  return{winRate:total>0?Math.round(wins/total*100):null,total:total,byBand:byBand};
-}
-
 // ── シグナル別的中率の検証 ─────────────────────────────────────────────
 // signalsのlabelは末尾に動的な数値が付くもの(例:"RSI(35.2)")があるため、
 // 基準ラベルのみ抽出して同一シグナルとして集計できるようにする
@@ -375,7 +350,6 @@ export function analyzeStock(stock,pd,vixVal,opts){
   opts=opts||{};
   var signalStats=opts.signalStats||{};                                   // 実績による重み補正（未指定＝補正なし）
   var resolveEventDate=opts.resolveEventDate||passThroughEventDate;       // 決算日・権利落ち日のローカル記憶
-  var makeVerdict=opts.buildVerdict||null;                                // 🚦総合判定の組み立て
   var closes=pd.closes.slice(),highs=pd.highs.slice(),lows=pd.lows.slice();
   var volumes=pd.volumes?pd.volumes.slice():[];
   var n=closes.length-1;
@@ -820,10 +794,6 @@ export function analyzeStock(stock,pd,vixVal,opts){
   var tradeType=volType,tsInfo=tradeStyleInfo(tradeType)||TRADE_STYLES[2];
   var tradeLabel=tsInfo.label,tradeColor=tsInfo.color;
 
-  var winRateRaw=Math.min(88,Math.max(15,sc*0.72));
-  // 実績winRateは後でactualWinRateが揃ってから上書き（表示用は暫定値）
-  var winRate=winRateRaw;
-  var expVal=(winRate/100*2.5-(1-winRate/100)*1.5).toFixed(2);
   var timing=sc>=58?"BUY":sc>=38?"WATCH":"SKIP";
   // データ取得に失敗し疑似データ(genSim)で補完された場合は、本物らしい価格・判定を
   // 表示してしまわないよう「取得失敗」扱いにする（価格欄は"―"、判定バッジも専用表示）
@@ -951,12 +921,6 @@ export function analyzeStock(stock,pd,vixVal,opts){
   }
   // ────────────────────────────────────────────────────────────────────────
 
-  // ── 🚦 総合判定（各機能の結果を1つに集約）──────────────────────────────
-  // 判定に使う統計は localStorage 由来のため、組み立て関数を opts で受け取る
-  var verdict=(pd.real&&makeVerdict)?makeVerdict({score:sc,signals:signals,ticker:stock.ticker,relStrength:relStrength,
-    buyPlan:buyPlan}):null;
-  var verdictKey=verdict?verdict.key:null;
-
   // ── スコア履歴（保存はしない。呼び出し側の saveScoreHistory が書き込む）────
   // 休場中・寄り付き前はVWAP等の場中指標が算出できず、スコアの土俵が場中と変わる。
   // そのまま記録するとスコア推移・的中率の統計が汚れるため記録しない。
@@ -972,7 +936,8 @@ export function analyzeStock(stock,pd,vixVal,opts){
   var ctx={topix:topixChange!=null?topixChange:null,vix:vixVal!=null?parseFloat(vixVal):null,session:currentSessionLabel(),market:stock.market,rel:relStrength!=null?relStrength:null};
   var scoreHist=(opts.scoreHist||[]).slice();
   if(recordDaily){
-    var entry={d:today,s:sc,atr:atrDisp,p:price,sig:sigKeys,ctx:ctx,v:verdictKey};
+    // 総合判定は廃止したため v（判定キー）は記録しない。古い記録に残っている v はそのまま残す
+    var entry={d:today,s:sc,atr:atrDisp,p:price,sig:sigKeys,ctx:ctx};
     if(scoreHist.length&&scoreHist[scoreHist.length-1].d===today){
       scoreHist[scoreHist.length-1]=entry;
     }else{
@@ -1003,7 +968,7 @@ export function analyzeStock(stock,pd,vixVal,opts){
   var isigKeys=signals.filter(function(x){return x.state!==0;}).map(function(x){return baseSigLabel(x.label)+"#"+x.state;});
   var intradayHist=(opts.intradayHist||[]).slice();
   if(recordIntraday){
-    var ientry={d:itoday,session:isession,t:itime,s:sc,p:price,sig:isigKeys,v:verdictKey};
+    var ientry={d:itoday,session:isession,t:itime,s:sc,p:price,sig:isigKeys}; // v（判定キー）は日次と同じく記録しない
     // 同じ日・同じ時間帯の記録は配列全体から探して置き換える（mergeScanResultDay と同じ判定方式）。
     // 最後の1件だけを見ると、サーバー取り込みで後の時間帯が先に入っている状態で
     // 同じ時間帯を手動スキャンしたときに、同じ d と session の記録が2件並んでしまう
@@ -1035,8 +1000,8 @@ export function analyzeStock(stock,pd,vixVal,opts){
 
   return{ticker:stock.ticker,tvSymbol:stock.tvSymbol,name:stock.name,market:stock.market,
     volume:dayVolume||stock.volume||0,volSurge:(typeof surge!=="undefined"?surge:1),
-    price:dispPrice,rawPrice:pd.real?price:null,score:sc,winRate:winRate.toFixed(1),expVal:expVal,
-    timing:timing,verdict:verdictKey,verdictInfo:verdict,signals:signals,breakdown:breakdown,change:change,spark:closes.slice(-30),
+    price:dispPrice,rawPrice:pd.real?price:null,score:sc,
+    timing:timing,signals:signals,breakdown:breakdown,change:change,spark:closes.slice(-30),
     real:pd.real,failReason:pd.error||null,closes:closes,highs:highs,lows:lows,volumes:volumes,per:pd.per||null,pbr:pd.pbr||null,
     analystTarget:pd.analystTarget||null,earningsDate:resolveEventDate(stock.ticker,"earningsDate",pd.earningsDate||null),exRightsDate:resolveEventDate(stock.ticker,"exRightsDate",pd.exRightsDate||null),weekHigh:weekHigh,weekLow:weekLow,
     topixChange:topixChange,relStrength:relStrength,
@@ -1048,7 +1013,6 @@ export function analyzeStock(stock,pd,vixVal,opts){
     sessionStarted:sessionStarted, // 休場中・寄り付き前かどうか（プロンプトの注記に使用）
     scoreHist:scoreHist,
     momentum:momentum,
-    actualWinRate:calcActualWinRate(scoreHist,null,stock.market==="JP"),
     vwap:vwap?parseFloat(vwap.toFixed(stock.market==="JP"?0:2)):null,
     pivot:pivot?{pp:parseFloat(pivot.pp.toFixed(stock.market==="JP"?0:2)),r1:parseFloat(pivot.r1.toFixed(stock.market==="JP"?0:2)),s1:parseFloat(pivot.s1.toFixed(stock.market==="JP"?0:2)),r2:parseFloat(pivot.r2.toFixed(stock.market==="JP"?0:2)),s2:parseFloat(pivot.s2.toFixed(stock.market==="JP"?0:2)),prevHigh:parseFloat(pivot.prevHigh.toFixed(stock.market==="JP"?0:2)),prevLow:parseFloat(pivot.prevLow.toFixed(stock.market==="JP"?0:2)),prevClose:parseFloat(pivot.prevClose.toFixed(stock.market==="JP"?0:2))}:null,
     yahooUrl:"https://finance.yahoo.co.jp/quote/"+stock.ticker,
@@ -1059,7 +1023,7 @@ export function analyzeStock(stock,pd,vixVal,opts){
     save:{
       daily:recordDaily,intraday:recordIntraday,
       date:today,score:sc,atr:atrDisp,price:price,sigKeys:sigKeys,session:isession,
-      time:itime,ctx:ctx,verdict:verdictKey,intradaySigKeys:isigKeys,
+      time:itime,ctx:ctx,intradaySigKeys:isigKeys,
       dailyHist:scoreHist,intradayHist:intradayHist
     }};
 }

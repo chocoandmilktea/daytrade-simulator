@@ -1636,46 +1636,6 @@ function getUniverseSignalStats(){
   UNIVERSE_STATS_CACHE=stats;UNIVERSE_STATS_TS=now;
   return stats;
 }
-// ── スコア帯別（0-100点）の実績的中率集計（全スキャン銘柄横断・スコアロジック自体の検証用）──
-// 「スコアが高い銘柄ほど本当に翌営業日上がりやすいか」を帯ごとに数える。
-// 画面の表（📈スコア帯別 的中率）と⚡の分析依頼文からは外した。いまの利用先は総合判定の計算（buildVerdict）だけで、
-// その計算は次の PR で扱うため残している
-var UNIVERSE_BAND_CACHE=null,UNIVERSE_BAND_TS=0;
-var SCORE_BANDS=[{min:0,max:40,label:"〜39"},{min:40,max:60,label:"40-59"},{min:60,max:80,label:"60-79"},{min:80,max:101,label:"80+"}];
-function bandLabelFor(score){
-  for(var i=0;i<SCORE_BANDS.length;i++){if(score>=SCORE_BANDS[i].min&&score<SCORE_BANDS[i].max)return SCORE_BANDS[i].label;}
-  return SCORE_BANDS[SCORE_BANDS.length-1].label;
-}
-function getUniverseBandStats(){
-  var now=Date.now();
-  if(UNIVERSE_BAND_CACHE&&now-UNIVERSE_BAND_TS<UNIVERSE_STATS_TTL) return UNIVERSE_BAND_CACHE;
-  var stats={};
-  try{
-    Object.keys(localStorage).forEach(function(k){
-      if(k.indexOf("sh_")!==0||k.indexOf("sh_intraday_")===0) return; // イントラデイ履歴の混入を防止
-      if(!/\.T$/.test(k.slice(3))) return; // JP銘柄のみ
-      var hist=JSON.parse(localStorage.getItem(k)||"[]");
-      for(var i=0;i<hist.length-1;i++){
-        var cur=hist[i],nxt=hist[i+1];
-        if(cur.p==null||nxt.p==null) continue;
-        if(bizDayDiff(cur.d,nxt.d,true)!==1) continue; // 記録が飛んだペアは翌日実績に含めない（上でJP銘柄のみに絞り込み済み）
-        var move=priceMoveState(cur.p,nxt.p);
-        if(move===0) continue; // 誤差レベルの値動きは集計対象外
-        var band=bandLabelFor(cur.s);
-        if(!stats[band])stats[band]={w:0,t:0};
-        stats[band].t++;
-        if(move>0)stats[band].w++;
-      }
-    });
-  }catch(e){}
-  UNIVERSE_BAND_CACHE=SCORE_BANDS.map(function(b){
-    var s=stats[b.label]||{w:0,t:0};
-    return{band:b.label,winRate:s.t>0?Math.round(s.w/s.t*100):null,total:s.t};
-  });
-  UNIVERSE_BAND_TS=now;
-  return UNIVERSE_BAND_CACHE;
-}
-
 // ── 地合い（順風日/逆風日）の判定 ──────────────────────────────────────────
 // TOPIX前日比がプラス（0を含む）なら順風日 "up"、マイナスなら逆風日 "down"。getRegimeSignalStats() が使う
 function regimeOfTopix(topix){
@@ -1899,114 +1859,9 @@ function isSigNegExpectancy(sig){
   var avg=signalAvgPct(s,key);
   return avg!=null&&avg<0;
 }
-// ── 🚦 総合判定（デイトレ前提・標準しきい値）──────────────────────────────
-// スコア／スコア帯実績／シグナル一致度／日中型／対TOPIX／
-// リスクリワード の6項目をすべて点数化し、合計点で1つの結論に集約する。
-// 否決条件（これが出たら無条件で見送り）は設けず、すべて加点・減点として扱う
-function clampPt(v,lim){return Math.max(-lim,Math.min(lim,v));}
-function judgeOverall(a){
-  var P=0,R=[];
-  // ord＝表示の並び順。スコアは常に先頭(0)、それ以外(1)は点数の大きい順に並べる
-  function add(pt,label,ord){pt=Math.round(pt);if(pt===0)return;P+=pt;R.push({pt:pt,label:label,ord:ord||0});}
-
-  // 1. 総合スコア（判定の主軸。50点を境に±）
-  add(a.score-50,"上昇済みスコア"+Math.round(a.score),0);
-
-  // 2. 同じスコア帯の実測勝率（件数が少ないうちは効きを半分に）
-  if(a.band&&a.band.winRate!=null&&a.band.total>=10)
-    add(clampPt((a.band.winRate-50)*(a.band.total>=20?0.4:0.2),12),
-      "同じ上昇済みスコア帯の実績 "+a.band.winRate+"%("+a.band.total+"件)",1);
-
-  // 3. シグナルの一致度（強気の数－弱気の数）
-  var up=0,dn=0;
-  (a.signals||[]).forEach(function(x){if(x.state===1)up++;else if(x.state===-1)dn++;});
-  add(clampPt((up-dn)*3,12),"シグナル 強気"+up+"／弱気"+dn,1);
-
-  // 4. 日中型／夜間型（持ち越さないデイトレでは日中の値動きが直接効く）
-  if(a.dayNight) add(a.dayNight.day>0?8:-8,(a.dayNight.day>0?"☀️日中型 +":"🌙夜間型 ")+a.dayNight.day+"%",1);
-
-  // 5. 対TOPIX相対（地合いより強いか弱いか）
-  if(a.relInfo) add(a.relInfo.strong?5:-5,"対TOPIX "+a.relInfo.label,1);
-
-  // 6. リスクリワード（利確幅 ÷ 損切り幅）
-  if(a.rr!=null) add(a.rr>=2?8:a.rr>=1.5?4:a.rr>=1?0:-6,"リスクリワード 1:"+a.rr,1);
-
-  R.sort(function(x,y){return x.ord!==y.ord?x.ord-y.ord:Math.abs(y.pt)-Math.abs(x.pt);});
-  return{key:P>=25?"BUY":P>=10?"TRY":P>=-10?"WATCH":"SKIP",points:Math.round(P),reasons:R};
-}
-// スキャン結果1件分から総合判定を作るラッパー（analyze内・再スキャン後の両方から呼ぶ）
-function buildVerdict(o){
-  try{
-    var bands=getUniverseBandStats(),bl=bandLabelFor(o.score),bandRow=null;
-    for(var i=0;i<bands.length;i++){if(bands[i].band===bl)bandRow=bands[i];}
-    return judgeOverall({
-      score:o.score,signals:o.signals,
-      band:bandRow,dayNight:DAYNIGHT[o.ticker]||null,
-      relInfo:relStrengthInfo(o.relStrength),
-      rr:o.buyPlan?o.buyPlan.rr:null
-    });
-  }catch(e){return null;}
-}
-
-// ── 当日集計（引けまで）の時間帯ルール ──────────────────────────────────
-// 記録の"session"は場中4区分＋"時間外"。"時間外"は昼休み(11:30-12:30)と引け後(15:30〜)の
-// 両方を含むため、時刻または前後の並びから「引け後」だけを見分けて終点として使う
-// ※🚦総合判定 的中率・⏰時間帯別 的中率の表を外したため、区画の外から使われているのは hhmmToMin だけ
-//   （取り込みの entryMinutes と、3点灯バッジの putSig3・sig3BadgeText）。ほかの部品は残す指示があったため
-//   消していない（使い道は次の PR 以降で判断）
-var SESSION_RANK={"寄り付き":0,"前場":1,"後場前半":2,"後場後半":3};
-var AFTER_CLOSE_RANK=4;      // 引け後（15:30以降）＝終値そのもの。終点として最良
-var MIN_PAIR_GAP_MIN=60;     // 時刻がある記録：これ未満しか離れていないペアは除外
-var MIN_PAIR_GAP_RANK=2;     // 時刻がない古い記録：時間帯がこれ以上離れていること
+// ── 記録時刻（"HH:MM"）を0時からの分に直す ─────────────────────────────
+// 使い先は取り込みの entryMinutes と、3点灯バッジの putSig3・sig3BadgeText
 function hhmmToMin(t){var m=/^(\d{1,2}):(\d{2})$/.exec(t||"");return m?parseInt(m[1],10)*60+parseInt(m[2],10):null;}
-// 同じ日の記録リストのidx番目が、1日の中でどの位置にあたるかを返す（判定不能ならnull）
-function sessionRankAt(entries,idx){
-  var e=entries[idx];
-  if(SESSION_RANK[e.session]!=null) return SESSION_RANK[e.session];
-  var mi=hhmmToMin(e.t);
-  if(mi!=null) return mi>=15*60+30?AFTER_CLOSE_RANK:null; // 時刻があれば引け後か直接わかる
-  for(var i=idx-1;i>=0;i--){                              // 時刻がない古い記録は並び順で推定
-    var r=SESSION_RANK[entries[i].session];
-    if(r!=null) return r>=SESSION_RANK["後場前半"]?AFTER_CLOSE_RANK:null;
-  }
-  return null;
-}
-// 2点が十分離れているか（数分差の比較を「当日の値動き」と誤解しないための番人）
-function isFarEnoughPair(a,b,ra,rb){
-  var ma=hhmmToMin(a.t),mb=hhmmToMin(b.t);
-  if(ma!=null&&mb!=null) return (mb-ma)>=MIN_PAIR_GAP_MIN;
-  return (ra!=null&&rb!=null)&&(rb-ra)>=MIN_PAIR_GAP_RANK;
-}
-// 終点が「引け」ではなく途中の時刻（11:00 / 13:00）のときの間隔チェック。
-// 時刻が両方ある記録は60分で足切りするが、時刻のない古い記録にランク差2を求めると
-// 隣り合う時間帯の組み合わせが全滅するため、そこはセッションの前後関係だけで通す
-function isFarEnoughMidPair(a,b){
-  var ma=hhmmToMin(a.t),mb=hhmmToMin(b.t);
-  if(ma!=null&&mb!=null) return (mb-ma)>=MIN_PAIR_GAP_MIN;
-  return true;
-}
-// 当日の的中率を測る終点の定義（列の並びと見出しを兼ねる）。
-// rank は「その終点に対して始点になれる時間帯の上限」＝始点rank<終点rank のときだけ集計する
-var INTRADAY_END_DEFS=[
-  {key:"m11",label:"11:00時点",session:"前場",rank:SESSION_RANK["前場"]},
-  {key:"a13",label:"13:00時点",session:"後場前半",rank:SESSION_RANK["後場前半"]},
-  {key:"close",label:"引け",session:null,rank:AFTER_CLOSE_RANK}
-];
-// 終点の記録が同じ日の記録リストの何番目かを返す（見つからなければ-1）。
-// 中間の終点は該当セッションの最後の記録、引けは現行どおりその日の最後の記録
-function findIntradayEndIdx(entries,def){
-  var i;
-  if(def.session){
-    for(i=entries.length-1;i>=0;i--){
-      if(entries[i]&&entries[i].session===def.session&&entries[i].p!=null) return i;
-    }
-    return -1;
-  }
-  i=entries.length-1;
-  if(i<0||entries[i].p==null) return -1;
-  var r=sessionRankAt(entries,i);
-  return(r!=null&&r>=SESSION_RANK["後場後半"])?i:-1; // 後場後半より前で終わる日は「当日終値」と呼べない
-}
 // ブラウザのコンソールから確認できるように公開（例: getSignalAccuracy()）
 if(typeof window!=="undefined"){
   window.getSignalAccuracy=function(){return calcFavSignalAccuracy();};
@@ -2582,8 +2437,7 @@ function analyzeStock(stock,pd,vixVal){
     signalStats:getUniverseSignalStats(),        // 実績による重み補正（sh_* から集計した統計）
     scoreHist:loadScoreHist(stock.ticker),       // 既存のスコア履歴
     intradayHist:loadIntradayHist(stock.ticker), // 既存の時間帯別履歴
-    resolveEventDate:resolveEventDate,           // 決算日・権利落ち日のローカル記憶
-    buildVerdict:buildVerdict                    // 🚦総合判定（統計がlocalStorage由来のため注入）
+    resolveEventDate:resolveEventDate            // 決算日・権利落ち日のローカル記憶
   });
   saveScoreHistory(stock.ticker,s.save);
   recordSig3FromApp(s); // 3点灯の初回確認（別キー sig3_on_v1）
@@ -4305,7 +4159,7 @@ function StockDetailPanel(p){
       </div>
 
 
-      {/* 総合判定の欄は「今の状態」に置き換えた（表示部品は削除済み）。総合判定の計算（buildVerdict・judgeOverall）は次の PR で扱うまで残す */}
+      {/* 総合判定の欄は「今の状態」に置き換えた（総合判定の表示・計算・記録はすべて削除済み） */}
       {s.market==="JP"&&<MarketStatePanel ms={s.marketState}/>}
 
       <BuyPlanPanel plan={s.buyPlan} isJP={s.market==="JP"} intraday={intraday}/>
