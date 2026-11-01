@@ -54,7 +54,7 @@
 | 2026-08-30 | merge | tachibana-server | PR#20 寄り前収集の終了後に予想生成を自動呼び出し。生ログ保存成功時のみ `POST /api/sync?resource=premarket-prediction&date=<当日>` を1回叩く（タイムアウト30秒・リトライなし）。失敗時は `[warn]` 1行のみで収集の成否に影響させず、`errorCount`・`tickErrorCount` にも加算しない。予想の計算は Vercel 側（PR#56）にあり本変更では行わない | 無 |
 | 2026-08-30 | deploy | tachibana-server | 上記マージに伴うコンテナ全体の自動再デプロイ。日曜のため安全帯の制約なし（メンテ帯 3:00〜8:30 のみ回避）。起動ログで「分割 80件」と起動時 `[err]` 0件を確認 | 無 |
 | 2026-09-22 | merge | daytrade-simulator | `PM_Q_SLOPE`・`PM_Q_INTERCEPT`・`TACHIBANA_MARKET_PRICE_API` のコード上の参照を削除。詳細は 2026-09-22 の詳述セクション参照。PR #82 | 有 |
-| 2026-11-01 | config | GitHub Actions: forecast.yml / Secrets: SYNC_URL・USER_ID | 予測ワークフローを撤去し、Secrets の参照が無くなった。詳細は 2026-11-01 の詳述セクション参照 | 有 |
+| 2026-11-01 | config | GitHub Actions: forecast.yml / Secrets: SYNC_URL・USER_ID | 予測ワークフローを撤去し、Secrets の参照が無くなった。詳細は 2026-11-01 の詳述セクション参照。PR #124 | 有 |
 
 ## 2026-08-24（月）— `PREMARKET_MAX=100` 実測判定：通過
 
