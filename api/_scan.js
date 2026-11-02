@@ -117,6 +117,14 @@ export async function saveUniverse(payload) {
     return { ok: false, reason: "source must be 'ranking' and tickers must be an array (" + got + ")" };
   }
   var count = payload.tickers.length;
+  // ガード②：日本株が1件も無いリストは保存しない。自動スキャンは日本株しか処理しないため、
+  // 保存すると正常なリストを「中身の無いリスト」で上書きしてスキャンが止まる。
+  // buildUniverse 側でも同じ判定をしているが、それ以外の経路から空のリストが入るのを防ぐ
+  var jpCount = payload.tickers.filter(isJPEntry).length;
+  if (!jpCount) {
+    console.warn("[scan-universe] 保存を拒否：日本株が0件です（全" + count + "件）");
+    return { ok: false, reason: "no JP tickers (total " + count + ")" };
+  }
   await redis.set(UNIVERSE_KEY, JSON.stringify({
     tickers: payload.tickers, source: "ranking", count: count,
     savedAt: payload.savedAt || Date.now(),
@@ -207,8 +215,38 @@ export function composeUniverse(stocks, sync) {
   return { tickers: tickers, rankingCount: rankingCount, favAdded: favAdded, tradeAdded: tradeAdded };
 }
 
-// 銘柄リストを組み立ててRedisへ保存する。保存の可否は saveUniverse のガードに委ねる。
+// 保存済みの銘柄リスト（scan:universe）の期限を UNIVERSE_TTL まで延ばす。
+// 立花APIの停止中はランキングが取れず組み立てが毎回失敗するため、延ばさないと
+// 保存済みのリストが7日で消えてスキャンが止まる。キーが無い場合 expire は 0 を返し何もしない。
+// 延長の失敗で組み立て・スキャンを止めないよう、例外は握りつぶしてログだけ残す
+async function extendUniverseTtl(why) {
+  try {
+    var extended = await redis.expire(UNIVERSE_KEY, UNIVERSE_TTL);
+    if (extended === 1) {
+      console.log("[scan-universe] 前回のリストの期限を" + (UNIVERSE_TTL / 86400) + "日に延長（" + why + "）");
+    }
+  } catch (e) {
+    console.log("[scan-universe] 前回のリストの期限延長に失敗: " + e.message + "（" + why + "）");
+  }
+}
+
+// 銘柄リストを組み立ててRedisへ保存する。
+// 組み立てが失敗した場合（例外・0件で保存しなかった場合）は前回のリストの期限を延ばす。
+// 例外は呼び出し側（runScanBatch）の扱いを変えないよう、そのまま投げ直す
 export async function buildUniverse(opts) {
+  var built;
+  try {
+    built = await buildAndSaveUniverse(opts);
+  } catch (e) {
+    await extendUniverseTtl("組み立て失敗: " + e.message);
+    throw e;
+  }
+  if (!built.saved && built.reason === "empty") await extendUniverseTtl("組み立て結果0件");
+  return built;
+}
+
+// 組み立ての本体。日本株が0件なら保存せず、それ以外の保存可否は saveUniverse のガードに委ねる。
+async function buildAndSaveUniverse(opts) {
   var o = opts || {};
   var t0 = Date.now(); // 所要ms計測用（scan:universe:meta に残すだけで挙動には影響しない）
   var deadline = Date.now() + BUILD_BUDGET_MS;
@@ -253,13 +291,23 @@ export async function buildUniverse(opts) {
   var tMerge = Date.now();
   // source は saveUniverse のガード①に合わせて常に "ranking"（＝ランキング由来）。
   // 業種指定かどうかは origin としてログにだけ残す
-  var result = await saveUniverse({
-    tickers: composed.tickers, source: "ranking", count: composed.tickers.length, savedAt: Date.now(),
-  });
+  // ランキングが空のまま成功扱いで返ると0件のリストができる。保存すると正常なリストを
+  // 上書きしてしまうため、日本株が0件なら保存せず前回のリストを使い続ける
+  var result;
+  if (!composed.tickers.filter(isJPEntry).length) {
+    result = { ok: false, reason: "empty" };
+    console.log("[scan-universe] 組み立て結果が0件のため保存しない（前回のリストを使う） " + origin +
+      " ランキング:" + composed.rankingCount + "件 お気に入り:" + composed.favAdded +
+      "件 トレード中:" + composed.tradeAdded + "件");
+  } else {
+    result = await saveUniverse({
+      tickers: composed.tickers, source: "ranking", count: composed.tickers.length, savedAt: Date.now(),
+    });
+    console.log("[scan-universe] 組み立て " + origin + " ランキング:" + composed.rankingCount +
+      "件 +お気に入り" + composed.favAdded + "件 +トレード中" + composed.tradeAdded +
+      "件 = " + composed.tickers.length + "件 / 保存:" + (result.ok ? "成功" : "拒否(" + result.reason + ")"));
+  }
   var tSave = Date.now();
-  console.log("[scan-universe] 組み立て " + origin + " ランキング:" + composed.rankingCount +
-    "件 +お気に入り" + composed.favAdded + "件 +トレード中" + composed.tradeAdded +
-    "件 = " + composed.tickers.length + "件 / 保存:" + (result.ok ? "成功" : "拒否(" + result.reason + ")"));
   // 所要msの記録（ランタイムログを開かずに後から確認するための補助情報）。
   // 失敗しても本体の処理は止めない＝握りつぶす
   try {

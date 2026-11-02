@@ -178,6 +178,16 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 - **マークは組み立ての前に立てる。** 関数が時間切れで落ちても同一スロットで組み立てを繰り返さず、前回のリストでスキャンへ進めるようにするため
 - 組み立てを行った回はスキャンせず、処理件数0・次のオフセット0で即座に返す。呼び出し側はもう一度同じ `offset` で呼び直すことになる（組み立てとスキャンを1回に詰めると Vercel の10秒制限を超えるため）
 - `saveUniverse()` は `source` が `ranking` 以外のとき保存を拒否する。意図しない経路から銘柄リストが上書きされるのを防ぐため
+- **空のリストは保存しない。** 判定は2段構え
+  - `buildUniverse()` … 組み立てた銘柄のうち日本株（`isJPEntry()`）が0件なら `saveUniverse()` を呼ばず、前回のリストを残す。戻り値は `saved: false` / `reason: "empty"`。ログは「`[scan-universe] 組み立て結果が0件のため保存しない（前回のリストを使う）`」で、ランキング・お気に入り・トレード中の件数が続く
+  - `saveUniverse()` … 日本株が1件も無い `tickers` は拒否し、`ok: false` と理由を返す（`buildUniverse()` 以外の経路から空のリストが入るのを防ぐため）
+  - 理由: 立花APIの停止中はランキングが空のまま成功扱いで返ることがあり、保存すると正常なリストを0件で上書きしてスキャンが止まる（2026-11-02 の 15:00 枠で `universe empty` になった）
+  - 注意: 判定は「日本株が0件か」だけ。ランキングが0件でもお気に入りやトレード中の日本株があれば、それだけのリストで上書きされる
+- **組み立てに失敗したら、前回のリストの期限を延ばす。** `buildUniverse()` が例外で終わった場合と、上の0件で保存しなかった場合に、`scan:universe` が残っていれば `redis.expire` で期限を `UNIVERSE_TTL`（7日）まで戻す。キーが無ければ何もしない
+  - 理由: API停止中は組み立てが毎回失敗するため、延ばさないと保存済みのリストが7日で消えてスキャンが止まる
+  - 延長に失敗しても例外は握りつぶし、ログを1行出すだけにする（組み立て・スキャンを止めないため）。例外は延長のあと `runScanBatch()` へそのまま投げ直すため、`runScanBatch()` 側の扱い（「前回のリストで続行します」）は変わらない
+  - ログは延長時「`[scan-universe] 前回のリストの期限を7日に延長（理由）`」、失敗時「`[scan-universe] 前回のリストの期限延長に失敗: …`」
+  - `scan:universe:meta` と組み立て済みマーク `scan:universe:built` の期限は延ばさない
 
 ## Redis キーと TTL 一覧
 
@@ -191,7 +201,7 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 | `tachibana:quote:<ticker>` | 30秒 | 定数なし・直書き | `api/sync.js` |
 | `tachibana:quote:last:<ticker>` | 3日 | `QUOTE_SNAPSHOT_TTL` | `api/sync.js` |
 | `user:<userId>` | 90日 | `TTL` | `api/sync.js` |
-| `scan:universe` | 7日 | `UNIVERSE_TTL` | `api/_scan.js` |
+| `scan:universe` | 7日（組み立て失敗時は既存キーの期限を7日まで延長） | `UNIVERSE_TTL` | `api/_scan.js`（日本株が0件のリストは保存しない） |
 | `scan:universe:meta` | 7日 | `UNIVERSE_TTL` を流用（キー名は直書き） | `api/_scan.js` |
 | `scan:universe:built` | 3日 | `UNIVERSE_BUILD_TTL` | `api/_scan.js` |
 | `scan:<YYYY-MM-DD>:<slot>` | 30日 | `RESULT_TTL` | `api/_scan.js` |
