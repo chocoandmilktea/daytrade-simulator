@@ -2875,19 +2875,6 @@ function SignalWeightModal(p){
   );
 }
 
-function ScoreRing(p){
-  var raw=Number(p.score);
-  var sc=isNaN(raw)?0:Math.round(Math.min(100,Math.max(0,raw)));
-  var R=14,C=2*Math.PI*R,col=scoreColor(sc);
-  return(
-    <svg width={34} height={34} style={{flexShrink:0}}>
-      <circle cx={17} cy={17} r={R} fill="none" stroke="#1e3050" strokeWidth={3}/>
-      <circle cx={17} cy={17} r={R} fill="none" stroke={col} strokeWidth={3} strokeDasharray={C} strokeDashoffset={C-(sc/100)*C} strokeLinecap="round" transform="rotate(-90 17 17)"/>
-      <text x={17} y={21} textAnchor="middle" fill={col} style={{fontSize:8,fontWeight:800,fontFamily:"monospace"}}>{sc}</text>
-    </svg>
-  );
-}
-
 function TabBtn(p){return(<button onClick={p.onClick} style={{background:p.active?p.color+"18":"transparent",border:"1px solid "+(p.active?p.color:"#1e3050"),borderRadius:6,color:p.active?p.color:"#4a6080",padding:"4px 10px",fontSize:12,cursor:"pointer",fontFamily:"monospace",fontWeight:p.active?700:400}}>{p.label}</button>);}
 
 // ── 地合いバナー（TOPIX前日比）─────────────────────────────────────────────
@@ -3132,15 +3119,47 @@ function calcS1(breakdown){
 // 色は状態によらず控えめな灰色系で統一する（緑・赤は「買い」「売り」と読まれやすいため使わない）
 var MS_COLOR={bg:"#101826",border:"#2a4060",text:"#8aa8c8"};
 var MS_CAUTION_LABEL={rough:"荒い",lowTurnover:"売買代金が少ない",bigDrop:"大きく下がった"};
-// 合計点は切り捨てで整数にする（四捨五入だと 59.6 が 60 と出て「すでに上昇」の境目と食い違うため）
+// 合計点は切り捨てで整数にする（四捨五入だと 59.6 が 60 と出て「本日上昇」の境目と食い違うため）
 function msScoreText(ms){return ms&&ms.score!=null?String(Math.floor(ms.score)):"";}
-// カードに出す文字。「すでに上昇」は合計点つき、「注意」「データ不足」は文字だけ、それ以外は出さない
+// 上昇済みスコア（s.score）がこれ以上なら、大きな動きなしでも「数日で上昇」と出す。
+// 自動スキャンの記録の意味を変えないよう、marketState.js ではなく表示側だけで使う
+var MULTIDAY_UP_SCORE=50;
+// 注意の理由の短い表示名。並びは「下落→荒い→取引少」に固定する（記録の順番によらず同じ字面にするため）
+var MS_CAUTION_SHORT={bigDrop:"下落",rough:"荒い",lowTurnover:"取引少"};
+var MS_CAUTION_ORDER=["bigDrop","rough","lowTurnover"];
+// 今の状態の表示を1か所で決める。カード・詳細・トレード記録が同じ字面になるようにするため。
+// ms: marketState（state・score・cautions。トレード記録からは state と score だけの形で渡す）
+// upScore: 上昇済みスコア。null のとき（古いトレード記録など）は「数日で上昇」の判定をしない
+// 戻り値: {kind, card: カードの札（出さないときは null）, head: 詳細の見出し}
+function msDisplay(ms,upScore){
+  if(!ms||!ms.state) return null;
+  var st=ms.state;
+  if(st==="caution"){
+    var cs=Array.isArray(ms.cautions)?ms.cautions:[];
+    var names=MS_CAUTION_ORDER.filter(function(k){return cs.indexOf(k)>=0;}).map(function(k){return MS_CAUTION_SHORT[k];});
+    cs.forEach(function(k){if(MS_CAUTION_ORDER.indexOf(k)<0) names.push(String(k));}); // 未知の理由も落とさず末尾に出す
+    var ct=names.length?"注意："+names.join("・"):"注意"; // 理由を持たないトレード記録は「注意」だけ
+    return {kind:"caution",card:ct,head:ct};
+  }
+  if(st==="extended"){
+    var sc=msScoreText(ms);
+    var et="本日上昇"+(sc?" "+sc:"")+"・慎重に";
+    return {kind:"extended",card:et,head:et};
+  }
+  if(st==="calm"){
+    var up=typeof upScore==="number"&&isFinite(upScore)?upScore:null;
+    if(up!=null&&up>=MULTIDAY_UP_SCORE) return {kind:"multiDay",card:"数日で上昇・買い控え",head:"数日で上昇・買い控え"};
+    return {kind:"calm",card:null,head:MARKET_STATE_LABELS.calm};
+  }
+  // データ不足・未知の状態は今までどおり状態名をそのまま出す
+  var lb=ms.label||MARKET_STATE_LABELS[st]||st;
+  return {kind:st,card:st==="noData"?lb:null,head:lb};
+}
+// カードに出す文字（日本株のみ）。出さないときは null
 function msCardText(s){
   var ms=s&&s.market==="JP"?s.marketState:null;
-  if(!ms) return null;
-  if(ms.state==="extended") return ms.label+" "+msScoreText(ms);
-  if(ms.state==="caution"||ms.state==="noData") return ms.label;
-  return null;
+  var d=msDisplay(ms,s?s.score:null);
+  return d?d.card:null;
 }
 // 値の時刻と出どころ。例: 「立花 10:09 時点」「Yahoo・15分遅れ 10:09 時点」「引け後（10/30）」
 // 今日以外の場中の値は日付も添える（古いスキャン結果を開いたままのときに今日の値と誤読しないため）
@@ -3589,18 +3608,17 @@ function calcBoardScore(quote,price){
   return {adj:adj,items:items,session:session,buyVol:ob.buyVol,sellVol:ob.sellVol};
 }
 
-// ── 板スコア補正パネル：元スコアと補正後スコアを並べて表示 ──────────────────
+// ── 板スコア補正パネル：板から決めた補正の点数と内訳を表示 ──────────────────
+// 上昇済みスコアは画面に出さない方針のため、元の点数・補正後の点数は出さず補正幅だけを出す
 function BoardScorePanel(p){
   var b=p.board;
   if(!b) return null;
-  var base=Math.round(p.baseScore||0);
-  var adjusted=Math.min(100,Math.max(0,base+b.adj));
   var col=b.adj>0?"#22d3a0":b.adj<0?"#f43f5e":"#6a90b0";
   return(
     <div style={{background:"#071428",borderRadius:8,padding:"8px 12px",display:"flex",flexDirection:"column",gap:4}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <span style={{fontSize:11,fontWeight:700,color:"#4a7090"}}>📡 板スコア補正{b.session?"（"+b.session+"）":""}</span>
-        <span style={{fontSize:13,fontWeight:800,color:col}}>{base} → {adjusted}（{b.adj>0?"+":""}{b.adj}）</span>
+        <span style={{fontSize:13,fontWeight:800,color:col}}>{b.adj>0?"+":""}{b.adj}</span>
       </div>
       {b.items.map(function(it,i){
         var c=it.state>0?"#22d3a0":it.state<0?"#f43f5e":"#6a90b0";
@@ -3651,13 +3669,18 @@ function MarketStatePanel(p){
     );
   }
   var asOf=msAsOfText(ms);
+  var disp=msDisplay(ms,p.upScore);
   return(
     <div style={box}>
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         {head}
-        <span style={{fontSize:12,fontWeight:800,color:"#d8eeff",lineHeight:1}}>{ms.label}{ms.state==="extended"&&" "+msScoreText(ms)}</span>
+        <span style={{fontSize:12,fontWeight:800,color:"#d8eeff",lineHeight:1}}>{disp?disp.head:ms.label}</span>
         {asOf&&<span style={{fontSize:10,color:"#4a7090",marginLeft:"auto"}}>{asOf}</span>}
       </div>
+      {/* 数日で上昇は上昇済みスコアで決めるが、点数そのものは出さない（スコアを買いの合図と読ませないため） */}
+      {disp&&disp.kind==="multiDay"&&(
+        <div style={{fontSize:10,color:"#8aa8c8",marginTop:3}}>ここ数日の指標の点数が{MULTIDAY_UP_SCORE}点以上。この帯で買った場合の成績は悪い傾向です</div>
+      )}
       {ms.state==="caution"&&ms.cautions&&ms.cautions.length>0&&(
         <div style={{fontSize:10,color:"#8aa8c8",marginTop:3}}>当たった条件: {ms.cautions.map(function(c){return MS_CAUTION_LABEL[c]||c;}).join("・")}</div>
       )}
@@ -3675,7 +3698,7 @@ function MarketStatePanel(p){
                   </div>
                 );
               })}
-              <div style={{fontSize:10,color:"#4a7090",marginTop:2}}>合計 {ms.score!=null?ms.score.toFixed(2):"—"}点（{EXTENDED_SCORE}点以上で「すでに上昇」）</div>
+              <div style={{fontSize:10,color:"#4a7090",marginTop:2}}>合計 {ms.score!=null?ms.score.toFixed(2):"—"}点（{EXTENDED_SCORE}点以上で「本日上昇」）</div>
             </div>
           )}
         </div>
@@ -3878,11 +3901,6 @@ function StockDetailPanel(p){
     <div style={{background:"#050e1c",border:"none",borderRadius:10,padding:"14px",display:"flex",flexDirection:"column",gap:10}}>
       <div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",gap:6,alignItems:"center",minWidth:0,flex:1}}>
-          {/* 総合スコアは「すでに値上がりした度合い」なので、円の下に名前を添えて誤読を防ぐ */}
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",flexShrink:0}}>
-            <ScoreRing score={s.score}/>
-            <span style={{fontSize:8,color:"#4a7090",lineHeight:1,whiteSpace:"nowrap"}}>上昇済み</span>
-          </div>
           <div style={{minWidth:0}}>
             <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
               <span style={bStyle(mc.bg,mc.border,mc.text)}>{mc.label}</span>
@@ -3918,7 +3936,7 @@ function StockDetailPanel(p){
 
 
       {/* 総合判定の欄は「今の状態」に置き換えた（総合判定の表示・計算・記録はすべて削除済み） */}
-      {s.market==="JP"&&<MarketStatePanel ms={s.marketState}/>}
+      {s.market==="JP"&&<MarketStatePanel ms={s.marketState} upScore={s.score}/>}
 
       <BuyPlanPanel plan={s.buyPlan} isJP={s.market==="JP"} intraday={intraday}/>
 
@@ -3967,7 +3985,7 @@ function StockDetailPanel(p){
           <SignalDetailList signals={s.signals} breakdown={s.breakdown} daily={daily}/>
         </div>
         <div style={{minWidth:0,display:"flex",flexDirection:"column",gap:5}}>
-          <BoardScorePanel board={boardScore} baseScore={s.score}/>
+          <BoardScorePanel board={boardScore}/>
           <BoardMomentumPanel ticker={s.ticker} isJP={s.market==="JP"} quote={tachibanaQuote}/>
           {/* 寄り前は板の厚み（findThickLevels）が板寄せの拮抗で意味を持たないためパネルごと非表示 */}
           {!preOpen&&<SupportZonePanel support={s.support} resistance={s.resistance} profitLoss={s.profitLoss} quote={tachibanaQuote} isJP={s.market==="JP"} onInfoClick={function(){setShowSupportInfo(true);}}/>}
@@ -4207,9 +4225,10 @@ function FavPanel(p){
 
   // groupFilter: -1=📋全銘柄 / 0=未分類 / 1〜4=グループ。タブを移動しても保持される
   var groupFilterS=usePersistedState("fav_group_filter",0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1];
-  // sortMode: "reg"=既定順（お気に入り=登録順・全銘柄=スキャン順）/ "score"=スコア順 / "momentum"=初動順 / "trade"=トレード順 / "s1"=S1順
+  // sortMode: "reg"=既定順（お気に入り=登録順・全銘柄=スキャン順）/ "momentum"=初動順 / "trade"=トレード順 / "s1"=S1順
   var sortModeS=usePersistedState("fav_sort_mode","reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1];
-  var mode=(sortMode==="score"||sortMode==="momentum"||sortMode==="trade"||sortMode==="s1")?sortMode:"reg"; // 旧"dayType"の保存値は既定順に読み替え
+  // 旧"dayType"・廃止した"score"（上昇済み順）の保存値は既定順に読み替える
+  var mode=(sortMode==="momentum"||sortMode==="trade"||sortMode==="s1")?sortMode:"reg";
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
   var addGroupS=useState(0);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
@@ -4289,9 +4308,7 @@ function FavPanel(p){
     if(t==="long" ||t==="stable"||lbl.indexOf("スイング")>=0) return 2; // このアプリのキーは"stable"
     return 3;
   }
-  var displayStocks=mode==="score"
-    ?baseList.slice().sort(function(a,b){return(b.score||0)-(a.score||0);})
-    :mode==="momentum"
+  var displayStocks=mode==="momentum"
     ?baseList.slice().sort(function(a,b){
         // 初動スコア順。判定不可（米国株・履歴3日未満）は末尾にまとめる
         var av=a.momentum?a.momentum.score:-1,bv=b.momentum?b.momentum.score:-1;
@@ -4357,8 +4374,7 @@ function FavPanel(p){
   }
 
   // ── 上部バーの部品（横スクロール1行に並べるため全てflexShrink:0）──────────
-  var TIP_SCORE="アプリの上昇済みスコア（0〜100点）が高い順に並べます。もう一度押すと既定の並びに戻ります";
-  var TIP_TRADE="スキャル→デイトレ→スイングの順に並べ、各グループ内は上昇済みスコアの高い順に表示します";
+  var TIP_TRADE="スキャル→デイトレ→スイングの順に並べ、各グループ内はアプリの内部の点数（画面には出していません）が高い順に表示します。もう一度押すと既定の並びに戻ります";
   var TIP_S1="S1（スコア内訳のうちVWAP傾き・Pivot・ATR(値幅)・ATR消化率・MACD・RSI・BB・Stoch・重複ボーナスの合計点）が高い順に並べます。もう一度押すと既定の並びに戻ります";
   var TIP_MOM="これから数日で動き出しそうな銘柄（初動スコア）の高い順に並べます。対TOPIX相対の3日累積を主軸に、出来高の立ち上がりとBB収束を加味した点数です。日本株のみ・スキャン履歴が3日分たまると表示されます";
   function sBtn(m,label,title,color){
@@ -4395,7 +4411,7 @@ function FavPanel(p){
   return(
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(50+extraH)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4}}>
-        {/* 件数 / 検索 / グループ / 初動順 / スコア順 / トレード順 / S1順 / 業種まとめ登録 / 的中率 ／ 右端に再スキャン（PC版）*/}
+        {/* 件数 / 検索 / グループ / 初動順 / トレード順 / S1順 / 業種まとめ登録 / 的中率 ／ 右端に再スキャン（PC版）*/}
         <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",display:"flex",gap:4,alignItems:"center",flexWrap:"nowrap",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <span style={{fontSize:10,color:"#4a7090",flexShrink:0,whiteSpace:"nowrap"}} title={"取得できた銘柄数／スキャンした銘柄数（表示中は"+displayStocks.length+"件）"}>
             <span style={{color:"#22d3a0",fontWeight:700}}>{realCount}</span>/{stocks.length}
@@ -4417,10 +4433,9 @@ function FavPanel(p){
           {divider}
           {pcGap}
           {sBtn("momentum","🌱初動順",TIP_MOM,"#22d3a0")}
-          {sBtn("score","上昇済み順",TIP_SCORE,"#fbbf24")}
-          {/* トレード順。スコア順(#fbbf24)と見分けが付くよう色は紫(#a78bfa)にした */}
+          {/* トレード順。初動順(#22d3a0)と見分けが付くよう色は紫(#a78bfa)にした */}
           {sBtn("trade","🎯トレード順",TIP_TRADE,"#a78bfa")}
-          {/* S1順。既存3ボタン(#22d3a0/#fbbf24/#a78bfa)と見分けが付くよう色は水色(#38bdf8)にした */}
+          {/* S1順。ほかのボタン(#22d3a0/#a78bfa)と見分けが付くよう色は水色(#38bdf8)にした */}
           {sBtn("s1","📐S1順",TIP_S1,"#38bdf8")}
           {p.onBulkSector&&<button onClick={p.onBulkSector} style={{flexShrink:0,background:"transparent",border:"1px solid #0ea5e955",borderRadius:6,color:"#7dd3fc",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>🏭業種まとめ登録</button>}
           {pcGap}
@@ -4440,7 +4455,6 @@ function FavPanel(p){
                   <span style={{fontSize:12,fontWeight:700,color:"#7dd3fc",fontFamily:"monospace",width:54,flexShrink:0}}>{h.code}</span>
                   <span style={{flex:1,minWidth:0,fontSize:12,color:"#b8cce0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.name}</span>
                   {h.stock&&h.stock.tradeLabel&&<span style={{fontSize:10,fontWeight:700,color:h.stock.tradeColor,flexShrink:0}}>{h.stock.tradeLabel}</span>}
-                  {h.stock&&h.stock.score!=null&&<span style={{fontSize:11,fontWeight:700,color:scoreColor(h.stock.score),flexShrink:0}}>{h.stock.score}</span>}
                   <span style={{fontSize:11,color:already?"#fbbf24":"#2a4060",flexShrink:0}}>{already?"⭐":"＋"}</span>
                 </div>
               );
@@ -4685,12 +4699,14 @@ function TradeMiniTile(p){
 }
 
 // ── トレード詳細モーダル：ステータス表示・損益・売買価格/株数の編集 ─────────────
-// トレード記録に残した登録時の「今の状態」の表示。例: 「すでに上昇 72（10/30 10:09・15分遅れ）」
+// トレード記録に残した登録時の「今の状態」の表示。例: 「本日上昇 72・慎重に（10/30 10:09・15分遅れ）」
 // この項目が無い過去の記録・登録時に marketState が無かった記録は「—」
+// 判定は詳細と同じ msDisplay を使う。記録に注意の理由は残っていないため、注意は「注意」だけになる。
+// scoreAtAdd が無い古い記録は、上昇済みスコアの条件を使わず state だけで出す
 function tradeMarketStateText(t){
   if(!t||!t.marketStateAtAdd) return "—";
-  var txt=MARKET_STATE_LABELS[t.marketStateAtAdd]||t.marketStateAtAdd;
-  if(t.marketStateAtAdd==="extended"&&t.marketScoreAtAdd!=null) txt+=" "+Math.floor(t.marketScoreAtAdd); // 合計点はカード・詳細と同じく「すでに上昇」のときだけ添える
+  var d=msDisplay({state:t.marketStateAtAdd,score:t.marketScoreAtAdd,cautions:null},t.scoreAtAdd!=null?Number(t.scoreAtAdd):null);
+  var txt=d?d.head:(MARKET_STATE_LABELS[t.marketStateAtAdd]||t.marketStateAtAdd);
   var a=t.marketAsOfAtAdd;
   if(a) txt+="（"+String(Number(a.slice(5,7)))+"/"+String(Number(a.slice(8,10)))+" "+a.slice(11,16)+(t.marketDelayedAtAdd?"・15分遅れ":"")+"）";
   return txt;
@@ -5719,12 +5735,12 @@ function GuidePanel(){
     {key:"fav",icon:"⭐",label:"メイン（お気に入り／全銘柄）",sections:[
       {title:"📋 一覧の使い方",items:[
         "銘柄カードをタップ → 詳細シグナル表示",
-        "上部バーは横スクロールします（件数／銘柄検索／グループ／🌱初動順／上昇済み順／🎯トレード順／🏭業種まとめ登録／📊的中率／再スキャン。PC版では再スキャンが右端に来ます）",
+        "上部バーは横スクロールします（件数／銘柄検索／グループ／🌱初動順／🎯トレード順／📐S1順／🏭業種まとめ登録／📊的中率／再スキャン。PC版では再スキャンが右端に来ます）",
         "「📋全銘柄」＝今回スキャンした全銘柄を表示。「●未分類」＝お気に入りのうちグループに入れていない銘柄を表示（グループ1〜4と同じ絞り込み。先頭の●は★の色と対応）",
         "★/☆ボタンでお気に入りの登録・解除",
         "グループ1〜4に分類可能（グループ名は選択中に表示される✎アイコンで編集）",
         "検索欄にティッカーコード（例：AAPL、7203）か会社名（例：トヨタ）を入力すると候補が並び、タップでそのまま追加登録できる（隣のプルダウンで登録先グループも指定可）",
-        "並び順：既定は「📋全銘柄＝スキャン順／⭐お気に入り＝登録順（新しい順）」。🌱初動順・上昇済み順を押すと切り替わり、同じボタンをもう一度押すと既定に戻る",
+        "並び順：既定は「📋全銘柄＝スキャン順／⭐お気に入り＝登録順（新しい順）」。🌱初動順・🎯トレード順・📐S1順を押すと切り替わり、同じボタンをもう一度押すと既定に戻る",
         "「🏭業種まとめ登録」ボタン：業種を1つ選ぶと、その業種の出来高上位50銘柄を選んだグループへ一括登録（取得できた件数が50未満の場合はその分だけ登録）。登録した銘柄の株価は自動で取得され、そのままお気に入り一覧に並ぶ（取得中は「銘柄データを取得中... 12/50」と表示）",
         "同じ画面の下部にある「🗑 一括解除」で、保存先（未分類・グループ1〜4）ごとにまとめてお気に入りから外せる",
         "「📊的中率」ボタンでお気に入り銘柄のシグナル的中率を確認"
