@@ -30,6 +30,24 @@ export var TACHIBANA_QUOTES_MAX = 300; // tachibana-server の /quotes が1回�
 
 export var MARKET_STATE_LABELS = { caution: "注意", extended: "すでに上昇", calm: "大きな動きなし", noData: "データ不足" };
 
+// 上昇済みスコアがこれ以上なら、大きな動きなし（calm）でも「数日で上昇」の札にする
+export var MULTIDAY_UP_SCORE = 50;
+
+// 札の種類を決める（画面の札と、自動スキャンの保存行の badge の両方で使う）。
+// 優先順は 注意 → 本日上昇 → 数日で上昇。calcMarketState の結果そのものは変えない
+//   ms      … calcMarketState の結果（トレード記録からは記録した値で同じ形を作って渡す）
+//   upScore … 上昇済みスコア。数でなければ「数日で上昇」の判定をしない
+// 戻り値: "caution"（注意）／"today"（本日上昇）／"multiday"（数日で上昇）／"none"（札なし）
+// 注意の理由は ms.cautions をそのまま使う（ここでは種類だけを返す）。
+// 注意かどうかは state で見る（理由を持たない古いトレード記録でも「注意」と出すため）
+export function marketBadge(ms, upScore) {
+  if (!ms || !ms.state) return "none";
+  if (ms.state === "caution") return "caution";
+  if (ms.state === "extended") return "today";
+  if (ms.state === "calm" && isNum(upScore) && upScore >= MULTIDAY_UP_SCORE) return "multiday";
+  return "none";
+}
+
 // 上がりきり度の5部品（各0〜20点。lo 以下で0点、hi 以上で20点、その間は直線）。PR #48 の PARTS.intra と同じ
 var PARTS = [
   { key: "change", lo: 0, hi: 0.05 },     // 前日終値→今の値段 の騰落率

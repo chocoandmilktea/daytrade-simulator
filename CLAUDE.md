@@ -205,6 +205,7 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 | `scan:universe:meta` | 7日 | `UNIVERSE_TTL` を流用（キー名は直書き） | `api/_scan.js` |
 | `scan:universe:built` | 3日 | `UNIVERSE_BUILD_TTL` | `api/_scan.js` |
 | `scan:<YYYY-MM-DD>:<slot>` | 30日 | `RESULT_TTL` | `api/_scan.js` |
+| `review:result` | なし（上書き保存） | 定数なし（キー名は `REVIEW_RESULT_KEY`） | `api/sync.js`（`resource=review-result` の POST。daytrade-data からの札の答え合わせの結果。900KB超は 413） |
 
 - `scan:universe` と `scan:universe:meta` は同じ `UNIVERSE_TTL`（7日）だが、`scan:universe:built` だけは別定数 `UNIVERSE_BUILD_TTL`（3日）である。混同しないこと
 - `scan:universe:built` の**値**が「今日の日付とスロットの組み合わせ」と一致する間は、自動スキャン時のユニバース組み立てがスキップされる。キーが残っているだけではスキップされない（日付やスロットが変われば組み立てが走る）。手動テストで組み立てを走らせたい場合は Upstash Data Browser でこのキーを削除する

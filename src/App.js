@@ -12,7 +12,7 @@ import {
   DAILY_HIST_MAX
 } from "./lib/analyze";
 // 銘柄の「今の状態」（注意／すでに上昇／大きな動きなし／データ不足）。スキャン結果の marketState に入れる
-import { calcMarketState, isTachibanaQuoteTime, toTachibanaQuoteSet, TACHIBANA_QUOTES_MAX, EXTENDED_SCORE, MARKET_STATE_LABELS } from "./lib/marketState";
+import { calcMarketState, isTachibanaQuoteTime, toTachibanaQuoteSet, TACHIBANA_QUOTES_MAX, EXTENDED_SCORE, MARKET_STATE_LABELS, MULTIDAY_UP_SCORE, marketBadge } from "./lib/marketState";
 
 // ── スマホ幅判定（768px未満をスマホ扱い。画面回転・分割表示にも追従）─────────
 // iPadのSafariは「デスクトップ用Webサイトを表示」が既定のため、画面を半分にしても
@@ -3117,36 +3117,34 @@ var MS_COLOR={bg:"#101826",border:"#2a4060",text:"#8aa8c8"};
 var MS_CAUTION_LABEL={rough:"荒い",lowTurnover:"売買代金が少ない",bigDrop:"大きく下がった"};
 // 合計点は切り捨てで整数にする（四捨五入だと 59.6 が 60 と出て「本日上昇」の境目と食い違うため）
 function msScoreText(ms){return ms&&ms.score!=null?String(Math.floor(ms.score)):"";}
-// 上昇済みスコア（s.score）がこれ以上なら、大きな動きなしでも「数日で上昇」と出す。
-// 自動スキャンの記録の意味を変えないよう、marketState.js ではなく表示側だけで使う
-var MULTIDAY_UP_SCORE=50;
+// 「数日で上昇」の線（MULTIDAY_UP_SCORE）と札の種類の決め方（marketBadge）は src/lib/marketState.js にある。
+// 自動スキャンの保存行の badge と同じ決まりにするため（calcMarketState の結果そのものは変えていない）
 // 注意の理由の短い表示名。並びは「下落→荒い→取引少」に固定する（記録の順番によらず同じ字面にするため）
 var MS_CAUTION_SHORT={bigDrop:"下落",rough:"荒い",lowTurnover:"取引少"};
 var MS_CAUTION_ORDER=["bigDrop","rough","lowTurnover"];
 // 今の状態の表示を1か所で決める。カード・詳細・トレード記録が同じ字面になるようにするため。
 // ms: marketState（state・score・cautions。トレード記録からは記録した値で同じ形を作って渡す。理由の無い古い記録は cautions:null）
-// upScore: 上昇済みスコア。null のとき（古いトレード記録など）は「数日で上昇」の判定をしない
+// upScore: 上昇済みスコア（画面では実績による重み補正の掛かった値）。null のとき（古いトレード記録など）は「数日で上昇」の判定をしない
 // 戻り値: {kind, card: カードの札（出さないときは null）, head: 詳細の見出し}
+// 札の種類は marketBadge で決め、ここでは字面だけを組み立てる
 function msDisplay(ms,upScore){
   if(!ms||!ms.state) return null;
   var st=ms.state;
-  if(st==="caution"){
+  var badge=marketBadge(ms,upScore);
+  if(badge==="caution"){
     var cs=Array.isArray(ms.cautions)?ms.cautions:[];
     var names=MS_CAUTION_ORDER.filter(function(k){return cs.indexOf(k)>=0;}).map(function(k){return MS_CAUTION_SHORT[k];});
     cs.forEach(function(k){if(MS_CAUTION_ORDER.indexOf(k)<0) names.push(String(k));}); // 未知の理由も落とさず末尾に出す
     var ct=names.length?"注意："+names.join("・"):"注意"; // 理由を持たないトレード記録は「注意」だけ
     return {kind:"caution",card:ct,head:ct};
   }
-  if(st==="extended"){
+  if(badge==="today"){
     var sc=msScoreText(ms);
     var et="本日上昇"+(sc?" "+sc:"")+"・慎重に";
     return {kind:"extended",card:et,head:et};
   }
-  if(st==="calm"){
-    var up=typeof upScore==="number"&&isFinite(upScore)?upScore:null;
-    if(up!=null&&up>=MULTIDAY_UP_SCORE) return {kind:"multiDay",card:"数日で上昇・買い控え",head:"数日で上昇・買い控え"};
-    return {kind:"calm",card:null,head:MARKET_STATE_LABELS.calm};
-  }
+  if(badge==="multiday") return {kind:"multiDay",card:"数日で上昇・買い控え",head:"数日で上昇・買い控え"};
+  if(st==="calm") return {kind:"calm",card:null,head:MARKET_STATE_LABELS.calm};
   // データ不足・未知の状態は今までどおり状態名をそのまま出す
   var lb=ms.label||MARKET_STATE_LABELS[st]||st;
   return {kind:st,card:st==="noData"?lb:null,head:lb};
