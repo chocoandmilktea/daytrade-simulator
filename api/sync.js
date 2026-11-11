@@ -246,6 +246,44 @@ async function handleTachibanaQuotes(req, res) {
   }
 }
 
+// ⑤ 札の答え合わせの結果（daytrade-data が毎晩 POST し、アプリが GET で読む）
+// POST: 合言葉必須。JSON のオブジェクトで version と updatedAt を持つものだけ受け付け、
+//       中身はそのまま1つのキーへ上書きで保存する（期限なし）。version・updatedAt 以外の中身は検査しない
+//       （結果の形は daytrade-data 側で決めるため）。REVIEW_RESULT_MAX_BYTES を超えたら保存せず 413
+// GET : 認証なし。保存されている JSON をそのまま返す。まだ無ければ null（200）
+const REVIEW_RESULT_KEY = 'review:result';
+const REVIEW_RESULT_MAX_BYTES = 900 * 1024; // Upstash の1リクエスト1MBに余裕を残す
+async function handleReviewResult(req, res) {
+  if (req.method === 'POST') {
+    if (!isAuthed(req)) return res.status(401).json({ error: 'unauthorized' });
+    let body = req.body;
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (e) { return res.status(400).json({ error: 'invalid json' }); }
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return res.status(400).json({ error: 'object required' });
+    if (body.version == null || body.updatedAt == null) return res.status(400).json({ error: 'version and updatedAt required' });
+    const json = JSON.stringify(body);
+    const bytes = Buffer.byteLength(json, 'utf8');
+    if (bytes > REVIEW_RESULT_MAX_BYTES) return res.status(413).json({ error: 'too large', bytes: bytes, max: REVIEW_RESULT_MAX_BYTES });
+    try {
+      await redis.set(REVIEW_RESULT_KEY, json);
+      return res.status(200).json({ ok: true, bytes: bytes });
+    } catch (e) {
+      return res.status(500).json({ error: 'save failed: ' + e.message });
+    }
+  }
+  if (req.method === 'GET') {
+    try {
+      let v = await redis.get(REVIEW_RESULT_KEY);
+      if (typeof v === 'string') { try { v = JSON.parse(v); } catch (e) { v = null; } }
+      return res.status(200).json(v == null ? null : v);
+    } catch (e) {
+      return res.status(500).json({ error: 'load failed: ' + e.message });
+    }
+  }
+  return res.status(405).json({ error: 'method not allowed' });
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -259,6 +297,7 @@ export default async function handler(req, res) {
   if (resource === 'scan-run') return handleScanRun(req, res);
   if (resource === 'scan-result') return handleScanResult(req, res);
   if (resource === 'tachibana-quotes') return handleTachibanaQuotes(req, res);
+  if (resource === 'review-result') return handleReviewResult(req, res);
 
   // ここから下はデバイス間同期処理
   const { userId } = req.query;

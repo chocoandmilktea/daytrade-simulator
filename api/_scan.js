@@ -26,7 +26,7 @@ import { Redis } from "@upstash/redis";
 import { gunzipSync } from "zlib";
 import { fetchStockPayload, fetchTachibanaQuotes } from "./stock.js";
 import { analyzeStock } from "../src/lib/analyze.js";
-import { calcMarketState, isTachibanaQuoteTime, toTachibanaQuoteSet } from "../src/lib/marketState.js";
+import { calcMarketState, isTachibanaQuoteTime, toTachibanaQuoteSet, marketBadge } from "../src/lib/marketState.js";
 
 const redis = Redis.fromEnv();
 
@@ -530,6 +530,9 @@ export async function runScanBatch(opts) {
       row.marketState = null;
       console.log("[scan] " + row.ticker + " 状態の計算に失敗: " + e.message);
     }
+    // 札の種類（caution・today・multiday・none）。画面の札と同じ marketBadge で決める。
+    // 上昇済みスコアは保存行の score（重み補正なし）を渡す。状態が無い行は null
+    row.badge = row.marketState ? marketBadge(row.marketState, row.score) : null;
   });
 
   var stored = 0;
