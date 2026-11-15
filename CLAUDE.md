@@ -237,6 +237,7 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 | `scan-universe` | GET のみ | スキャン対象銘柄リストの現在値を返す。書き込み口は廃止済み（保存は `_scan.js` の `buildUniverse` がサーバー側で行う） |
 | `scan-run` | POST のみ | 定時スキャン1バッチの実行窓口。`_scan.js` を動的 import して `runScanBatch()` を呼ぶ（認証必須） |
 | `scan-result` | GET のみ | `date` 指定で全 slot の保存結果を `mget` してまとめて返す |
+| `review-result` | POST・GET | POST=札の答え合わせの結果を `review:result` に上書き保存（期限なし。`X-Relay-Secret` 必須。送り手は daytrade-data の review-judge）。GET=保存されている結果を返す（認証なし。無ければ null）。表示は `src/App.js` の `ReviewResultPanel` |
 | （`resource` 無し・未知の値） | POST・GET | デバイス間同期にフォールバック。`userId` 必須。`user:<userId>` を読み書き（90日、GET時に延長） |
 
 - `resource` 無しのデバイス間同期は、`lastSectors` が送られてこなかった場合に**既存の値を維持する**（未送信を「空で上書き」と解釈しない）。古い版のアプリからの同期で業種選定が消えるのを防ぐため

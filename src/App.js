@@ -5484,6 +5484,153 @@ function DataDiagnosticPanel(p){
 
 // シグナル的中率の中身（お気に入りタブ／トレードタブ両方から使う）
 // tickers省略時はお気に入り銘柄で集計。指定時はそのtickerだけで集計（トレードタブ用・お気に入りとは分離）
+// ── Claudeの候補と札の答え合わせ（daytrade-data の review-judge が毎晩送る結果）──
+// api/sync.js?resource=review-result を GET で読み、的中率パネルの一番上に表で出す。
+// 読み込みは欄が初めて表示されたときの1回だけ（起動時には読まない）。成功した結果（null を含む）は
+// REVIEW_RESULT_CACHE に控え、パネルを開き直しても取り直さない。失敗したときだけ次に開いたとき取り直す
+var REVIEW_RESULT_API="https://daytrade-simulator.vercel.app/api/sync?resource=review-result";
+var REVIEW_RESULT_CACHE=null;   // {data:結果 or null}。未取得なら null
+var REVIEW_RESULT_PENDING=null; // 取得中の Promise（お気に入りタブとトレードタブの同時表示で二重に取らないため）
+function loadReviewResult(){
+  if(REVIEW_RESULT_CACHE) return Promise.resolve(REVIEW_RESULT_CACHE.data);
+  if(REVIEW_RESULT_PENDING) return REVIEW_RESULT_PENDING;
+  REVIEW_RESULT_PENDING=fetch(REVIEW_RESULT_API,{cache:"no-store",signal:AbortSignal.timeout(10000)})
+    .then(function(r){if(!r.ok)throw new Error("http "+r.status);return r.json();})
+    .then(function(json){
+      // 中身の検査は「null」と「version が無い」だけ（結果の形は daytrade-data 側が決めるため）
+      if(json!=null&&(typeof json!=="object"||json.version==null)) throw new Error("形式が違います");
+      REVIEW_RESULT_CACHE={data:json};
+      return json;
+    })
+    .finally(function(){REVIEW_RESULT_PENDING=null;});
+  return REVIEW_RESULT_PENDING;
+}
+function ReviewResultPanel(){
+  var openS=useState(true);var open=openS[0],setOpen=openS[1];
+  var rulesS=useState(false);var rulesOpen=rulesS[0],setRulesOpen=rulesS[1];
+  var daysS=useState(false);var daysOpen=daysS[0],setDaysOpen=daysS[1];
+  var dayS=useState(null);var openDay=dayS[0],setOpenDay=dayS[1];
+  // st: "loading" / "error" / "ok"。data は null（まだ結果が無い）か結果の JSON
+  var stS=useState(REVIEW_RESULT_CACHE?{st:"ok",data:REVIEW_RESULT_CACHE.data}:{st:"loading",data:null});
+  var st=stS[0],setSt=stS[1];
+  useEffect(function(){
+    if(REVIEW_RESULT_CACHE) return;
+    var alive=true;
+    loadReviewResult()
+      .then(function(d){if(alive)setSt({st:"ok",data:d});})
+      .catch(function(e){console.log("[review-result] 読み込み失敗: "+(e&&e.message));if(alive)setSt({st:"error",data:null});});
+    return function(){alive=false;};
+  },[]);
+  var note={fontSize:11,color:"#4a7090"};
+  var small={fontSize:10,color:"#2a6090"};
+  var toggleStyle={background:"transparent",border:"none",padding:0,fontSize:11,fontWeight:700,color:"#4a7090",cursor:"pointer",userSelect:"none"};
+  // 色は的中率パネルの既存の表と同じ（勝率は cellColor と同じ段階、損益はプラス緑・マイナス赤）
+  function wrColor(wr){return wr==null?"#4a7090":wr>=0.6?"#22d3a0":wr>=0.5?"#fbbf24":"#f43f5e";}
+  function pnlColor(v){return v==null?"#4a7090":v>=0?"#22d3a0":"#f43f5e";}
+  function pct(v){return v==null?"—":(v>=0?"+":"")+v.toFixed(2)+"%";}
+  function md(s){return typeof s==="string"&&s.length>=10?Number(s.slice(5,7))+"/"+Number(s.slice(8,10)):(s||"—");}
+  // "2026-11-11T20:15:03+09:00" → "2026-11-11 20:15"
+  function fmtUpdated(s){return typeof s==="string"?s.replace("T"," ").slice(0,16):"—";}
+  function statsTable(gs,groupsObj){
+    var hd={fontSize:10,color:"#2a6090",padding:"4px 6px",borderBottom:"1px solid #0f2040",display:"flex"};
+    return(
+      // iPad縦・スマホで列がはみ出す場合は、表だけを横スクロールさせる
+      <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <div style={{minWidth:400}}>
+          <div style={hd}>
+            <div style={{flex:1,minWidth:110}}>組</div>
+            <div style={{width:34,flexShrink:0,textAlign:"right"}}>件数</div>
+            <div style={{width:96,flexShrink:0,textAlign:"right",whiteSpace:"nowrap"}}>利確／損切り／引け</div>
+            <div style={{width:38,flexShrink:0,textAlign:"right"}}>勝率</div>
+            <div style={{width:54,flexShrink:0,textAlign:"right"}}>1回平均</div>
+            <div style={{width:58,flexShrink:0,textAlign:"right"}}>基準との差</div>
+          </div>
+          {gs.map(function(g){
+            var s=(groupsObj&&groupsObj[g.key])||{};
+            var n=s.n||0;
+            return(
+              <div key={g.key} style={{display:"flex",alignItems:"center",fontSize:12,padding:"6px 6px",borderBottom:"1px solid #0a1830",opacity:n?1:0.5}}>
+                <div style={{flex:1,minWidth:110,color:"#b8cce0",lineHeight:1.3}}>{g.label||g.key}</div>
+                <div style={{width:34,flexShrink:0,textAlign:"right",color:"#4a7090"}}>{n}</div>
+                <div style={{width:96,flexShrink:0,textAlign:"right",color:"#4a7090",fontFamily:"monospace"}}>{n?((s.tp||0)+"/"+(s.sl||0)+"/"+(s.close||0)):"—"}</div>
+                <div style={{width:38,flexShrink:0,textAlign:"right",color:wrColor(s.winRate),fontWeight:700}}>{s.winRate!=null?Math.round(s.winRate*100)+"%":"—"}</div>
+                <div style={{width:54,flexShrink:0,textAlign:"right",color:pnlColor(s.avgPnl),fontWeight:700}}>{pct(s.avgPnl)}</div>
+                <div style={{width:58,flexShrink:0,textAlign:"right",color:pnlColor(s.diff),fontWeight:700}}>{pct(s.diff)}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+  var d=st.data;
+  var body=null;
+  if(st.st==="loading") body=<div style={{...note,padding:"8px 0"}}>読み込み中…</div>;
+  else if(st.st==="error") body=<div style={{fontSize:11,color:"#fbbf24",padding:"8px 0"}}>読み込みに失敗しました。パネルを開き直すと再度読み込みます</div>;
+  else if(d==null) body=<div style={{...note,padding:"8px 0"}}>まだ答え合わせの結果がありません（毎晩 daytrade-data から届きます）</div>;
+  else{
+    var gs=Array.isArray(d.groups)?d.groups:[];
+    var total=d.total||{};
+    var baseT=total.base||{},claudeT=total.claude||{};
+    var rules=d.rules||{};
+    var days=(Array.isArray(d.days)?d.days.slice():[]).sort(function(a,b){return String(b.date).localeCompare(String(a.date));});
+    var unreadable=Array.isArray(d.unreadable)?d.unreadable:[];
+    var ruleRows=[["買い方",rules.buy],["手じまい",rules.exit],["費用",rules.cost],["損益",rules.pnl],["Claudeの候補の対象",rules.claudeFrom?rules.claudeFrom+" から":null],["15:00の枠の対象",rules.scanFrom?rules.scanFrom+" から":null]].filter(function(r){return r[1];});
+    body=(
+      <div>
+        <div style={{...note,marginTop:4}}>{"更新："+fmtUpdated(d.updatedAt)}</div>
+        <div style={{...note,marginBottom:8}}>{"判定した日数：基準 "+(baseT.days||0)+"日（Claude は "+(claudeT.days||0)+"日）"}</div>
+        {statsTable(gs,total)}
+        <div style={{...small,marginTop:6,lineHeight:1.5}}>
+          <div>※1回平均：1回の売買で平均して何%増えたか・減ったか</div>
+          <div>※基準：15:00の枠の全銘柄を同じ売り方で買った場合。これを上回り、かつプラスなら良い</div>
+          <div>※札は「買わない」ための目印なので、基準より悪ければ札は役に立っている</div>
+          <div>{"※Claude の基準との差は、基準がある日だけで計算している（件数は "+(claudeT.diffN!=null?claudeT.diffN:0)+" 件）"}</div>
+          <div>※20営業日ほどたまるまでは参考の値</div>
+        </div>
+        {unreadable.length>0&&<div style={{fontSize:11,color:"#fbbf24",marginTop:6}}>{"読めなかった日："+unreadable.join("、")}</div>}
+        <div style={{marginTop:8}}>
+          <button onClick={function(){setRulesOpen(!rulesOpen);}} style={toggleStyle}>{(rulesOpen?"▼":"▶")+" 売り方の決まり"}</button>
+          {rulesOpen&&(
+            <div style={{...small,marginTop:4,lineHeight:1.5}}>
+              {ruleRows.map(function(r){return <div key={r[0]}>{r[0]+"："+r[1]}</div>;})}
+            </div>
+          )}
+        </div>
+        <div style={{marginTop:6}}>
+          <button onClick={function(){setDaysOpen(!daysOpen);}} style={toggleStyle}>{(daysOpen?"▼":"▶")+" 日ごとの結果（"+days.length+"日）"}</button>
+          {daysOpen&&(
+            <div style={{marginTop:4}}>
+              {days.length===0&&<div style={{...note,padding:"6px 0"}}>まだありません</div>}
+              {days.map(function(day){
+                var g=day.groups||{};
+                var c=g.claude||{},b=g.base||{};
+                var isOpen=openDay===day.date;
+                return(
+                  <div key={day.date} style={{borderBottom:"1px solid #0a1830"}}>
+                    <div onClick={function(){setOpenDay(isOpen?null:day.date);}} style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:"2px 10px",fontSize:12,padding:"6px 6px",cursor:"pointer",userSelect:"none"}}>
+                      <div style={{color:"#b8cce0",fontFamily:"monospace"}}>{(isOpen?"▼ ":"▶ ")+md(day.date)+"→"+md(day.tradeDate)}</div>
+                      <div style={{color:"#4a7090"}}>Claude <span style={{color:pnlColor(c.avgPnl),fontWeight:700}}>{pct(c.avgPnl)}</span></div>
+                      <div style={{color:"#4a7090"}}>基準 <span style={{color:pnlColor(b.avgPnl),fontWeight:700}}>{pct(b.avgPnl)}</span></div>
+                    </div>
+                    {isOpen&&<div style={{padding:"0 0 8px"}}>{statsTable(gs,g)}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+  return(
+    <div style={{marginBottom:16,paddingBottom:12,borderBottom:"1px solid #0f2040"}}>
+      <div onClick={function(){setOpen(!open);}} style={{fontSize:13,fontWeight:700,color:"#e0f0ff",cursor:"pointer",userSelect:"none"}}>{(open?"▾ ":"▸ ")+"🧪 Claudeの候補と札の答え合わせ"}</div>
+      {open&&body}
+    </div>
+  );
+}
+
 function SignalAccuracyContent(p){
   var tickers=p&&p.tickers;
   var label=(p&&p.label)||"トレード";
@@ -5528,6 +5675,7 @@ function SignalAccuracyContent(p){
   function cellColor(wr){return wr==null?"#4a7090":wr>=60?"#22d3a0":wr>=50?"#fbbf24":"#f43f5e";}
   return(
     <div>
+      <ReviewResultPanel/>
       <div style={{fontSize:11,color:"#4a7090",marginBottom:10}}>{(tickers?(label+"で登録した銘柄"):"お気に入り登録銘柄")+"の過去データを集計。各シグナルの予想方向（強気なら上昇/弱気なら下落）が何営業日後に当たったかを表示します。%の下の小さい数字は、そのシグナル通りに動いた場合の平均騰落率です。並び順は勝率ではなく「1日後の平均騰落率（期待値）が高い順」です"}</div>
       {data.length===0?(
         <div style={{fontSize:13,color:"#4a7090",textAlign:"center",padding:"20px 0"}}>まだデータがありません。{emptyLabel}を毎日スキャンすると溜まっていきます。</div>
