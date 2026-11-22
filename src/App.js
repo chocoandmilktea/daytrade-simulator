@@ -4240,7 +4240,8 @@ function FavPanel(p){
   var isAll=groupFilter===-1;
   // 銘柄名マスタ（コード→会社名）。会社名でも検索できるようにするため保持する。
   // 端末に24時間キャッシュされているので、通常は通信せずそのまま使える
-  var nameMapS=useState(function(){return loadCachedNameMap(true);}); // 期限切れの表でも初期表示には使うvar nameMap=nameMapS[0],setNameMap=nameMapS[1];
+  var nameMapS=useState(function(){return loadCachedNameMap(true);}); // 期限切れの表でも初期表示には使う
+  var nameMap=nameMapS[0],setNameMap=nameMapS[1];
   var hitsOpenS=useState(false);var hitsOpen=hitsOpenS[0],setHitsOpen=hitsOpenS[1];
   useEffect(function(){
     var alive=true;

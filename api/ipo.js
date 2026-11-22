@@ -35,7 +35,10 @@ export default async function handler(req, res) {
       if (!r.ok) throw new Error("names api: " + r.status);
 
       const json = await r.json();
-      return json.names || {};
+      const names = json.names || {};
+      // 0件は失敗として扱う（空の表で控えを上書きせず、前回の控えを返させるため）
+      if (Object.keys(names).length === 0) throw new Error("names api: empty");
+      return names;
     }, NAMES_SNAPSHOT_TTL);
 
     // キャッシュ更新

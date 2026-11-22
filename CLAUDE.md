@@ -195,7 +195,7 @@ Vercelから立花APIを**直接叩かない**。`App.js → api/*.js → tachib
 
 | キー | TTL | 定数名 | 書き込み元 |
 | --- | --- | --- | --- |
-| `snapshot:<key>`（実績: `snapshot:topix` / `snapshot:issue-detail:<コード>` / `snapshot:ranking-data` / `snapshot:names`） | 3日 | `SNAPSHOT_TTL` | `api/_fallbackCache.js` |
+| `snapshot:<key>`（実績: `snapshot:topix` / `snapshot:issue-detail:<コード>` / `snapshot:ranking-data` / `snapshot:names`） | 3日（`snapshot:names` だけ365日。`api/ipo.js` の `NAMES_SNAPSHOT_TTL`） | `SNAPSHOT_TTL` | `api/_fallbackCache.js` |
 | `jpx:earnings-map` | 24時間 | `EARNINGS_REDIS_TTL` | `api/stock.js` |
 | `tachibana:watch` | 5分 | `WATCH_TTL` | `api/sync.js` |
 | `tachibana:quote:<ticker>` | 30秒 | 定数なし・直書き | `api/sync.js` |
