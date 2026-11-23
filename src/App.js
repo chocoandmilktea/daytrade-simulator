@@ -1650,6 +1650,34 @@ function importAllData(file){
   };
   reader.readAsText(file);
 }
+// バックアップから社名の対応表（jp_name_map）だけを読み込む。ほかのキーは一切書き換えない。
+// ts は書き換えず古い日付のまま入れる（期限切れの表として使われ、立花から新しい表が取れれば自動で置き換わるため）
+function importNameMapOnly(file){
+  var reader=new FileReader();
+  reader.onload=function(){
+    var data;
+    try{data=JSON.parse(reader.result);}catch(e){alert("読み込みに失敗しました: 正しいバックアップファイルか確認してください");return;}
+    var raw=data&&typeof data==="object"?data["jp_name_map"]:null;
+    var v=null;
+    try{v=typeof raw==="string"?JSON.parse(raw):null;}catch(e){v=null;}
+    var names=v&&v.names&&typeof v.names==="object"?v.names:null;
+    var count=names?Object.keys(names).length:0;
+    if(!count){alert("このバックアップには社名の対応表が入っていません。10/25以前のバックアップを選んでください");return;}
+    var bTs=Number(v.ts)||0;
+    // 端末に1件以上の表があり、それがバックアップより新しければ上書きしない
+    var cur=null;
+    try{cur=JSON.parse(localStorage.getItem("jp_name_map")||"null");}catch(e){cur=null;}
+    if(cur&&cur.names&&typeof cur.names==="object"&&Object.keys(cur.names).length>0&&(Number(cur.ts)||0)>bTs){alert("端末の方が新しい対応表です");return;}
+    var dateStr=bTs?new Date(bTs).toLocaleDateString("ja-JP"):"不明";
+    if(!window.confirm("バックアップから社名の対応表を読み込みます。\n銘柄数: "+count+"件\n表を取得した日付: "+dateStr+"\nほかのデータは変わりません。よろしいですか？"))return;
+    try{localStorage.setItem("jp_name_map",raw);}catch(e){alert("書き込みに失敗しました: "+e.message);return;}
+    JP_NAME_MAP=names;
+    JP_NAME_STALE=Date.now()-bTs>=JP_NAME_TTL;
+    alert("社名の対応表を読み込みました。ページを再読み込みします");
+    window.location.reload();
+  };
+  reader.readAsText(file);
+}
 function cleanupOldData(){
   if(!window.confirm("90日以上更新のない銘柄の履歴データ（スコア履歴・AI予想記録）を削除します。よろしいですか？"))return;
   var cutoff=new Date(Date.now()-90*24*60*60*1000).toISOString().slice(0,10);
@@ -5850,6 +5878,10 @@ function SignalAccuracyContent(p){
           <label style={{fontSize:12,padding:"8px 12px",borderRadius:6,border:"1px solid #2a4060",background:"#0a1e3a",color:"#8ac0e8",cursor:"pointer"}}>
             📂 復元
             <input type="file" accept=".json,application/json" style={{display:"none"}} onChange={function(ev){var f=ev.target.files&&ev.target.files[0];if(f)importAllData(f);ev.target.value="";}}/>
+          </label>
+          <label style={{fontSize:12,padding:"8px 12px",borderRadius:6,border:"1px solid #2a4060",background:"#0a1e3a",color:"#8ac0e8",cursor:"pointer"}}>
+            🏷️ 社名だけ読込
+            <input type="file" accept=".json,application/json" style={{display:"none"}} onChange={function(ev){var f=ev.target.files&&ev.target.files[0];if(f)importNameMapOnly(f);ev.target.value="";}}/>
           </label>
           <button onClick={cleanupOldData} style={{fontSize:12,padding:"8px 12px",borderRadius:6,border:"1px solid #2a4060",background:"#0a1e3a",color:"#8ac0e8",cursor:"pointer"}}>🧹 古いデータ掃除</button>
         </div>
