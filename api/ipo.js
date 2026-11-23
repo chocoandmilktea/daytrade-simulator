@@ -9,6 +9,9 @@ import { withFallback } from "./_fallbackCache.js";
 let _cache = null;
 let _cacheTs = 0;
 const CACHE_TTL = 60 * 60 * 1000; // 1時間
+// Redisの控え（snapshot:names）の保存期間。社名はほとんど変わらず成功のたびに上書きされるため、
+// 立花の長期停止でも消えないよう他の控え（3日）より長くする
+const NAMES_SNAPSHOT_TTL = 60 * 60 * 24 * 365; // 365日
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -32,8 +35,11 @@ export default async function handler(req, res) {
       if (!r.ok) throw new Error("names api: " + r.status);
 
       const json = await r.json();
-      return json.names || {};
-    });
+      const names = json.names || {};
+      // 0件は失敗として扱う（空の表で控えを上書きせず、前回の控えを返させるため）
+      if (Object.keys(names).length === 0) throw new Error("names api: empty");
+      return names;
+    }, NAMES_SNAPSHOT_TTL);
 
     // キャッシュ更新
     _cache = names;

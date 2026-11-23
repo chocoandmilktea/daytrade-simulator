@@ -270,25 +270,36 @@ var NAMES_API="https://daytrade-simulator.vercel.app/api/ipo";
 // これが無いと「8308」のようにコードのままAIに渡ってしまい、AIがWeb検索で
 // 別銘柄と取り違える原因になる。取得に失敗した場合はコード表示のまま動く。
 var JP_NAME_MAP=null;                    // メモリ上のキャッシュ
+var JP_NAME_STALE=false;                 // JP_NAME_MAP が期限切れの表の代用中か（trueなら次の呼び出しで取り直す）
 var JP_NAME_TTL=24*60*60*1000;           // 24時間
-function loadCachedNameMap(){
+// allowStale=true のときは24時間を過ぎた表も返す（ただし0件の古い表は無いものとして扱う）
+function loadCachedNameMap(allowStale){
   try{
     var v=JSON.parse(localStorage.getItem("jp_name_map")||"null");
     if(v&&v.names&&Date.now()-(v.ts||0)<JP_NAME_TTL) return v.names;
+    if(allowStale&&v&&v.names&&Object.keys(v.names).length>0) return v.names;
   }catch(e){}
   return null;
 }
 async function fetchJPNameMap(){
-  if(JP_NAME_MAP) return JP_NAME_MAP;
+  if(JP_NAME_MAP&&!JP_NAME_STALE) return JP_NAME_MAP;
   var cached=loadCachedNameMap();
-  if(cached){JP_NAME_MAP=cached;return cached;}
+  if(cached){JP_NAME_MAP=cached;JP_NAME_STALE=false;return cached;}
   try{
     var res=await fetch(NAMES_API,{signal:AbortSignal.timeout(15000)});
-    var json=await res.json();
-    JP_NAME_MAP=json.names||{};
-    try{localStorage.setItem("jp_name_map",JSON.stringify({ts:Date.now(),names:JP_NAME_MAP}));}catch(e){}
-    return JP_NAME_MAP;
-  }catch(e){ return {}; } // 失敗はキャッシュせず、次の機会に再取得する
+    // 500などのエラー応答や0件の表は保存しない（正常な古い表を空で上書きしないため）
+    var json=res.ok?await res.json():null;
+    var names=json&&json.names;
+    if(names&&typeof names==="object"&&Object.keys(names).length>0){
+      JP_NAME_MAP=names;JP_NAME_STALE=false;
+      try{localStorage.setItem("jp_name_map",JSON.stringify({ts:Date.now(),names:names}));}catch(e){}
+      return names;
+    }
+  }catch(e){}
+  // 取得失敗・0件：期限切れでも古い表があれば代用する（localStorageは書き換えない）
+  var old=JP_NAME_MAP||loadCachedNameMap(true);
+  if(old){JP_NAME_MAP=old;JP_NAME_STALE=true;return old;}
+  return {}; // 古い表も無ければコード表示のまま動く。メモリには残さず次の機会に再取得する
 }
 // universe内の「会社名がコードのままの日本株」に正式名称を当てはめる（AIの銘柄取り違え防止）
 async function fillJPNames(universe){
@@ -303,7 +314,7 @@ async function fillJPNames(universe){
 // ticker("8308.T")から会社名を引く。見つからなければfallback（通常はコード）を返す
 function jpNameOf(ticker,fallback){
   var code=String(ticker||"").replace(".T","");
-  var m=JP_NAME_MAP||loadCachedNameMap();
+  var m=JP_NAME_MAP||loadCachedNameMap(true); // 新しい表が無ければ期限切れの表を使う
   return (m&&m[code])||fallback||code;
 }
 var SECTOR_API="https://daytrade-simulator.vercel.app/api/sector";
@@ -4230,7 +4241,8 @@ function FavPanel(p){
   var isAll=groupFilter===-1;
   // 銘柄名マスタ（コード→会社名）。会社名でも検索できるようにするため保持する。
   // 端末に24時間キャッシュされているので、通常は通信せずそのまま使える
-  var nameMapS=useState(function(){return loadCachedNameMap();});var nameMap=nameMapS[0],setNameMap=nameMapS[1];
+  var nameMapS=useState(function(){return loadCachedNameMap(true);}); // 期限切れの表でも初期表示には使う
+  var nameMap=nameMapS[0],setNameMap=nameMapS[1];
   var hitsOpenS=useState(false);var hitsOpen=hitsOpenS[0],setHitsOpen=hitsOpenS[1];
   useEffect(function(){
     var alive=true;

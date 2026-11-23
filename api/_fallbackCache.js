@@ -14,14 +14,16 @@ const SNAPSHOT_TTL = 60 * 60 * 24 * 3; // 3日分保持（連休を挟んでも�
 /**
  * @param {string} key - データの種類を表す文字列（例: 'ranking:volume', 'topix'）
  * @param {() => Promise<any>} fetchFn - 実際に立花証券APIからデータを取る処理
+ * @param {number} [ttlSeconds] - 控えの保存期間（秒）。省略時は SNAPSHOT_TTL（3日）
  */
-export async function withFallback(key, fetchFn) {
+export async function withFallback(key, fetchFn, ttlSeconds) {
   const snapshotKey = 'snapshot:' + key;
+  const ttl = ttlSeconds > 0 ? ttlSeconds : SNAPSHOT_TTL;
 
   try {
     const data = await fetchFn();
     // 成功したら「最新の引けデータ」として保存しておく
-    await redis.set(snapshotKey, JSON.stringify({ data, savedAt: Date.now() }), { ex: SNAPSHOT_TTL });
+    await redis.set(snapshotKey, JSON.stringify({ data, savedAt: Date.now() }), { ex: ttl });
     return data;
   } catch (err) {
     const cached = await redis.get(snapshotKey);
