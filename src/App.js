@@ -2620,10 +2620,11 @@ function DailyChart(p){
 }
 
 function IntradayChart1m(p){
-  var data=p.data,H=p.height||140,BUCKET=1,CANDLE_W=13,RIGHT_GUTTER=52;
+  var data=p.data,H=p.height||140,BUCKET=1,RIGHT_GUTTER=52;
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   var scrollRef=useRef(null);
   var isMobile=useIsMobile();
+  var CANDLE_W=isMobile?7:10; // ローソク足1本の横幅(px)。スマホは画面に入る本数を増やすため細くする
   var maInfoOpenS=useState(false);var maInfoOpen=maInfoOpenS[0],setMaInfoOpen=maInfoOpenS[1]; // 左上「MA/VWAP」タップ時の説明モーダル
   var visRangeS=useState(null);var visRange=visRangeS[0],setVisRange=visRangeS[1]; // 表示中の足の範囲（縦軸の自動調整用）
 
@@ -2675,7 +2676,7 @@ function IntradayChart1m(p){
     var el=scrollRef.current;if(!el)return;
     el.scrollLeft=el.scrollWidth; // 初期表示は一番右＝直近2時間程度
     updateVisibleRange();
-  },[data,n]);
+  },[data,n,CANDLE_W]);
 
   if(data===undefined){
     return <div style={wrapStyle}><span style={{fontSize:9,color:"#2a4060"}}>読込中…</span></div>;
