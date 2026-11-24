@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import {
   analyzeStock as analyzeStockCore,
   JP_HOLIDAYS, jstInfo, findPrevClose, TRADE_STYLES,
-  WIN_THRESHOLD_PCT, priceMoveState, bizDayDiff, sigStatDays,
+  WIN_THRESHOLD_PCT, priceMoveState, bizDayDiff,
   baseSigLabel, signalQuality, INTRADAY_SESSIONS,
   DAILY_HIST_MAX
 } from "./lib/analyze";
@@ -210,7 +210,6 @@ var MKT = {
 };
 
 function scoreColor(n){ return n>=58?"#22d3a0":n>=38?"#fbbf24":"#f43f5e"; }
-function stateColor(state){return state===1?"#22d3a0":state===-1?"#f43f5e":"#fbbf24";}
 function stateLabel(state){return state===1?"▲ 強気":state===-1?"▼ 弱気":"→ 中立";}
 function bStyle(bg,border,text){ return{background:bg,border:"1px solid "+border,color:text,fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:4,whiteSpace:"nowrap"}; }
 
@@ -1712,17 +1711,6 @@ var EXPECTANCY_MIN_SAMPLES=10;
 function isNegExpectancy(c){
   return !!(c&&c.total>=EXPECTANCY_MIN_SAMPLES&&c.avgPct!=null&&c.avgPct<0);
 }
-// 詳細パネル用：点灯中シグナル1件が「期待値マイナス（勝率の罠）」かを判定。
-// 重み付けと同じ全体統計（JP銘柄・翌営業日ベース）を参照する。
-// 中立シグナルは方向を予想していないため対象外。5営業日分未満は水増しの恐れがあり除外
-function isSigNegExpectancy(sig){
-  if(!sig||!sig.state) return false;
-  var key=baseSigLabel(sig.label)+"#"+sig.state;
-  var s=getUniverseSignalStats()[key];
-  if(!s||s.t<EXPECTANCY_MIN_SAMPLES||sigStatDays(s)<5) return false;
-  var avg=signalAvgPct(s,key);
-  return avg!=null&&avg<0;
-}
 // ── 記録時刻（"HH:MM"）を0時からの分に直す ─────────────────────────────
 // 使い先は取り込みの entryMinutes と、3点灯バッジの putSig3・sig3BadgeText
 function hhmmToMin(t){var m=/^(\d{1,2}):(\d{2})$/.exec(t||"");return m?parseInt(m[1],10)*60+parseInt(m[2],10):null;}
@@ -2757,6 +2745,13 @@ function IntradayChart1m(p){
   }
   var pts25=toPtsAbs(ma25),pts75=toPtsAbs(ma75),ptsVwap=vwapLine?toPtsAbs(vwapLine):null;
   var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1],lastVwap=vwapLine?vwapLine[vwapLine.length-1]:null;
+  // 凡例の値が「いつ時点か」を最後の足の日付と時刻から作る（例: "11/24 15:30 時点"）。
+  // 立花のリアルタイム値を継ぎ足した足は、時刻が立花の約定時刻（時:分）、日付がYahooの最新営業日になる。
+  // 日付か時刻のどちらかが読めない足では時点の表示だけを出さない
+  var lastCandle=candles[n-1];
+  var asOfTm=lastCandle?/^(\d{1,2}):(\d{2})/.exec(String(lastCandle.time||"")):null;
+  var asOfDateOk=!!(lastCandle&&/^\d{4}-\d{2}-\d{2}$/.test(String(lastCandle.date||"")));
+  var asOfLabel=(asOfTm&&asOfDateOk)?formatShortDate(lastCandle.date)+" "+Number(asOfTm[1])+":"+asOfTm[2]+" 時点":"";
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
   var bodyHalf=CANDLE_W*0.35;
   // 複数日ぶんのデータになりうるので、時刻ラベルには常にその足の日付(M/D)を添える。
@@ -2778,6 +2773,7 @@ function IntradayChart1m(p){
             <span style={{fontSize:9,color:"#a3e635",whiteSpace:"nowrap"}}>25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
             <span style={{fontSize:9,color:"#f472b6",whiteSpace:"nowrap"}}>75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
             {hasVolume?<span style={{fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{fontSize:9,color:"#2a4060",whiteSpace:"nowrap"}}>VWAP未対応</span>}
+            {asOfLabel&&<span style={{fontSize:9,color:"#6a90b0",whiteSpace:"nowrap"}}>{asOfLabel}</span>}
           </div>
         <div ref={scrollRef} onScroll={updateVisibleRange} style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <div style={{width:chartWidth}}>
@@ -2859,14 +2855,16 @@ function SignalDetailList(p){
         {sortedSignals.map(function(sig,i){
           return(
             <div key={i} onClick={function(){setWeightOpen(true);}} style={{background:"#071428",borderRadius:6,padding:rowPad,display:"flex",justifyContent:"space-between",alignItems:"center",border:"1px solid #0f2040",cursor:"pointer"}}>
-              <span style={{fontSize:labelFs,color:isSigNegExpectancy(sig)?"#fb923c":"#4a7090"}}>{(isSigNegExpectancy(sig)?"⚠️ ":"")+displaySignalLabel(sig.label)}</span>
+              <span style={{fontSize:labelFs,color:"#4a7090"}}>{displaySignalLabel(sig.label)}</span>
               <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                <span style={{fontSize:valFs,fontWeight:700,color:stateColor(sig.state),textAlign:"right"}}>{sig.val}</span>
+                {/* 値の色は区分（強気・中立・弱気）に関係なく灰色で固定する。色分けすると「上がる・下がる」の根拠に見えるため */}
+                <span style={{fontSize:valFs,fontWeight:700,color:"#94a3b8",textAlign:"right"}}>{sig.val}</span>
               </div>
             </div>
           );
         })}
       </div>
+      <div style={{fontSize:isMobile?8:9,color:"#64748b",marginTop:4,textAlign:"right"}}>スキャン時の15分足で計算</div>
       <SignalWeightModal open={weightOpen} onClose={function(){setWeightOpen(false);}}/>
     </div>
   );
