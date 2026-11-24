@@ -3138,19 +3138,6 @@ function FavPickerModal(p){
   );
 }
 
-// ── S1（参考値）：スコア内訳(breakdown)のうち下の9項目の点数だけを足した値 ─────
-// 総合スコアとは別枠の参考値で、0〜100への切り詰めはしない。
-// ラベルは完全一致で照合する（"VWAP" と "VWAP傾き" を取り違えないため、前方一致・部分一致は使わない）
-var S1_LABELS=["VWAP傾き","Pivot","ATR(値幅)","ATR消化率","MACD","RSI","BB","Stoch","重複ボーナス"];
-function calcS1(breakdown){
-  if(!Array.isArray(breakdown)) return null;
-  var sum=0;
-  breakdown.forEach(function(b){
-    if(b&&S1_LABELS.indexOf(b.label)>=0&&typeof b.delta==="number"&&isFinite(b.delta)) sum+=b.delta;
-  });
-  return sum;
-}
-
 // ── 「今の状態」（marketState）の表示用 ─────────────────────────────────
 // 色は状態によらず控えめな灰色系で統一する（緑・赤は「買い」「売り」と読まれやすいため使わない）
 var MS_COLOR={bg:"#101826",border:"#2a4060",text:"#8aa8c8"};
@@ -3257,9 +3244,7 @@ function StockCard(p){
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:13,color:"#d8eeff",fontWeight:800}}>{s.price}</div>
             {s.real===false&&s.failReason&&<div style={{fontSize:9,color:"#f43f5e",maxWidth:100,textAlign:"right"}}>{s.failReason}</div>}
-            {s.real!==false&&<div style={{fontSize:10,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>}
-            {(function(){var s1=calcS1(s.breakdown);return s1!=null&&<div style={{fontSize:9,color:"#4a7090"}} title="S1（参考値）：スコア内訳のうちVWAP傾き・Pivot・ATR(値幅)・ATR消化率・MACD・RSI・BB・Stoch・重複ボーナスの点数だけを足した値">S1 {Math.round(s1)}</div>;})()}
-          </div>
+            {s.real!==false&&<div style={{fontSize:10,color:isUp?"#22d3a0":"#f43f5e"}}>{isUp?"▲":"▼"}{Math.abs(s.change)}%</div>}          </div>
         </div>
       </div>
 
@@ -4258,10 +4243,10 @@ function FavPanel(p){
 
   // groupFilter: -1=📋全銘柄 / 0=未分類 / 1〜4=グループ。タブを移動しても保持される
   var groupFilterS=usePersistedState("fav_group_filter",0);var groupFilter=groupFilterS[0],setGroupFilter=groupFilterS[1];
-  // sortMode: "reg"=既定順（お気に入り=登録順・全銘柄=スキャン順）/ "trade"=トレード順 / "s1"=S1順
+  // sortMode: "reg"=既定順（お気に入り=登録順・全銘柄=スキャン順）/ "trade"=トレード順 / "badge"=札順
   var sortModeS=usePersistedState("fav_sort_mode","reg");var sortMode=sortModeS[0],setSortMode=sortModeS[1];
-  // 旧"dayType"・廃止した"score"（上昇済み順）・"momentum"（初動順）の保存値は既定順に読み替える
-  var mode=(sortMode==="trade"||sortMode==="s1")?sortMode:"reg";
+  // 旧"dayType"・廃止した"score"（上昇済み順）・"momentum"（初動順）・"s1"（S1順）の保存値は既定順に読み替える
+  var mode=(sortMode==="trade"||sortMode==="badge")?sortMode:"reg";
   var searchS=useState("");var searchTicker=searchS[0],setSearchTicker=searchS[1];
   var searchStatusS=useState(null);var searchStatus=searchStatusS[0],setSearchStatus=searchStatusS[1];
   var addGroupS=useState(0);var addGroup=addGroupS[0],setAddGroup=addGroupS[1];
@@ -4342,17 +4327,33 @@ function FavPanel(p){
     if(t==="long" ||t==="stable"||lbl.indexOf("スイング")>=0) return 2; // このアプリのキーは"stable"
     return 3;
   }
+  // 札順の段（小さいほど上）。カードの札と同じ決まりにするため、日本株だけ marketBadge で判定する（msCardText と同じ引数）
+  // 0=注意（下落を含む）/ 1=札なし（落ち着いている）/ 2=注意（荒い・下落なし）/ 3=そのほかの注意 / 4=数日で上昇 / 5=本日上昇 / 6=それ以外
+  function badgeRank(s){
+    var ms=s.market==="JP"?s.marketState:null;
+    if(!ms||!ms.state) return 6; // 米国株・状態が無い銘柄
+    var b=marketBadge(ms,s.score);
+    if(b==="caution"){
+      var cs=Array.isArray(ms.cautions)?ms.cautions:[];
+      if(cs.indexOf("bigDrop")>=0) return 0;
+      if(cs.indexOf("rough")>=0) return 2;
+      return 3; // 取引少のみ・理由なしなど
+    }
+    if(b==="none") return ms.state==="calm"?1:6; // calm 以外（データ不足など）は最下段
+    if(b==="multiday") return 4;
+    if(b==="today") return 5;
+    return 6;
+  }
   var displayStocks=mode==="trade"
     ?baseList.slice().sort(function(a,b){
         // トレード順：手法グループ昇順→同じグループ内はスコアの高い順
         var d=tradeRank(a)-tradeRank(b);
         return d!==0?d:(b.score||0)-(a.score||0);
       })
-    :mode==="s1"
-    ?baseList.map(function(s,i){return{s:s,i:i,v:calcS1(s.breakdown)};}).sort(function(a,b){
-        // S1順：S1の高い順。S1が無い銘柄は末尾へ。同点（無い同士も含む）は並べ替え前の順番を保つ
-        if(a.v==null||b.v==null){if(a.v==null&&b.v==null)return a.i-b.i;return a.v==null?1:-1;}
-        return b.v!==a.v?b.v-a.v:a.i-b.i;
+    :mode==="badge"
+    ?baseList.map(function(s,i){return{s:s,i:i,v:badgeRank(s)};}).sort(function(a,b){
+        // 札順：段の小さい順。同じ段の中は並べ替え前の順番を保つ（元の位置の番号で比べ、並びが崩れないようにする）
+        return a.v!==b.v?a.v-b.v:a.i-b.i;
       }).map(function(x){return x.s;})
     :baseList;
 
@@ -4403,7 +4404,7 @@ function FavPanel(p){
 
   // ── 上部バーの部品（横スクロール1行に並べるため全てflexShrink:0）──────────
   var TIP_TRADE="スキャル→デイトレ→スイングの順に並べ、各グループ内はアプリの内部の点数（画面には出していません）が高い順に表示します。もう一度押すと既定の並びに戻ります";
-  var TIP_S1="S1（スコア内訳のうちVWAP傾き・Pivot・ATR(値幅)・ATR消化率・MACD・RSI・BB・Stoch・重複ボーナスの合計点）が高い順に並べます。もう一度押すと既定の並びに戻ります";
+  var TIP_BADGE="カードの札で並べます：注意(下落)→札なし→注意(荒い)→そのほかの注意→数日で上昇→本日上昇→それ以外（データ不足・米国株）。同じ札の中は既定の並びのままです。もう一度押すと既定の並びに戻ります";
   function sBtn(m,label,title,color){
     var active=mode===m;
     return(<button onClick={function(){setSortMode(active?"reg":m);}} title={title} style={{flexShrink:0,background:active?color+"20":"transparent",border:"1px solid "+(active?color:"#1e3050"),borderRadius:6,color:active?color:"#4a6080",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",fontWeight:active?700:400,whiteSpace:"nowrap"}}>{label}{active?"✓":""}</button>);
@@ -4438,7 +4439,7 @@ function FavPanel(p){
   return(
     <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - "+(50+extraH)+"px)"}}>
       <div style={{position:"sticky",top:stickyTop,zIndex:10,background:"#040c18",paddingBottom:4,paddingLeft:10,paddingRight:10,paddingTop:4}}>
-        {/* 件数 / 検索 / グループ / トレード順 / S1順 / 業種まとめ登録 / 的中率 ／ 右端に再スキャン（PC版）*/}
+        {/* 件数 / 検索 / グループ / トレード順 / 札順 / 的中率 ／ 右端に再スキャン（PC版）*/}
         <div style={{background:"#071428",border:"1px solid #0f2040",borderRadius:10,padding:"6px 10px",display:"flex",gap:4,alignItems:"center",flexWrap:"nowrap",overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <span style={{fontSize:10,color:"#4a7090",flexShrink:0,whiteSpace:"nowrap"}} title={"取得できた銘柄数／スキャンした銘柄数（表示中は"+displayStocks.length+"件）"}>
             <span style={{color:"#22d3a0",fontWeight:700}}>{realCount}</span>/{stocks.length}
@@ -4461,9 +4462,8 @@ function FavPanel(p){
           {pcGap}
           {/* トレード順。色は紫(#a78bfa) */}
           {sBtn("trade","🎯トレード順",TIP_TRADE,"#a78bfa")}
-          {/* S1順。ほかのボタン(#22d3a0/#a78bfa)と見分けが付くよう色は水色(#38bdf8)にした */}
-          {sBtn("s1","📐S1順",TIP_S1,"#38bdf8")}
-          {p.onBulkSector&&<button onClick={p.onBulkSector} style={{flexShrink:0,background:"transparent",border:"1px solid #0ea5e955",borderRadius:6,color:"#7dd3fc",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>🏭業種まとめ登録</button>}
+          {/* 札順。ほかのボタン(#0ea5e9/#fbbf24/#a78bfa)と見分けが付くよう色はピンク(#f472b6)にした */}
+          {sBtn("badge","🏷️札順",TIP_BADGE,"#f472b6")}
           {pcGap}
           <button onClick={function(){setShowAcc(true);}} style={{flexShrink:0,background:"transparent",border:"1px solid #1e3050",borderRadius:6,color:"#0ea5e9",padding:"3px 8px",fontSize:11,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>📊的中率</button>
           {p.onScan&&<button onClick={p.onScan} style={{flexShrink:0,marginLeft:isMobile?0:"auto",background:"linear-gradient(135deg,#0ea5e9,#0369a1)",border:"none",borderRadius:6,color:"#fff",padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"monospace",whiteSpace:"nowrap"}}>再スキャン</button>}
@@ -5915,13 +5915,14 @@ function GuidePanel(){
     {key:"fav",icon:"⭐",label:"メイン（お気に入り／全銘柄）",sections:[
       {title:"📋 一覧の使い方",items:[
         "銘柄カードをタップ → 詳細シグナル表示",
-        "上部バーは横スクロールします（件数／銘柄検索／グループ／🎯トレード順／📐S1順／🏭業種まとめ登録／📊的中率／再スキャン。PC版では再スキャンが右端に来ます）",
+        "上部バーは横スクロールします（件数／銘柄検索／グループ／🎯トレード順／🏷️札順／📊的中率／再スキャン。PC版では再スキャンが右端に来ます）",
         "「📋全銘柄」＝今回スキャンした全銘柄を表示。「●未分類」＝お気に入りのうちグループに入れていない銘柄を表示（グループ1〜4と同じ絞り込み。先頭の●は★の色と対応）",
         "★/☆ボタンでお気に入りの登録・解除",
         "グループ1〜4に分類可能（グループ名は選択中に表示される✎アイコンで編集）",
         "検索欄にティッカーコード（例：AAPL、7203）か会社名（例：トヨタ）を入力すると候補が並び、タップでそのまま追加登録できる（隣のプルダウンで登録先グループも指定可）",
-        "並び順：既定は「📋全銘柄＝スキャン順／⭐お気に入り＝登録順（新しい順）」。🎯トレード順・📐S1順を押すと切り替わり、同じボタンをもう一度押すと既定に戻る",
-        "「🏭業種まとめ登録」ボタン：業種を1つ選ぶと、その業種の出来高上位50銘柄を選んだグループへ一括登録（取得できた件数が50未満の場合はその分だけ登録）。登録した銘柄の株価は自動で取得され、そのままお気に入り一覧に並ぶ（取得中は「銘柄データを取得中... 12/50」と表示）",
+        "並び順：既定は「📋全銘柄＝スキャン順／⭐お気に入り＝登録順（新しい順）」。🎯トレード順・🏷️札順を押すと切り替わり、同じボタンをもう一度押すと既定に戻る",
+        "🏷️札順の並び：注意（下落）→札なし→注意（荒い）→そのほかの注意（取引少など）→数日で上昇→本日上昇→それ以外（データ不足・米国株）。同じ札の中は既定の並びのまま",
+        "業種まとめ登録：再スキャンメニューの「🏭 業種まとめ登録」から開く。業種を1つ選ぶと、その業種の出来高上位50銘柄を選んだグループへ一括登録（取得できた件数が50未満の場合はその分だけ登録）。登録した銘柄の株価は自動で取得され、そのままお気に入り一覧に並ぶ（取得中は「銘柄データを取得中... 12/50」と表示）",
         "同じ画面の下部にある「🗑 一括解除」で、保存先（未分類・グループ1〜4）ごとにまとめてお気に入りから外せる",
         "「📊的中率」ボタンでお気に入り銘柄のシグナル的中率を確認"
       ]},
@@ -5985,7 +5986,7 @@ function GuidePanel(){
       {title:null,items:[
         "「🔄最新ニュース取得」でTDnet適時開示とYahooファイナンスの見出しを取得し、AIが「金融政策／決算・業績／経済指標／相場急変／セクター動向」の5カテゴリに要約",
         "実際に取得したデータのみを要約対象とし、Web検索やAIの独自知識は使用しない",
-        "記事の中に業種（セクター）が出てきた場合は、🏭バッジで東証33業種コードを一緒に表示（例：🏭 3650 電気機器）。そのコードを「🏭業種まとめ登録」で使えば、該当業種の出来高上位50銘柄をまとめてお気に入りに入れられる",
+        "記事の中に業種（セクター）が出てきた場合は、🏭バッジで東証33業種コードを一緒に表示（例：🏭 3650 電気機器）。そのコードを再スキャンメニューの「🏭 業種まとめ登録」で使えば、該当業種の出来高上位50銘柄をまとめてお気に入りに入れられる",
         "画面下部には外部ニュースサイトへのリンクも用意"
       ]},
     ]},
@@ -6830,7 +6831,7 @@ export default function App(){
           </div>
         )}
         <div style={{marginLeft:isMobile?0:50,padding:isMobile?"6px 6px 100px":"10px 10px 120px"}}>
-                    {activeTab==="fav"&&<FavPanel onBulkSector={function(){setBulkOpen(true);}} loading={loading} progress={progress} ts={ts} onScan={function(){setRescanMenuOpen(true);}} stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} personalTrades={personalTrades}/>}
+                    {activeTab==="fav"&&<FavPanel loading={loading} progress={progress} ts={ts} onScan={function(){setRescanMenuOpen(true);}} stocks={stocks} setStocks={setStocks} favs={favs} toggleFav={toggleFav} favGroups={favGroups} groupNames={groupNames} renameGroup={renameGroup} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} personalTrades={personalTrades}/>}
           {activeTab==="trade"&&<TradePanel stocks={stocks} personalTrades={personalTrades} toggleFav={toggleFav} favs={favs} vix={vix} usdJpy={usdJpy} selectedStock={selectedStock} setSelectedStock={setSelectedStock} onRescan={rescanOne} rescanLoading={rescanLoading} onAddTrade={addTradeHandler} onRemoveTrade={removeTradeHandler} onEditTrade={editTradeHandler} onForceComplete={forceCompleteHandler} onRefreshTrades={refreshTradePrices} tradeRefreshing={tradeRefreshing}/>}
           {activeTab==="index"&&<IndexPanel/>}
           {activeTab==="market"&&<MarketPredictionPanel stocks={stocks} vix={vix} predictionResult={predictionResult} setPredictionResult={setPredictionResult} predictionLoading={predictionLoading} setPredictionLoading={setPredictionLoading} favs={favs} toggleFav={toggleFav}/>}
