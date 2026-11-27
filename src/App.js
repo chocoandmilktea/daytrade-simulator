@@ -9,7 +9,7 @@ import {
   JP_HOLIDAYS, jstInfo, findPrevClose, TRADE_STYLES,
   WIN_THRESHOLD_PCT, priceMoveState, bizDayDiff, sigStatDays,
   baseSigLabel, signalQuality, INTRADAY_SESSIONS,
-  DAILY_HIST_MAX
+  DAILY_HIST_MAX, calcBoll
 } from "./lib/analyze";
 // 銘柄の「今の状態」（注意／すでに上昇／大きな動きなし／データ不足）。スキャン結果の marketState に入れる
 import { calcMarketState, isTachibanaQuoteTime, toTachibanaQuoteSet, TACHIBANA_QUOTES_MAX, EXTENDED_SCORE, MARKET_STATE_LABELS, MULTIDAY_UP_SCORE, marketBadge } from "./lib/marketState";
@@ -2573,6 +2573,34 @@ function aggregateCandles(opens,highs,lows,closes,volumes,times,dates,bucket){
   }
   return candles;
 }
+// 1分足を「時刻」で束ねてローソク足に集約する（5分足用）。返す形は aggregateCandles と同じ。
+// 本数で束ねると、Yahooの1分足に抜けがある所や日をまたぐ所で、別の時刻・別の日の足が1本に混ざる。
+// そのため「日付」と「分をbucketで切り捨てた時刻」の組が直前の足と変わったら新しい足にする
+// （bucket=5なら 9:00〜9:04 で1本、9:05〜9:09 で1本）。
+// timeが"HH:MM"として読めない値（リアルタイム値を継ぎ足した点の空文字など）は直前の足に含める。
+// timeには足に含まれる最後の1分足の時刻を入れる。読めない値を含めた場合は、時刻ラベルが消えないよう直前の読める時刻のままにする。
+function aggregateCandlesByTime(opens,highs,lows,closes,volumes,times,dates,bucket){
+  var n=closes.length,candles=[],cur=null,curKey=null;
+  for(var i=0;i<n;i++){
+    var t=times[i],m=typeof t==="string"?/^(\d{1,2}):(\d{2})/.exec(t):null,key=null;
+    if(m){
+      var mins=parseInt(m[1],10)*60+parseInt(m[2],10);
+      key=(dates?dates[i]:"")+"|"+(mins-mins%bucket);
+    }
+    if(cur&&(key===null||key===curKey)){
+      if(highs[i]>cur.high)cur.high=highs[i];
+      if(lows[i]<cur.low)cur.low=lows[i];
+      if(volumes)cur.volume+=volumes[i]||0;
+      cur.close=closes[i];cur.endIndex=i;
+      if(key!==null){cur.time=t;cur.date=dates?dates[i]:null;}
+      continue;
+    }
+    cur={open:opens[i],high:highs[i],low:lows[i],close:closes[i],volume:volumes?(volumes[i]||0):0,endIndex:i,time:t,date:dates?dates[i]:null};
+    curKey=key;
+    candles.push(cur);
+  }
+  return candles;
+}
 // 1分足全体に対して、日付が変わるたびにリセットする「その日の累積VWAP」を計算する。
 // （VWAPは本来1日の中の指標のため、複数日分のデータでも日をまたいで積み上げない）
 function dailyVWAPSeries(closes,highs,lows,volumes,dates){
@@ -2659,7 +2687,8 @@ function DailyChart(p){
 }
 
 function IntradayChart1m(p){
-  var data=p.data,H=p.height||140,BUCKET=1,RIGHT_GUTTER=52;
+  var data=p.data,H=p.height||140,bucket=p.bucket||1,RIGHT_GUTTER=52;
+  var showBoll=!!p.showBoll; // ボリンジャーバンド（20本・±2σ）を描くか（5分足のときだけtrue）
   var wrapStyle={height:H+16,display:"flex",alignItems:"center",justifyContent:"center"};
   var scrollRef=useRef(null);
   var isMobile=useIsMobile();
@@ -2691,11 +2720,18 @@ function IntradayChart1m(p){
     if(fullVolumes)fullVolumes=fullVolumes.concat([0]);
     if(fullDates)fullDates=fullDates.concat([data.date||fullDates[fullDates.length-1]]);
   }
-  var candles=aggregateCandles(fullOpens,fullHighs,fullLows,fullCloses,fullVolumes,fullTimes,fullDates,BUCKET);
+  // 1分足は従来どおり本数で束ねる。5分足は時刻で束ねる（抜けや日またぎで別の時刻の足が混ざらないように）
+  var candles=bucket===1
+    ?aggregateCandles(fullOpens,fullHighs,fullLows,fullCloses,fullVolumes,fullTimes,fullDates,bucket)
+    :aggregateCandlesByTime(fullOpens,fullHighs,fullLows,fullCloses,fullVolumes,fullTimes,fullDates,bucket);
   var n=candles.length;
-  // MAは表示中の足（1分足）の終値ベースで計算する。
+  // MAは表示中の足（1分足／5分足）の終値ベースで計算する。
   var candleCloses=candles.map(function(c){return c.close;});
   var ma25=trailingSMA(candleCloses,25),ma75=trailingSMA(candleCloses,75);
+  // ボリンジャーバンドもローソクの終値で計算する（スコアのBBと同じ calcBoll を使う。先頭19本はnull）
+  var boll=showBoll?calcBoll(candleCloses):null;
+  var bollUp=boll?boll.map(function(b){return b?b.upper:null;}):null;
+  var bollLo=boll?boll.map(function(b){return b?b.lower:null;}):null;
   var hasVolume=!!fullVolumes;
   // VWAPは日をまたぐとリセットする「その日の累積」出来高加重平均
   var fullVwap=hasVolume?dailyVWAPSeries(fullCloses,fullHighs,fullLows,fullVolumes,fullDates):null;
@@ -2729,6 +2765,7 @@ function IntradayChart1m(p){
   var visCandles=candles.slice(rangeStart,rangeEnd+1);
   var visMa25=ma25.slice(rangeStart,rangeEnd+1),visMa75=ma75.slice(rangeStart,rangeEnd+1);
   var visVwap=vwapLine?vwapLine.slice(rangeStart,rangeEnd+1):null;
+  var visBoll=boll?bollUp.slice(rangeStart,rangeEnd+1).concat(bollLo.slice(rangeStart,rangeEnd+1)):null;
   // ── 縦軸レンジ ──
   // 基準は「ローソク足の高値・安値」だけ。MA/VWAP/AIラインが大きく外れていても、
   // そこまで軸を広げるとローソク足が潰れてしまうため、広げる量に上限を設ける。
@@ -2746,7 +2783,8 @@ function IntradayChart1m(p){
   }
   var lineVals=visMa25.concat(visMa75);
   if(visVwap)lineVals=lineVals.concat(visVwap);
-  expandTo(lineVals,0.5);                                                  // MA/VWAPは値幅の50%まで
+  if(visBoll)lineVals=lineVals.concat(visBoll);
+  expandTo(lineVals,0.5);                                                  // MA/VWAP/BBは値幅の50%まで
   rng=mx-mn||1;
   var pad=rng*0.05;
   mn-=pad;mx+=pad;rng=mx-mn||1;
@@ -2757,6 +2795,15 @@ function IntradayChart1m(p){
   }
   var pts25=toPtsAbs(ma25),pts75=toPtsAbs(ma75),ptsVwap=vwapLine?toPtsAbs(vwapLine):null;
   var lastMa25=ma25[ma25.length-1],lastMa75=ma75[ma75.length-1],lastVwap=vwapLine?vwapLine[vwapLine.length-1]:null;
+  var ptsBollUp=boll?toPtsAbs(bollUp):null,ptsBollLo=boll?toPtsAbs(bollLo):null;
+  var lastBoll=boll?boll[boll.length-1]:null;
+  // 帯の塗り：上の線を左→右、下の線を右→左につないだ多角形（値がnullの先頭部分は除く）
+  var bollFill=null;
+  if(boll){
+    var fillUp=[],fillLo=[];
+    boll.forEach(function(b,i){if(b){fillUp.push(toX(i)+","+toY(b.upper));fillLo.push(toX(i)+","+toY(b.lower));}});
+    if(fillUp.length>=2)bollFill=fillUp.concat(fillLo.reverse()).join(" ");
+  }
   var priceLevels=[mx, mn+rng*2/3, mn+rng/3, mn];
   var bodyHalf=CANDLE_W*0.35;
   // 複数日ぶんのデータになりうるので、時刻ラベルには常にその足の日付(M/D)を添える。
@@ -2778,6 +2825,8 @@ function IntradayChart1m(p){
             <span style={{fontSize:9,color:"#a3e635",whiteSpace:"nowrap"}}>25期MA{lastMa25!=null&&" "+fmtPriceLabel(lastMa25)}</span>
             <span style={{fontSize:9,color:"#f472b6",whiteSpace:"nowrap"}}>75期MA{lastMa75!=null&&" "+fmtPriceLabel(lastMa75)}</span>
             {hasVolume?<span style={{fontSize:9,color:"#38bdf8",whiteSpace:"nowrap"}}>VWAP{lastVwap!=null&&" "+fmtPriceLabel(lastVwap)}</span>:<span style={{fontSize:9,color:"#2a4060",whiteSpace:"nowrap"}}>VWAP未対応</span>}
+            {showBoll&&<span style={{fontSize:9,color:"#a78bfa",whiteSpace:"nowrap"}}>BB上{lastBoll&&" "+fmtPriceLabel(lastBoll.upper)}</span>}
+            {showBoll&&<span style={{fontSize:9,color:"#a78bfa",whiteSpace:"nowrap"}}>BB下{lastBoll&&" "+fmtPriceLabel(lastBoll.lower)}</span>}
           </div>
         <div ref={scrollRef} onScroll={updateVisibleRange} style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <div style={{width:chartWidth}}>
@@ -2786,6 +2835,7 @@ function IntradayChart1m(p){
                 var y=toY(v);
                 return <line key={i} x1={0} y1={y} x2={chartWidth} y2={y} stroke="#26344a" strokeWidth={0.5} strokeDasharray="2,2"/>;
               })}
+              {bollFill&&<polygon points={bollFill} fill="#a78bfa" fillOpacity={0.08} stroke="none"/>}
               {candles.map(function(c,i){
                 var x=toX(i),isUp=c.close>=c.open,col=isUp?"#22d3a0":"#f43f5e";
                 var yO=toY(c.open),yC=toY(c.close),yH=toY(c.high),yL=toY(c.low);
@@ -2797,6 +2847,8 @@ function IntradayChart1m(p){
                   </g>
                 );
               })}
+              {ptsBollUp&&<polyline points={ptsBollUp} fill="none" stroke="#a78bfa" strokeWidth={1}/>}
+              {ptsBollLo&&<polyline points={ptsBollLo} fill="none" stroke="#a78bfa" strokeWidth={1}/>}
               {ptsVwap&&<polyline points={ptsVwap} fill="none" stroke="#38bdf8" strokeWidth={1}/>}
               {pts75&&<polyline points={pts75} fill="none" stroke="#f472b6" strokeWidth={1.2}/>}
               {pts25&&<polyline points={pts25} fill="none" stroke="#a3e635" strokeWidth={1.2}/>}
@@ -2817,13 +2869,14 @@ function IntradayChart1m(p){
         <div onClick={function(){setMaInfoOpen(false);}} style={{position:"fixed",top:0,left:0,right:0,bottom:0,zIndex:2000,display:"flex",alignItems:"center",justifyContent:isMobile?"center":"flex-end",padding:16,paddingRight:isMobile?16:"56vw"}}>
           <div onClick={function(e){e.stopPropagation();}} style={{background:"#0a1628",border:"1px solid #2a4060",borderRadius:10,maxWidth:420,width:"90%",maxHeight:"85vh",overflowY:"auto",padding:"16px 18px",boxShadow:"0 8px 30px rgba(0,0,0,0.6)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <div style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>📈 MA・VWAPについて</div>
+              <div style={{fontSize:14,fontWeight:800,color:"#d8eeff"}}>📈 {showBoll?"MA・VWAP・BBについて":"MA・VWAPについて"}</div>
               <button onClick={function(){setMaInfoOpen(false);}} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",padding:0}}>✕</button>
             </div>
             <div style={{fontSize:12,color:"#a8c4e0",lineHeight:1.7}}>
               <div>・<b>25期MA</b>：直近25本分の終値をならした短期の移動平均線。直近の値動きの方向感をつかむ目安です</div>
               <div style={{marginTop:6}}>・<b>75期MA</b>：直近75本分の終値をならした中期の移動平均線。25期MAがこの線を上に抜けると上昇トレンド転換（ゴールデンクロス）、下に抜けると下降トレンド転換（デッドクロス）のサインとして意識されます</div>
               <div style={{marginTop:6}}>・<b>VWAP</b>（出来高加重平均価格）：その日の出来高で重み付けした平均取引価格。日が変わるとリセットされ、その日だけの累積値です。価格がVWAPより上なら「その日の平均より高く買われている」＝強い、下なら「弱い」の目安として使えます</div>
+              {showBoll&&<div style={{marginTop:6}}>・<b>ボリンジャーバンド（20本・±2σ）</b>：直近20本の平均から上下に、値動きのばらつき（標準偏差）の2倍の幅で引いた帯です。価格はおおむねこの帯の中で動くため、上の線を超えたら買われすぎ、下の線を割ったら売られすぎの目安になります。帯が細くなっているときは、この後大きく動く前触れになることがあります。5分足20本は約1時間40分ぶんで、日をまたいで計算するため、寄り付き直後は前の日の値動きを含みます</div>}
             </div>
           </div>
         </div>
@@ -3844,7 +3897,7 @@ function StockDetailPanel(p){
   var tachibanaQuoteS=useState(null);var tachibanaQuote=tachibanaQuoteS[0],setTachibanaQuote=tachibanaQuoteS[1]; // 株価タップ時のモーダル表示用の生データ
   var showTachibanaS=useState(false);var showTachibana=showTachibanaS[0],setShowTachibana=showTachibanaS[1];
   var dailyS=useState(undefined);var daily=dailyS[0],setDaily=dailyS[1]; // 出来高急増後の値動きパターン分析用（過去1年日足）
-  var chartModeS=useState("1m");var chartMode=chartModeS[0],setChartMode=chartModeS[1]; // "1m"=1分足 / "1d"=日足6ヶ月
+  var chartModeS=useState("1m");var chartMode=chartModeS[0],setChartMode=chartModeS[1]; // "1m"=1分足 / "5m"=5分足 / "1d"=日足6ヶ月
   useEffect(function(){
     setIntraday(undefined);
     setLiveTick(null);
@@ -3984,17 +4037,21 @@ function StockDetailPanel(p){
         <button onClick={function(){setShowTrade(function(v){return !v;});}} title="トレード登録" style={{flexShrink:0,background:showTrade?"#0a1a3a":"transparent",border:"1px solid "+(showTrade?"#0ea5e9":"#2a4060"),borderRadius:6,color:showTrade?"#0ea5e9":"#4a7090",padding:"4px 9px",fontSize:14,cursor:"pointer"}}>🎯</button>
       </div>
 
-      {/* チャート（1分足／日足6ヶ月 を切替） */}
+      {/* チャート（1分足／5分足／日足6ヶ月 を切替） */}
       <div style={{background:"#03080f",borderRadius:6,padding:"4px 6px",marginTop:-6}}>
         <div style={{display:"flex",gap:6,padding:"2px 0 4px",alignItems:"center"}}>
           <TabBtn active={chartMode==="1m"} color="#38bdf8" label="1分足" onClick={function(){setChartMode("1m");}}/>
+          <TabBtn active={chartMode==="5m"} color="#38bdf8" label="5分足" onClick={function(){setChartMode("5m");}}/>
           <TabBtn active={chartMode==="1d"} color="#38bdf8" label="日足" onClick={function(){setChartMode("1d");}}/>
           {/* 今表示しているチャートの種類（もとはチャート内の右上にあった表示） */}
-          <span style={{marginLeft:"auto",flexShrink:0,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px"}}>{chartMode==="1m"?"1分足":"日足6ヶ月"}</span>
+          <span style={{marginLeft:"auto",flexShrink:0,fontSize:9,color:"#6a90b0",whiteSpace:"nowrap",background:"#03080fd0",border:"1px solid #1a2c44",borderRadius:4,padding:"3px 6px"}}>{chartMode==="1m"?"1分足":chartMode==="5m"?"5分足":"日足6ヶ月"}</span>
         </div>
-        {chartMode==="1m"
-          ? <IntradayChart1m data={intraday} liveTick={liveTick} height={isMobile?150:250}/>
-          : <DailyChart daily={daily} height={isMobile?150:250}/>}
+        {/* keyにchartModeを渡し、1分足⇔5分足の切替でスクロール位置・表示範囲のstateを持ち越さない */}
+        {chartMode==="1d"
+          ? <DailyChart daily={daily} height={isMobile?150:250}/>
+          : chartMode==="5m"
+            ? <IntradayChart1m key={chartMode} data={intraday} liveTick={liveTick} bucket={5} showBoll={true} height={isMobile?150:250}/>
+            : <IntradayChart1m key={chartMode} data={intraday} liveTick={liveTick} height={isMobile?150:250}/>}
       </div>
 
             {/* シグナル詳細（出来高急増後の値動きを内包）／板情報・利確損切りライン（右） */}
