@@ -9,7 +9,7 @@ import {
   JP_HOLIDAYS, jstInfo, findPrevClose, TRADE_STYLES,
   WIN_THRESHOLD_PCT, priceMoveState, bizDayDiff, sigStatDays,
   baseSigLabel, signalQuality, INTRADAY_SESSIONS,
-  DAILY_HIST_MAX
+  DAILY_HIST_MAX, tickSizeFor, roundTickPrice
 } from "./lib/analyze";
 // 銘柄の「今の状態」（注意／すでに上昇／大きな動きなし／データ不足）。スキャン結果の marketState に入れる
 import { calcMarketState, isTachibanaQuoteTime, toTachibanaQuoteSet, TACHIBANA_QUOTES_MAX, EXTENDED_SCORE, MARKET_STATE_LABELS, MULTIDAY_UP_SCORE, marketBadge } from "./lib/marketState";
@@ -916,10 +916,91 @@ function calcTradeDecisionStats(doneList){
     signal:rows(sigMap,sigKnown.concat(sigExtra,["none"]))
   };
 }
+// ── 10:00買い（夜のうちに買値を決めずに登録し、買う日の10:00〜10:05の5分足の始値で買う）──
+// 前日終値で指値を置くと、上で始まった日に約定せず待機中のまま残るため、時刻で買う方式を用意した
+// 率はここだけで変える（登録時に記録へも残すので、変えても過去の記録の率は変わらない）
+var AT1000_TP_PCT=2.0;          // 利確率（買値から +2.0%）
+var AT1000_SL_PCT=-0.75;        // 損切り率（買値から −0.75%）
+var AT1000_MIN=10*60;           // 買う時刻（日本時間10:00。0時からの分）
+var AT1000_LATE_MIN=10*60+15;   // この時刻を過ぎても足が取れていなければ案内を出す（Yahooは約15分遅れ）
+// 日本時間の "YYYY-MM-DD" と0時からの分 → その時刻のミリ秒（UTC）。端末のタイムゾーンに依存させない
+function at1000Ms(dateKey,min){
+  var a=String(dateKey||"").split("-");
+  return Date.UTC(+a[0],+a[1]-1,+a[2],0,min)-9*3600000;
+}
+// 買う日：nowMs のあとで最初に来る日本の取引日。その日の10:00より前ならその日、それ以外は次の取引日（土日・祝日は飛ばす）
+function at1000BuyDate(nowMs){
+  var j=new Date(nowMs+9*3600000);
+  if(j.getUTCHours()*60+j.getUTCMinutes()>=AT1000_MIN)j.setUTCDate(j.getUTCDate()+1);
+  for(var i=0;i<30;i++){
+    var m=j.getUTCMonth()+1,d=j.getUTCDate(),dw=j.getUTCDay();
+    var key=j.getUTCFullYear()+"-"+(m<10?"0":"")+m+"-"+(d<10?"0":"")+d;
+    if(dw>=1&&dw<=5&&!JP_HOLIDAYS[key])return key;
+    j.setUTCDate(j.getUTCDate()+1);
+  }
+  return null;
+}
+// 「11/26」形式
+function at1000DateText(dateKey){var a=String(dateKey||"").split("-");return a.length===3?(+a[1])+"/"+(+a[2]):"—";}
+// 率の表示（2.0 → "+2.0%"、-0.75 → "−0.75%"）
+function at1000PctText(v){var s=Math.abs(v).toFixed(2).replace(/0$/,"");return(v>=0?"+":"−")+s+"%";}
+// 買値から利確・損切り価格を計算して呼値に丸める。丸めで買値と同じ値になる低位株は1ティック離す
+function at1000Prices(buy,isJP,tpPct,slPct){
+  var tp=tpPct!=null?tpPct:AT1000_TP_PCT,sl=slPct!=null?slPct:AT1000_SL_PCT,tick=tickSizeFor(buy,isJP);
+  var sell=roundTickPrice(buy*(1+tp/100),0,isJP),stop=roundTickPrice(buy*(1+sl/100),0,isJP);
+  if(!(sell>buy))sell=roundTickPrice(buy+tick,0,isJP);
+  if(!(stop<buy))stop=roundTickPrice(buy-tick,0,isJP);
+  return{sellPrice:sell,stopPrice:stop};
+}
+// 待機中の10:00買いで、買う日の10:00を過ぎたか（＝5分足を取りに行く対象か）
+function isAt1000Due(t){
+  return t.status==="waiting"&&t.buyMode==="at1000"&&!!t.buyDate&&Date.now()>=at1000Ms(t.buyDate,AT1000_MIN);
+}
+// api/intraday の1分足（times は日本時間 "HH:MM"、dates は日本時間 "YYYY-MM-DD"）から、
+// 買う日の10:00〜10:05の5分足の始値（＝その5分間で最初の1分足の始値）を返す。無ければ null。
+// 画面の5分足（aggregateCandles）は1分足を5本ずつ順に束ねるだけで時刻にそろっていないため使わず、時刻で直接選ぶ
+// lastClose はその日の最後の1分足の終値（進行中にしたときの最新値として使う）
+function at1000OpenFromM1(m1,dateKey){
+  if(!m1||!m1.times||!m1.dates)return null;
+  var opens=m1.opens||m1.closes,first=null,later=false,lastClose=null;
+  for(var i=0;i<m1.times.length;i++){
+    if(m1.dates[i]!==dateKey)continue;
+    var tm=String(m1.times[i]||""),hm=parseInt(tm.slice(0,2),10)*60+parseInt(tm.slice(3,5),10);
+    if(!isFinite(hm))continue;
+    if(hm>=AT1000_MIN&&hm<AT1000_MIN+5){if(first==null&&opens[i]>0)first={price:opens[i],time:tm};}
+    else if(hm>=AT1000_MIN+5)later=true;
+    if(m1.closes[i]>0)lastClose=m1.closes[i];
+  }
+  if(!first)return null;
+  // 10:00ちょうどの1分足が無い（その1分に売買が無かった）ときは、10:05以降の足が届いてから採用する（配信途中の可能性があるため）
+  if(first.time!=="10:00"&&!later)return null;
+  return{price:first.price,lastClose:lastClose};
+}
+// 待機中の10:00買いに、買う日の10:00の足の始値で買値・利確・損切りを入れて進行中にする。
+// intradayMap: {ticker: fetchIntraday の結果}。足が無い・まだ届いていないトレードは待機中のまま変えない
+// 過去の5分足を使うので、閉場中（夜・翌日以降）に呼んでも誤判定にならない
+function fillAt1000Trades(kind,intradayMap){
+  var list=loadTrades(kind),changed=false;
+  var next=list.map(function(t){
+    if(!isAt1000Due(t))return t;
+    var r=intradayMap[t.ticker];
+    var hit=r?at1000OpenFromM1(r.m1,t.buyDate):null;
+    if(!hit)return t;
+    var isJP=t.market==="JP",buy=roundTickPrice(hit.price,0,isJP),pr=at1000Prices(buy,isJP,t.tpPct,t.slPct);
+    changed=true;
+    // 開始時刻は価格更新を押した時刻ではなく、買う日の10:00（日本時間）
+    return Object.assign({},t,{buyPrice:buy,sellPrice:pr.sellPrice,stopPrice:pr.stopPrice,status:"active",
+      startPrice:buy,startAt:new Date(at1000Ms(t.buyDate,AT1000_MIN)).toISOString(),lastPrice:hit.lastClose!=null?hit.lastClose:buy});
+  });
+  if(changed)saveTrades(kind,next);
+  return next;
+}
 // skip=true のときは「見送り（買わなかった候補）」として記録する。買値・利確・損切り・株数は空のまま、
 // 決め手・自信・登録時のスコア等と登録時の現在値（lastPrice）だけを残す
-function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence,skip){
+function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence,skip,buyMode){
   var list=loadTrades(kind);
+  // 10:00買い（日本株のみ）：買値・利確・損切りは空のまま登録し、買う日の10:00の足から価格更新時に決める
+  var at1000=!skip&&buyMode==="at1000"&&s.market==="JP";
   var curPrice=s.rawPrice!=null?s.rawPrice:null;
   // 登録時点で「過去実績に基づく重み補正」が何点効いていたか（検証パネル用）
   var wAdjItem=(s.breakdown||[]).find(function(b){return b.label==="実績反映調整";});
@@ -956,6 +1037,9 @@ function addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,
     decisionTags:normDecisionTags(decisionTags), // 何で決めたか（app/chart/board/news/gut・複数可・空＝未記録）
     confidence:normConfidence(confidence), // 自信の度合い（1低い/2ふつう/3高い・null＝未記録）
     lastPrice:curPrice,
+    buyMode:at1000?"at1000":null, // 買い方（at1000＝10:00買い／null＝通常の指値・逆指値）
+    buyDate:at1000?at1000BuyDate(Date.now()):null, // 10:00買いで買う日（日本時間 YYYY-MM-DD）
+    tpPct:at1000?AT1000_TP_PCT:null,slPct:at1000?AT1000_SL_PCT:null, // 10:00買いの利確率・損切り率（登録時の値を残す）
     addedAt:new Date().toISOString()
   });
   saveTrades(kind,list);
@@ -1053,6 +1137,9 @@ function applyPricesToTrades(kind,priceMap,openMap){
     // 見送りは売買していないので価格判定に通さない（通すと利確判定に入り完了へ変わってしまう）
     if(t.status==="skipped")return t;
     if(t.status==="done")return t;
+    // 待機中の10:00買いは買値が空（null）なので通常の約定判定に通さない（通すと買値null扱いで即時に進行中へ変わる）。
+    // 買値は fillAt1000Trades が買う日の10:00の5分足から決める
+    if(t.status==="waiting"&&t.buyMode==="at1000")return t;
     // 土日・祝日など「取引日でない日」は、価格が古い終値のままなので一切状態を動かさない
     if(!isTradingDay(t.market))return t;
     // 引け（取引終了）を過ぎたactiveトレードは、価格取得の成否に関わらず自動決済する（デイトレ想定：持ち越し禁止）
@@ -2984,6 +3071,7 @@ function TradeAddModal(p){
   var capS=useState(String(loadCapital()));var capVal=capS[0],setCapVal=capS[1];
   var tagsS=useState([]);var tags=tagsS[0],setTags=tagsS[1]; // 決め手（未選択でも登録できる）
   var confS=useState(null);var conf=confS[0],setConf=confS[1]; // 自信 1〜3（未選択=null）
+  var at1000S=useState(false);var at1000On=at1000S[0],setAt1000On=at1000S[1]; // 10:00買い（日本株のみ・初期はオフ）
   function riskPerShare(){var b=parseFloat(buyVal),sp=parseFloat(stopVal);return(b>0&&sp>0&&sp<b)?b-sp:null;}
   // 1R基準の理想株数と、元手で実際に買える株数の両方を返す
   // （損切りが近い銘柄ほど必要資金が跨ね上がるため、元手で上限をかける）
@@ -3002,8 +3090,10 @@ function TradeAddModal(p){
   function yen(v){return "¥"+Math.round(v).toLocaleString();}
   var isJP=s.market==="JP";
   var inp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"8px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
+  var at1000=at1000On&&isJP; // 日本株以外では切り替えを出さないので常にオフ扱い
   function valid(){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
+    if(at1000)return !isNaN(sh)&&sh>0; // 10:00買いは買値・利確・損切りが後から決まるので株数だけ確認する（損切りが空でも登録できる）
     if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return false;
     if(se<=b)return false; // 利確は買い価格より上であること（下だと約定した瞬間に損失で完了してしまう）
     var sp=parseFloat(stopVal);
@@ -3013,12 +3103,14 @@ function TradeAddModal(p){
   // 入力が揃っているのにボタンが押せない理由を1行で示す（原因が分からず詰まらないように）
   function validMsg(){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sp=parseFloat(stopVal);
+    if(at1000)return null;
     if(b>0&&se>0&&se<=b)return "⚠️ 売り価格（利確）は買い価格より高い値にしてください";
     if(b>0&&sp>0&&sp>=b)return "⚠️ 損切り価格は買い価格より低い値にしてください";
     return null;
   }
   function add(kind){
     if(!valid())return;
+    if(at1000){p.onAddTrade(kind,s,null,null,parseInt(sharesVal),null,null,tags,conf,false,"at1000");p.onClose();return;}
     p.onAddTrade(kind,s,parseFloat(buyVal),parseFloat(sellVal),parseInt(sharesVal),stopVal!==""?parseFloat(stopVal):null,buyDir,tags,conf);
     p.onClose();
   }
@@ -3036,24 +3128,31 @@ function TradeAddModal(p){
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"#4a7090",fontSize:18,cursor:"pointer",lineHeight:1}}>✕</button>
         </div>
         <div style={{fontSize:11,color:"#4a7090",marginBottom:12}}>価格が指定値に到達すると自動で開始・終了します（判定はトレードタブの更新ボタンで反映）</div>
-        {s.profitLoss&&(
+        {isJP&&(
+          // 10:00買いの切り替え（日本株のみ）。オンのときは買値・利確・損切りを入力させず、買う日の10:00の足から自動で決める
+          <div style={{marginBottom:10}}>
+            <button type="button" onClick={function(){setAt1000On(!at1000On);}} style={{width:"100%",padding:"7px",fontSize:12,fontWeight:700,borderRadius:8,cursor:"pointer",border:"1px solid "+(at1000?"#a78bfa":"#1e3050"),background:at1000?"#a78bfa20":"transparent",color:at1000?"#a78bfa":"#4a6080"}}>{at1000?"✓ ":""}⏰ 10:00買い{at1000?"（オン）":"（オフ）"}</button>
+            {at1000&&<div style={{fontSize:11,color:"#a78bfa",marginTop:4}}>買値は翌営業日10:00の値で自動（{at1000DateText(at1000BuyDate(Date.now()))} 10:00〜10:05の5分足の始値）。利確 {at1000PctText(AT1000_TP_PCT)}／損切り {at1000PctText(AT1000_SL_PCT)}</div>}
+          </div>
+        )}
+        {s.profitLoss&&!at1000&&(
           <button onClick={function(){setSellVal(String(s.profitLoss.target));setStopVal(String(s.profitLoss.stop));}} style={{width:"100%",background:"#0a1a3a",border:"1px solid #0ea5e950",borderRadius:8,color:"#0ea5e9",padding:"7px",fontSize:12,fontWeight:700,cursor:"pointer",marginBottom:10}}>📐 標準ライン(ATR)を使う（利確{s.market==="JP"?"¥"+s.profitLoss.target.toLocaleString():"$"+s.profitLoss.target}／損切り{s.market==="JP"?"¥"+s.profitLoss.stop.toLocaleString():"$"+s.profitLoss.stop}）</button>
         )}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
           <div>
             <div style={{fontSize:11,color:"#22d3a0",marginBottom:3}}>買い価格</div>
-            <input style={inp} type="number" value={buyVal} onChange={function(e){setBuyVal(e.target.value);}}/>
-            <div style={{display:"flex",gap:4,marginTop:4}}>
+            <input style={at1000?Object.assign({},inp,{opacity:0.4}):inp} type="number" value={buyVal} disabled={at1000} onChange={function(e){setBuyVal(e.target.value);}}/>
+            <div style={{display:"flex",gap:4,marginTop:4,opacity:at1000?0.4:1,pointerEvents:at1000?"none":"auto"}}>
               <button type="button" onClick={function(){setBuyDir("down");}} style={{flex:1,padding:"4px 2px",fontSize:10,fontWeight:700,borderRadius:5,cursor:"pointer",border:"1px solid "+(buyDir==="down"?"#22d3a0":"#1e3050"),background:buyDir==="down"?"#22d3a020":"transparent",color:buyDir==="down"?"#22d3a0":"#4a6080"}}>指値(下値待ち)</button>
               <button type="button" onClick={function(){setBuyDir("up");}} style={{flex:1,padding:"4px 2px",fontSize:10,fontWeight:700,borderRadius:5,cursor:"pointer",border:"1px solid "+(buyDir==="up"?"#f59e0b":"#1e3050"),background:buyDir==="up"?"#f59e0b20":"transparent",color:buyDir==="up"?"#f59e0b":"#4a6080"}}>逆指値(上抜け待ち)</button>
             </div>
           </div>
-          <div><div style={{fontSize:11,color:"#f43f5e",marginBottom:3}}>売り価格（利確）</div><input style={inp} type="number" value={sellVal} onChange={function(e){setSellVal(e.target.value);}}/></div>
+          <div><div style={{fontSize:11,color:"#f43f5e",marginBottom:3}}>売り価格（利確）</div><input style={at1000?Object.assign({},inp,{opacity:0.4}):inp} type="number" value={sellVal} disabled={at1000} onChange={function(e){setSellVal(e.target.value);}}/></div>
           <div><div style={{fontSize:11,color:"#4a7090",marginBottom:3}}>株数</div><input style={inp} type="number" value={sharesVal} onChange={function(e){setSharesVal(e.target.value);}}/></div>
         </div>
         <div style={{marginBottom:10}}>
-          <div style={{fontSize:11,color:"#fbbf24",marginBottom:3}}>損切り価格（必須・買い価格より低い値）</div>
-          <input style={inp} type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} placeholder="必須"/>
+          <div style={{fontSize:11,color:"#fbbf24",marginBottom:3}}>{at1000?"損切り価格（10:00買いは買値から自動）":"損切り価格（必須・買い価格より低い値）"}</div>
+          <input style={at1000?Object.assign({},inp,{opacity:0.4}):inp} type="number" value={stopVal} disabled={at1000} onChange={function(e){setStopVal(e.target.value);}} placeholder={at1000?"自動":"必須"}/>
         </div>
         <div style={{marginBottom:14,background:"#050e1c",borderRadius:8,padding:"8px 10px"}}>
           <div style={{display:"flex",gap:8}}>
@@ -4743,8 +4842,10 @@ function TradeDetailModal(p){
   var t=p.t,kind=p.kind;
   var isJP=t.market==="JP";
   var editS=useState(false);var editing=editS[0],setEditing=editS[1];
-  var buyS=useState(String(t.buyPrice));var buyVal=buyS[0],setBuyVal=buyS[1];
-  var sellS=useState(String(t.sellPrice));var sellVal=sellS[0],setSellVal=sellS[1];
+  // 10:00買いで買値が決まる前は buyPrice・sellPrice が null なので、入力欄は空にする（"null" と入らないように）
+  var buyS=useState(t.buyPrice!=null?String(t.buyPrice):"");var buyVal=buyS[0],setBuyVal=buyS[1];
+  var sellS=useState(t.sellPrice!=null?String(t.sellPrice):"");var sellVal=sellS[0],setSellVal=sellS[1];
+  var at1000Wait=t.status==="waiting"&&t.buyMode==="at1000"; // 買値が決まる前の10:00買い
   var stopS=useState(t.stopPrice!=null?String(t.stopPrice):"");var stopVal=stopS[0],setStopVal=stopS[1];
   var sharesS=useState(String(t.shares||1));var sharesVal=sharesS[0],setSharesVal=sharesS[1];
   var buyDirS=useState(getBuyDirection(t));var buyDir=buyDirS[0],setBuyDir=buyDirS[1]; // 指値(down)／逆指値(up)。待機中のみ編集可能
@@ -4757,16 +4858,20 @@ function TradeDetailModal(p){
   var unrealized=(t.status==="active"&&t.lastPrice!=null&&t.startPrice!=null)?((t.lastPrice-t.startPrice)*(t.shares||1)):null;
   var editInp={background:"#040c18",border:"1px solid #1e4070",borderRadius:5,color:"#b8cce0",padding:"6px",fontSize:16,fontFamily:"monospace",width:"100%",boxSizing:"border-box"};
 
-  function startEdit(){setBuyVal(String(t.buyPrice));setSellVal(String(t.sellPrice));setStopVal(t.stopPrice!=null?String(t.stopPrice):"");setSharesVal(String(t.shares||1));setBuyDir(getBuyDirection(t));setTags(normDecisionTags(t.decisionTags));setConf(normConfidence(t.confidence));setEditing(true);}
+  function startEdit(){setBuyVal(t.buyPrice!=null?String(t.buyPrice):"");setSellVal(t.sellPrice!=null?String(t.sellPrice):"");setStopVal(t.stopPrice!=null?String(t.stopPrice):"");setSharesVal(String(t.shares||1));setBuyDir(getBuyDirection(t));setTags(normDecisionTags(t.decisionTags));setConf(normConfidence(t.confidence));setEditing(true);}
   function saveEdit(){
     var b=parseFloat(buyVal),se=parseFloat(sellVal),sh=parseInt(sharesVal);
+    // 10:00買いを手入力の買値に切り替えるときは、売り・損切りが空欄なら記録の率から計算して入れる（空のまま通すと約定直後に利確扱いになるため）
+    var autoP=(at1000Wait&&b>0)?at1000Prices(b,isJP,t.tpPct,t.slPct):null;
+    if(autoP&&String(sellVal).trim()==="")se=autoP.sellPrice;
     if(isNaN(b)||b<=0||isNaN(se)||se<=0||isNaN(sh)||sh<=0)return;
     if(se<=b){alert("売り価格（利確）は買い価格より高い値を入力してください");return;}
     // 損切りは任意。空欄ならnull（＝損切りなし）として保存する。
     // 入力がある場合だけ「買い価格より低い正の数」かを確認する
-    var sp=String(stopVal).trim()===""?null:parseFloat(stopVal);
+    var sp=String(stopVal).trim()===""?(autoP?autoP.stopPrice:null):parseFloat(stopVal);
     if(sp!=null&&(isNaN(sp)||sp<=0||sp>=b)){alert("損切り価格は買い価格より低い値を入力してください（空欄のままにすると損切りなしで保存します）");return;}
     var updates={buyPrice:b,sellPrice:se,shares:sh,stopPrice:sp};
+    if(at1000Wait){updates.buyMode=null;updates.buyDate=null;updates.tpPct=null;updates.slPct=null;} // 買値を手で入れたら10:00買いの項目を外し、通常の登録として扱う
     if(t.status==="waiting"){
       updates.buyDirection=buyDir; // 待機中のみ手動指定を反映
       updates.decisionTags=tags;updates.confidence=conf; // 決め手・自信も待機中のみ反映
@@ -4827,6 +4932,7 @@ function TradeDetailModal(p){
               <div><div style={{fontSize:10,color:"#4a7090",marginBottom:2}}>株数</div><input type="number" value={sharesVal} onChange={function(e){setSharesVal(e.target.value);}} style={editInp}/></div>
             </div>
             <div><div style={{fontSize:10,color:"#fbbf24",marginBottom:2}}>損切り（任意）</div><input type="number" value={stopVal} onChange={function(e){setStopVal(e.target.value);}} style={editInp} placeholder="空欄可／買い価格より低い値"/></div>
+            {at1000Wait&&<div style={{fontSize:10,color:"#a78bfa"}}>買値を入れて保存すると10:00買いを外し、通常の登録になります。売り・損切りが空欄なら {at1000PctText(t.tpPct!=null?t.tpPct:AT1000_TP_PCT)}／{at1000PctText(t.slPct!=null?t.slPct:AT1000_SL_PCT)} で計算します</div>}
             {t.status==="waiting"&&(
               <div>
                 <div style={{fontSize:10,color:"#4a7090",marginBottom:2}}>買い方向</div>
@@ -4842,16 +4948,17 @@ function TradeDetailModal(p){
           <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>
             <div style={{background:"#052e16",border:"1px solid #22d3a040",borderRadius:6,padding:"6px 8px"}}>
               <div style={{fontSize:10,color:"#22d3a0",marginBottom:2}}>買い</div>
-              <div style={{fontSize:15,fontWeight:800,color:"#22d3a0"}}>{fmtMoney(t.buyPrice,isJP)}</div>
+              {/* 買値が決まる前の10:00買いは、価格の代わりに買う日と率を出す */}
+              <div style={{fontSize:15,fontWeight:800,color:"#22d3a0"}}>{at1000Wait?"10:00買い（"+at1000DateText(t.buyDate)+"）":fmtMoney(t.buyPrice,isJP)}</div>
             </div>
             <div style={{background:"#1f0010",border:"1px solid #f43f5e40",borderRadius:6,padding:"6px 8px"}}>
               <div style={{fontSize:10,color:"#f43f5e",marginBottom:2}}>売り（利確）</div>
-              <div style={{fontSize:15,fontWeight:800,color:"#f43f5e"}}>{fmtMoney(t.sellPrice,isJP)}</div>
+              <div style={{fontSize:15,fontWeight:800,color:"#f43f5e"}}>{at1000Wait?at1000PctText(t.tpPct!=null?t.tpPct:AT1000_TP_PCT):fmtMoney(t.sellPrice,isJP)}</div>
             </div>
-            {t.stopPrice!=null&&(
+            {(t.stopPrice!=null||at1000Wait)&&(
               <div style={{background:"#1c1400",border:"1px solid #fbbf2440",borderRadius:6,padding:"6px 8px"}}>
                 <div style={{fontSize:10,color:"#fbbf24",marginBottom:2}}>損切り</div>
-                <div style={{fontSize:15,fontWeight:800,color:"#fbbf24"}}>{fmtMoney(t.stopPrice,isJP)}</div>
+                <div style={{fontSize:15,fontWeight:800,color:"#fbbf24"}}>{at1000Wait?at1000PctText(t.slPct!=null?t.slPct:AT1000_SL_PCT):fmtMoney(t.stopPrice,isJP)}</div>
               </div>
             )}
             <div style={{background:"#071428",border:"1px solid #1e3050",borderRadius:6,padding:"6px 8px"}}>
@@ -4860,6 +4967,8 @@ function TradeDetailModal(p){
             </div>
           </div>
         )}
+        {/* 買う日の10:15（Yahooの遅れを見込んだ時刻）を過ぎてもまだ待機中＝10:00の足が取れていない */}
+        {at1000Wait&&!editing&&t.buyDate&&Date.now()>=at1000Ms(t.buyDate,AT1000_LATE_MIN)&&<div style={{fontSize:11,color:"#f59e0b"}}>10:00の足が取れていません。✏️編集で買値を入力できます</div>}
         {isJP&&<div style={{fontSize:11,color:"#4a7090"}}>登録時の今の状態: {tradeMarketStateText(t)}</div>}
         {!(editing&&t.status==="waiting")&&<div style={{fontSize:11,color:"#4a7090"}}>{decisionSummary(t)}{editing&&<span style={{color:"#2a6090",marginLeft:6}}>（待機中のみ変更できます）</span>}</div>}
 
@@ -6331,8 +6440,8 @@ export default function App(){
   // ── トレードシミュレーター：状態管理・登録・削除・価格判定 ───────────────────
   var ptS=useState(function(){return loadTrades("personal");});var personalTrades=ptS[0],setPersonalTrades=ptS[1];
   var tradeRefreshingS=useState(false);var tradeRefreshing=tradeRefreshingS[0],setTradeRefreshing=tradeRefreshingS[1];
-  function addTradeHandler(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence,skip){
-    var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence,skip);
+  function addTradeHandler(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence,skip,buyMode){
+    var next=addTradeRecord(kind,s,buyPrice,sellPrice,shares,stopPrice,buyDirection,decisionTags,confidence,skip,buyMode);
     setPersonalTrades(next);syncToServer(favs,favGroups,groupNames,next);
   }
   function removeTradeHandler(kind,id){
@@ -6368,7 +6477,7 @@ export default function App(){
         return t.ticker===ticker&&t.status==="waiting"&&isPreOpenOrder(t);
       });
     }
-    Promise.all(tickers.map(function(ticker){
+    var priceP=Promise.all(tickers.map(function(ticker){
       var tf=null;
       return fetchTachibanaPrice(ticker,function(f){tf=f;}).then(function(live){
         if(live!=null){                                                        // 立花のリアルタイム値
@@ -6381,10 +6490,24 @@ export default function App(){
         }
         return fetchYahoo(ticker).then(function(pd){return{ticker:ticker,price:pd.currentPrice,open:yahooOpen(pd)};}); // 取れなければYahoo
       }).catch(function(){return{ticker:ticker,price:null};});
-    })).then(function(results){
+    }));
+    // 10:00買いで買う日の10:00を過ぎた待機中トレードは、その日の1分足（直近5営業日ぶん）から10:00の足を探す。
+    // 現在値の取得と並行して取りに行き、現在値の判定より先に買値を入れる（進行中になった分を同じ更新で利確・損切り判定に通すため）
+    var at1000Tickers=[];
+    personalTrades.forEach(function(t){if(isAt1000Due(t)&&at1000Tickers.indexOf(t.ticker)<0)at1000Tickers.push(t.ticker);});
+    at1000Tickers.forEach(function(ticker){delete INTRADAY_CACHE[ticker];}); // 5分前の取得で10:00の足がまだ無かった場合に備えて取り直す
+    var intradayP=Promise.all(at1000Tickers.map(function(ticker){
+      return fetchIntraday(ticker).then(function(r){return{ticker:ticker,data:r};}).catch(function(){return{ticker:ticker,data:null};});
+    }));
+    Promise.all([priceP,intradayP]).then(function(arr){
+      var results=arr[0],nextPersonal=null;
+      if(at1000Tickers.length){
+        var intradayMap={};arr[1].forEach(function(r){if(r.data)intradayMap[r.ticker]=r.data;});
+        nextPersonal=fillAt1000Trades("personal",intradayMap);
+      }
       var priceMap={},openMap={};results.forEach(function(r){if(r.price!=null)priceMap[r.ticker]=r.price;if(r.open)openMap[r.ticker]=r.open;});
-      if(Object.keys(priceMap).length>0){
-        var nextPersonal=applyPricesToTrades("personal",priceMap,openMap);
+      if(Object.keys(priceMap).length>0)nextPersonal=applyPricesToTrades("personal",priceMap,openMap);
+      if(nextPersonal){
         setPersonalTrades(nextPersonal);
         syncToServer(favs,favGroups,groupNames,nextPersonal);
       }
