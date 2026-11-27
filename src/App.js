@@ -924,6 +924,7 @@ var AT1000_MIN=10*60;           // 買う時刻（日本時間10:00。0時から
 var AT1000_LATE_MIN=10*60+15;   // この時刻を過ぎても足が取れていなければ案内を出す（Yahooは約15分遅れ）
 var AT1000_JUDGE_MIN=15*60+50;  // 進行中の10:00買いで、どちらにも届かなければ引け決済にしてよい時刻（Yahooの遅れを見込む）
 var AT1000_CLOSE_MIN=15*60+30;  // 引け決済の終了時刻（大引け）
+var AT1000_LAST_BAR_MIN=15*60+24; // 判定に使う最後の1分足の時刻。過去の日の足は15:24で終わり、当日分だけ出来高0の15:30の足が付くため、そろえる
 // 日本時間の "YYYY-MM-DD" と0時からの分 → その時刻のミリ秒（UTC）。端末のタイムゾーンに依存させない
 function at1000Ms(dateKey,min){
   var a=String(dateKey||"").split("-");
@@ -998,19 +999,21 @@ function fillAt1000Trades(kind,intradayMap){
 }
 // 進行中の10:00買い（1分足で利確・損切り・引けを判定する対象。現在値による判定からは外す）
 function isAt1000Active(t){return t.status==="active"&&t.buyMode==="at1000";}
-// 進行中の10:00買いの決済を、買う日の1分足（10:00以降・時刻の順）から決める。決まらなければ null（進行中のまま）。
+// 進行中の10:00買いの決済を、買う日の1分足（10:00〜15:24・出来高0の足を除く・時刻の順）から決める。決まらなければ null（進行中のまま）。
 // 価格更新を押した時刻の現在値を使わないので、いつ押しても同じ結果になる。
 // 足の始値がラインを越えていればその始値、ライン内なら高値・安値が届いたラインの価格で約定させる。
 // 同じ足で両方に届いたときはどちらが先か分からないため、不利な側（損切り）に寄せて ambiguous を立てる
 // 返り値: {reason:"take_profit"|"stop_loss"|"time_exit", price, at(ISO・UTC), ambiguous}
 function at1000ExitFromM1(t,m1,nowMs){
   if(!t.buyDate||!m1||!m1.times||!m1.dates||!m1.closes)return null;
-  var opens=m1.opens||m1.closes,highs=m1.highs||m1.closes,lows=m1.lows||m1.closes;
+  var opens=m1.opens||m1.closes,highs=m1.highs||m1.closes,lows=m1.lows||m1.closes,vols=m1.volumes;
   var tp=t.sellPrice,sl=t.stopPrice,lastClose=null;
   for(var i=0;i<m1.times.length;i++){
     if(m1.dates[i]!==t.buyDate)continue;
     var tm=String(m1.times[i]||""),hm=parseInt(tm.slice(0,2),10)*60+parseInt(tm.slice(3,5),10);
-    if(!isFinite(hm)||hm<AT1000_MIN)continue;
+    if(!isFinite(hm)||hm<AT1000_MIN||hm>AT1000_LAST_BAR_MIN)continue;
+    // 出来高0の足（当日分だけに付く15:30の足など）は使わない。押した日によって引け決済の値段が変わらないようにするため
+    if(vols&&!(vols[i]>0))continue;
     var c=m1.closes[i];
     if(!(c>0))continue;
     var o=opens[i]>0?opens[i]:c,h=highs[i]>0?highs[i]:Math.max(o,c),l=lows[i]>0?lows[i]:Math.min(o,c);
@@ -1022,7 +1025,7 @@ function at1000ExitFromM1(t,m1,nowMs){
     if(hitTp)return{reason:"take_profit",price:tp,at:at,ambiguous:false};
     lastClose=c;
   }
-  // どちらにも届かず、買う日の15:50を過ぎていれば最後の足の終値で引け決済（終了時刻は大引け15:30）
+  // どちらにも届かず、買う日の15:50を過ぎていれば上の条件で残った最後の足の終値で引け決済（終了時刻は大引け15:30）
   if(lastClose!=null&&nowMs>=at1000Ms(t.buyDate,AT1000_JUDGE_MIN))
     return{reason:"time_exit",price:lastClose,at:new Date(at1000Ms(t.buyDate,AT1000_CLOSE_MIN)).toISOString(),ambiguous:false};
   return null;
