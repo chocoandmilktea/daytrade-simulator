@@ -922,6 +922,8 @@ var AT1000_TP_PCT=2.0;          // 利確率（買値から +2.0%）
 var AT1000_SL_PCT=-0.75;        // 損切り率（買値から −0.75%）
 var AT1000_MIN=10*60;           // 買う時刻（日本時間10:00。0時からの分）
 var AT1000_LATE_MIN=10*60+15;   // この時刻を過ぎても足が取れていなければ案内を出す（Yahooは約15分遅れ）
+var AT1000_JUDGE_MIN=15*60+50;  // 進行中の10:00買いで、どちらにも届かなければ引け決済にしてよい時刻（Yahooの遅れを見込む）
+var AT1000_CLOSE_MIN=15*60+30;  // 引け決済の終了時刻（大引け）
 // 日本時間の "YYYY-MM-DD" と0時からの分 → その時刻のミリ秒（UTC）。端末のタイムゾーンに依存させない
 function at1000Ms(dateKey,min){
   var a=String(dateKey||"").split("-");
@@ -990,6 +992,59 @@ function fillAt1000Trades(kind,intradayMap){
     // 開始時刻は価格更新を押した時刻ではなく、買う日の10:00（日本時間）
     return Object.assign({},t,{buyPrice:buy,sellPrice:pr.sellPrice,stopPrice:pr.stopPrice,status:"active",
       startPrice:buy,startAt:new Date(at1000Ms(t.buyDate,AT1000_MIN)).toISOString(),lastPrice:hit.lastClose!=null?hit.lastClose:buy});
+  });
+  if(changed)saveTrades(kind,next);
+  return next;
+}
+// 進行中の10:00買い（1分足で利確・損切り・引けを判定する対象。現在値による判定からは外す）
+function isAt1000Active(t){return t.status==="active"&&t.buyMode==="at1000";}
+// 進行中の10:00買いの決済を、買う日の1分足（10:00以降・時刻の順）から決める。決まらなければ null（進行中のまま）。
+// 価格更新を押した時刻の現在値を使わないので、いつ押しても同じ結果になる。
+// 足の始値がラインを越えていればその始値、ライン内なら高値・安値が届いたラインの価格で約定させる。
+// 同じ足で両方に届いたときはどちらが先か分からないため、不利な側（損切り）に寄せて ambiguous を立てる
+// 返り値: {reason:"take_profit"|"stop_loss"|"time_exit", price, at(ISO・UTC), ambiguous}
+function at1000ExitFromM1(t,m1,nowMs){
+  if(!t.buyDate||!m1||!m1.times||!m1.dates||!m1.closes)return null;
+  var opens=m1.opens||m1.closes,highs=m1.highs||m1.closes,lows=m1.lows||m1.closes;
+  var tp=t.sellPrice,sl=t.stopPrice,lastClose=null;
+  for(var i=0;i<m1.times.length;i++){
+    if(m1.dates[i]!==t.buyDate)continue;
+    var tm=String(m1.times[i]||""),hm=parseInt(tm.slice(0,2),10)*60+parseInt(tm.slice(3,5),10);
+    if(!isFinite(hm)||hm<AT1000_MIN)continue;
+    var c=m1.closes[i];
+    if(!(c>0))continue;
+    var o=opens[i]>0?opens[i]:c,h=highs[i]>0?highs[i]:Math.max(o,c),l=lows[i]>0?lows[i]:Math.min(o,c);
+    var at=new Date(at1000Ms(t.buyDate,hm)).toISOString();
+    if(sl!=null&&o<=sl)return{reason:"stop_loss",price:o,at:at,ambiguous:false};
+    if(tp!=null&&o>=tp)return{reason:"take_profit",price:o,at:at,ambiguous:false};
+    var hitTp=tp!=null&&h>=tp,hitSl=sl!=null&&l<=sl;
+    if(hitSl)return{reason:"stop_loss",price:sl,at:at,ambiguous:hitTp};
+    if(hitTp)return{reason:"take_profit",price:tp,at:at,ambiguous:false};
+    lastClose=c;
+  }
+  // どちらにも届かず、買う日の15:50を過ぎていれば最後の足の終値で引け決済（終了時刻は大引け15:30）
+  if(lastClose!=null&&nowMs>=at1000Ms(t.buyDate,AT1000_JUDGE_MIN))
+    return{reason:"time_exit",price:lastClose,at:new Date(at1000Ms(t.buyDate,AT1000_CLOSE_MIN)).toISOString(),ambiguous:false};
+  return null;
+}
+// 進行中の10:00買いを、買う日の1分足で利確・損切り・引け決済にする。intradayMap は fillAt1000Trades と同じ形。
+// 1分足が取れない・買う日の足が返ってこないトレードは進行中のまま変えない（現在値での決済には戻さない）。
+// 買う日の15:50を過ぎても決まらなかったときだけ m1Unjudged を立て、詳細に案内を出す
+function judgeAt1000Trades(kind,intradayMap,nowMs){
+  var list=loadTrades(kind),changed=false;
+  var next=list.map(function(t){
+    if(!isAt1000Active(t))return t;
+    var r=intradayMap[t.ticker];
+    var ex=r?at1000ExitFromM1(t,r.m1,nowMs):null;
+    if(!ex){
+      if(!t.m1Unjudged&&t.buyDate&&nowMs>=at1000Ms(t.buyDate,AT1000_JUDGE_MIN)){changed=true;return Object.assign({},t,{m1Unjudged:true});}
+      return t;
+    }
+    changed=true;
+    var pnlPerShare=ex.price-t.startPrice,pnl=pnlPerShare*(t.shares||1),pnlPercent=t.startPrice?(pnlPerShare/t.startPrice*100):0;
+    var upd={status:"done",endPrice:ex.price,endAt:ex.at,pnl:pnl,pnlPercent:pnlPercent,exitReason:ex.reason,lastPrice:ex.price,judgedBy:"m1"};
+    if(ex.ambiguous)upd.exitAmbiguous=true;
+    return Object.assign({},t,upd);
   });
   if(changed)saveTrades(kind,next);
   return next;
@@ -1139,6 +1194,12 @@ function applyPricesToTrades(kind,priceMap,openMap){
     // 待機中の10:00買いは買値が空（null）なので通常の約定判定に通さない（通すと買値null扱いで即時に進行中へ変わる）。
     // 買値は fillAt1000Trades が買う日の10:00の5分足から決める
     if(t.status==="waiting"&&t.buyMode==="at1000")return t;
+    // 進行中の10:00買いは judgeAt1000Trades が買う日の1分足で決済を決めるため、ここでは表示用の現在値だけ更新する（二重に判定しないため）
+    if(isAt1000Active(t)){
+      var curA=priceMap[t.ticker];
+      if(isTradingDay(t.market)&&curA!=null&&curA!==t.lastPrice){changed=true;return Object.assign({},t,{lastPrice:curA});}
+      return t;
+    }
     // 土日・祝日など「取引日でない日」は、価格が古い終値のままなので一切状態を動かさない
     if(!isTradingDay(t.market))return t;
     // 引け（取引終了）を過ぎたactiveトレードは、価格取得の成否に関わらず自動決済する（デイトレ想定：持ち越し禁止）
@@ -5024,6 +5085,9 @@ function TradeDetailModal(p){
         )}
         {/* 買う日の10:15（Yahooの遅れを見込んだ時刻）を過ぎてもまだ待機中＝10:00の足が取れていない */}
         {at1000Wait&&!editing&&t.buyDate&&Date.now()>=at1000Ms(t.buyDate,AT1000_LATE_MIN)&&<div style={{fontSize:11,color:"#f59e0b"}}>10:00の足が取れていません。✏️編集で買値を入力できます</div>}
+        {/* 買う日の15:50を過ぎて価格更新しても1分足で決まらなかった進行中の10:00買い */}
+        {isAt1000Active(t)&&t.m1Unjudged&&!editing&&<div style={{fontSize:11,color:"#f59e0b"}}>1分足が取れないため自動で判定できません。✏️編集か強制完了で終えてください</div>}
+        {t.status==="done"&&t.judgedBy==="m1"&&<div style={{fontSize:11,color:"#4a7090"}}>買う日の1分足で判定{t.exitAmbiguous?"（同じ1分足で利確・損切りの両方に届いたため損切りとして記録）":""}</div>}
         {isJP&&<div style={{fontSize:11,color:"#4a7090"}}>登録時の今の状態: {tradeMarketStateText(t)}</div>}
         {!(editing&&t.status==="waiting")&&<div style={{fontSize:11,color:"#4a7090"}}>{decisionSummary(t)}{editing&&<span style={{color:"#2a6090",marginLeft:6}}>（待機中のみ変更できます）</span>}</div>}
 
@@ -6548,8 +6612,9 @@ export default function App(){
     }));
     // 10:00買いで買う日の10:00を過ぎた待機中トレードは、その日の1分足（直近5営業日ぶん）から10:00の足を探す。
     // 現在値の取得と並行して取りに行き、現在値の判定より先に買値を入れる（進行中になった分を同じ更新で利確・損切り判定に通すため）
+    // 進行中の10:00買いも、利確・損切り・引けを買う日の1分足で判定するため同じ仕組みで取りに行く（同じ銘柄は1回だけ）
     var at1000Tickers=[];
-    personalTrades.forEach(function(t){if(isAt1000Due(t)&&at1000Tickers.indexOf(t.ticker)<0)at1000Tickers.push(t.ticker);});
+    personalTrades.forEach(function(t){if((isAt1000Due(t)||isAt1000Active(t))&&at1000Tickers.indexOf(t.ticker)<0)at1000Tickers.push(t.ticker);});
     at1000Tickers.forEach(function(ticker){delete INTRADAY_CACHE[ticker];}); // 5分前の取得で10:00の足がまだ無かった場合に備えて取り直す
     var intradayP=Promise.all(at1000Tickers.map(function(ticker){
       return fetchIntraday(ticker).then(function(r){return{ticker:ticker,data:r};}).catch(function(){return{ticker:ticker,data:null};});
@@ -6558,7 +6623,9 @@ export default function App(){
       var results=arr[0],nextPersonal=null;
       if(at1000Tickers.length){
         var intradayMap={};arr[1].forEach(function(r){if(r.data)intradayMap[r.ticker]=r.data;});
-        nextPersonal=fillAt1000Trades("personal",intradayMap);
+        fillAt1000Trades("personal",intradayMap);
+        // 同じ更新で進行中になった分も含めて、買う日の1分足で決済を判定する（fillAt1000Trades の保存結果を読み直す）
+        nextPersonal=judgeAt1000Trades("personal",intradayMap,Date.now());
       }
       var priceMap={},openMap={};results.forEach(function(r){if(r.price!=null)priceMap[r.ticker]=r.price;if(r.open)openMap[r.ticker]=r.open;});
       if(Object.keys(priceMap).length>0)nextPersonal=applyPricesToTrades("personal",priceMap,openMap);
